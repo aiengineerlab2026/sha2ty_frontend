@@ -761,7 +761,7 @@ export const AR: Record<string, string> = {
   "Admin sign in": "دخول المشرف",
   "Review and approve new vendor studios.": "راجع متاجر التجار الجديدة ووافق عليها.",
   "Username": "اسم المستخدم",
-  "Wrong username or password.": "اسم المستخدم أو كلمة المرور غير صحيحة.",
+  "Wrong email or password.": "البريد الإلكتروني أو كلمة المرور غير صحيحة.",
   "Admin sign-in required.": "يجب تسجيل دخول المشرف.",
   "Cannot reach the server.": "تعذّر الوصول إلى الخادم.",
   "Admin": "المشرف",
