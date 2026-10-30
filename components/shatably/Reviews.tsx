@@ -1,5 +1,6 @@
 "use client";
 
+import { authSession } from "@/lib/auth/client";
 import { useT } from "@/lib/i18n";
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import Link from "next/link";
@@ -20,8 +21,7 @@ function useReviews(kind: ReviewKind, itemId: string) {
   useEffect(() => {
     if (!supabaseConfigured()) return;
     reload();
-    void supabase()
-      .auth.getSession()
+    void authSession()
       .then(async ({ data }) => {
         const user = data.session?.user;
         if (!user) return;

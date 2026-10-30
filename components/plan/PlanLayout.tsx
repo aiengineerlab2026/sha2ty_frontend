@@ -1,5 +1,6 @@
 "use client";
 
+import { authSession } from "@/lib/auth/client";
 import { useT } from "@/lib/i18n";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -145,8 +146,7 @@ export function PlanLayout() {
 
   useEffect(() => {
     if (!supabaseConfigured()) return;
-    void supabase()
-      .auth.getSession()
+    void authSession()
       .then(async ({ data }) => {
         // Guests can design; only saving needs an account.
         setSignedIn(Boolean(data.session));

@@ -1,12 +1,12 @@
 "use client";
 
 import { setLocale, useLocale, useT } from "@/lib/i18n";
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { ChevronDown, Languages, LayoutGrid, LogOut, Map as MapIcon, Menu, Plus, Settings } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { supabase } from "@/lib/supabase/client";
+import { getUser, logout, onAuthChange, type AuthUser } from "@/lib/auth/client";
 import type { VendorProfile } from "@/lib/vendor/types";
 import { Logo, LogoMark } from "./Logo";
 import { CartMenu } from "./CartMenu";
@@ -32,9 +32,15 @@ export function Header({ vendor, actions }: { vendor?: VendorProfile | null; act
   const router = useRouter();
   const pathname = usePathname();
   const current = activeHref(pathname);
+  // Signed in without a vendor profile: a customer (or a vendor page still loading its profile).
+  const [user, setUser] = useState<AuthUser | null>(null);
+  useEffect(() => {
+    void getUser().then(setUser);
+    return onAuthChange(setUser);
+  }, []);
 
   const signOut = async () => {
-    await supabase().auth.signOut();
+    await logout();
     router.push("/vendor/login");
     router.refresh();
   };
@@ -98,6 +104,16 @@ export function Header({ vendor, actions }: { vendor?: VendorProfile | null; act
           <CartMenu />
           {vendor ? (
             <ProfileMenu vendor={vendor} onSignOut={() => void signOut()} />
+          ) : user ? (
+            <button
+              type="button"
+              onClick={() => void signOut()}
+              title={user.email}
+              className="inline-flex h-9 items-center gap-1.5 rounded-lg px-3 font-medium text-slate-600 transition-colors hover:bg-slate-50 hover:text-red-600"
+            >
+              <LogOut className="size-4" aria-hidden />
+              <span className="hidden sm:inline">{t("Sign out")}</span>
+            </button>
           ) : (
             <>
               <Link href="/vendor/login" className="hidden h-9 items-center rounded-lg px-3 font-medium text-slate-600 transition-colors hover:bg-slate-50 hover:text-brand-navy sm:inline-flex">
@@ -215,7 +231,7 @@ function MobileNav({ current, signedIn, wideOnly }: { current: string | null; si
 }
 
 /** Arabic ⇄ English. Shows the language you switch to, in that language. */
-function LanguageSwitch() {
+export function LanguageSwitch() {
   const locale = useLocale();
   const next = locale === "ar" ? "en" : "ar";
   return (

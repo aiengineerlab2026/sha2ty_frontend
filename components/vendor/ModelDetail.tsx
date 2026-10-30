@@ -1,5 +1,6 @@
 "use client";
 
+import { authSession } from "@/lib/auth/client";
 import { useT } from "@/lib/i18n";
 import { useEffect, useState } from "react";
 import dynamic from "next/dynamic";
@@ -52,7 +53,7 @@ export function ModelDetail({ id }: { id: string }) {
       return;
     }
     void (async () => {
-      const { data: session } = await supabase().auth.getSession();
+      const { data: session } = await authSession();
       if (!session.session) {
         window.location.href = "/vendor/login";
         return;

@@ -1,5 +1,6 @@
 "use client";
 
+import { authSession } from "@/lib/auth/client";
 import { useLocale, useT } from "@/lib/i18n";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
@@ -43,8 +44,7 @@ export function HomePage() {
       setWindows((windowRows.data ?? []) as WindowItem[]);
       setModels(catalog.companies.flatMap((c) => c.models));
     });
-    void supabase()
-      .auth.getSession()
+    void authSession()
       .then(async ({ data }) => {
         const user = data.session?.user;
         setSignedIn(Boolean(user));
