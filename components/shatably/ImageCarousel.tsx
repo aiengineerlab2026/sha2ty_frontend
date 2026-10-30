@@ -6,7 +6,7 @@ import { ChevronLeft, ChevronRight } from "lucide-react";
 
 /**
  * Image carousel: swipe / scroll-snap on touch, arrows on hover, dots, and thumbnails when there are
- * several. Images are contained (never cropped), on a checkerboard when `checker` (transparent cut-outs).
+ * several. Hovering an image zooms in under the pointer. Images are contained (never cropped), on a checkerboard when `checker` (transparent cut-outs).
  */
 export function ImageCarousel({ images, alt, className = "", checker = false, thumbs = true }: { images: string[]; alt: string; className?: string; checker?: boolean; thumbs?: boolean }) {
   const t = useT();
@@ -35,9 +35,19 @@ export function ImageCarousel({ images, alt, className = "", checker = false, th
       <div className={`group relative overflow-hidden rounded-xl ring-1 ring-slate-200/70 ${className}`}>
         <div ref={track} className="flex size-full snap-x snap-mandatory overflow-x-auto scroll-smooth [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           {images.map((src, i) => (
-            <div key={src + i} className={`size-full shrink-0 snap-center ${bg}`}>
+            <div key={src + i} className={`size-full shrink-0 snap-center overflow-hidden ${bg}`}>
+              {/* Hover zoom follows the pointer (Tailwind's hover: only applies on mouse devices, so touch keeps swiping). */}
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={src} alt={i === 0 ? alt : `${alt}, variant ${i + 1}`} className="size-full object-contain" draggable={false} />
+              <img
+                src={src}
+                alt={i === 0 ? alt : `${alt}, variant ${i + 1}`}
+                className="size-full cursor-zoom-in object-contain transition-transform duration-200 ease-out hover:scale-[2.2]"
+                draggable={false}
+                onMouseMove={(e) => {
+                  const box = e.currentTarget.getBoundingClientRect();
+                  e.currentTarget.style.transformOrigin = `${((e.clientX - box.left) / box.width) * 100}% ${((e.clientY - box.top) / box.height) * 100}%`;
+                }}
+              />
             </div>
           ))}
         </div>

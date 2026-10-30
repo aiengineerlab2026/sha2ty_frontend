@@ -26,13 +26,14 @@ import {
   type OrthographicCamera as OrthographicCameraImpl,
 } from "three";
 import { catalogDimensions, normalizeModel, type Dimensions, type NormalizationReport } from "@/lib/plan/modelNormalization";
+import { doorFit, doorways, type Doorway } from "@/lib/plan/doorFit";
 import { clampTilt, cornerSnap, fitWindowOnWall, measureBetween, localWarnings, normalizeYaw, rugWarnings, surfaceHeight, tilted } from "@/lib/plan/placementValidation";
 import { cameraForView, type CameraView } from "@/lib/plan/coordinateSystem";
 import { FACADE, finishFor, tileSize, wallSides, wallTexture } from "@/lib/plan/roomMaterials";
 import { WalkControls } from "./WalkControls";
 import { baseHeight, mountFor, type Mount } from "@/lib/plan/categories";
 import { walkStart } from "@/lib/plan/walkStart";
-import type { CatalogModel, PlanGeometry, PlacedItem, PlacedRug, PlacedWindow, WallPaint } from "@/lib/plan/types";
+import type { CatalogModel, PlanGeometry, PlacedDoor, PlacedItem, PlacedRug, PlacedWindow, WallPaint } from "@/lib/plan/types";
 import { FurnitureObject } from "./FurnitureObject";
 import { PlanAnnotations2D } from "./PlanAnnotations2D";
 
@@ -63,6 +64,9 @@ export function FloorPlanViewer({
   windowDraft = null,
   onPlaceWindow,
   onPickWindow,
+  doorDraft = null,
+  onPlaceDoor,
+  onPickDoor,
   measureIds = null,
   onMeasurePick,
   panning = false,
@@ -105,6 +109,11 @@ export function FloorPlanViewer({
   onPlaceWindow?: (placed: PlacedWindow) => void;
   /** Click on a placed window: pick it up to move it. */
   onPickWindow?: (placed: PlacedWindow) => void;
+  /** Door being fitted: only the plan's doorways take it, coloured by whether its size fits. */
+  doorDraft?: Omit<PlacedDoor, "opening_id"> | null;
+  onPlaceDoor?: (placed: PlacedDoor) => void;
+  /** Click on a fitted door: pick it up to move or delete it. */
+  onPickDoor?: (placed: PlacedDoor) => void;
   /** Measuring: the items picked so far (0–2); clicking a model adds it instead of picking it up. */
   measureIds?: string[] | null;
   onMeasurePick?: (id: string) => void;
@@ -151,6 +160,19 @@ export function FloorPlanViewer({
     return "problem" in fit ? { wall, side, along, y, problem: fit.problem } : { wall, side, along: fit.along, y: fit.y + (wall.elevation ?? 0), problem: null };
   };
   const painting = paintSurface !== null;
+  const doorOpenings = useMemo(() => doorways(geometry), [geometry]);
+  const [doorHover, setDoorHover] = useState<string | null>(null);
+  const doorMessage = (opening: Doorway) => {
+    if (!doorDraft) return "";
+    const fit = doorFit(doorDraft, opening);
+    const size = `${opening.width.toFixed(2)} × ${opening.height.toFixed(2)} m`;
+    if (fit.status === "too_big")
+      return fit.wide < 0
+        ? t("Doesn't fit: {name} is {n} cm wider than this doorway ({size})", { name: doorDraft.name, n: -fit.wide, size })
+        : t("Doesn't fit: {name} is {n} cm taller than this doorway ({size})", { name: doorDraft.name, n: -fit.tall, size });
+    if (fit.status === "gap") return t("Fits with a gap: the doorway ({size}) is {w} cm wider and {h} cm taller", { size, w: fit.wide, h: fit.tall });
+    return t("Fits this doorway ({size}). Click to fit it", { size });
+  };
   const paintWalls = paintSurface === "wall" || paintSurface === "any";
   const paintFloors = paintSurface === "floor" || paintSurface === "any";
   // Carpet at its catalogue width × length must fit the room it is laid in.
@@ -469,6 +491,40 @@ export function FloorPlanViewer({
             />
           ) : null;
         })}
+        {(geometry.placed_doors ?? []).map((door) => {
+          const opening = doorOpenings.find((o) => o.id === door.opening_id);
+          return opening ? (
+            <DoorLeaf
+              key={door.id}
+              door={door}
+              opening={opening}
+              onClick={
+                onPickDoor && !walking && !onPickRoom && !panning && !placing && !painting && !rugDraft && !windowDraft && !doorDraft && !carrying
+                  ? () => {
+                      justPicked.current = true;
+                      onPickDoor(door);
+                    }
+                  : undefined
+              }
+            />
+          ) : null;
+        })}
+        {doorDraft &&
+          doorOpenings.map((opening) => {
+            const status = doorFit(doorDraft, opening).status;
+            return (
+              <DoorwayTarget
+                key={opening.id}
+                opening={opening}
+                status={status}
+                hovered={doorHover === opening.id}
+                onHover={(on) => setDoorHover((h) => (on ? opening.id : h === opening.id ? null : h))}
+                onClick={() => {
+                  if (status !== "too_big" && onPlaceDoor) onPlaceDoor({ ...doorDraft, opening_id: opening.id });
+                }}
+              />
+            );
+          })}
         {measureIds?.length === 2 && <Measurement a={items.find((i) => i.instanceId === measureIds[0])} b={items.find((i) => i.instanceId === measureIds[1])} />}
         {windowDraft && windowHover && (
           <WindowDecal win={{ ...windowDraft, wall_id: windowHover.wall.id, side: windowHover.side, along: windowHover.along, y: windowHover.y }} wall={windowHover.wall} ghost invalid={Boolean(windowHover.problem)} />
@@ -509,6 +565,22 @@ export function FloorPlanViewer({
       {measureIds && (
         <p className="pointer-events-none absolute bottom-3 left-1/2 max-w-[90%] -translate-x-1/2 rounded bg-black/75 px-3 py-1 text-center text-xs text-white">
           {measureIds.length === 0 ? t("Click a model to measure from") : measureIds.length === 1 ? t("Click a second model") : t("Click another model to measure again")} · Esc to stop measuring
+        </p>
+      )}
+      {doorDraft && (
+        <p
+          className={`pointer-events-none absolute bottom-3 left-1/2 max-w-[90%] -translate-x-1/2 rounded px-3 py-1 text-center text-xs text-white ${(() => {
+            const o = doorOpenings.find((d) => d.id === doorHover);
+            return o && doorFit(doorDraft, o).status === "too_big" ? "bg-red-700/90" : "bg-black/70";
+          })()}`}
+        >
+          {doorOpenings.length === 0
+            ? t("This plan has no doorways to fit a door into.")
+            : (() => {
+                const o = doorOpenings.find((d) => d.id === doorHover);
+                return o ? doorMessage(o) : t("Click a doorway to fit {name} ({w} × {h} m)", { name: doorDraft.name, w: doorDraft.width.toFixed(2), h: doorDraft.height.toFixed(2) });
+              })()}{" "}
+          · {t("Esc to cancel")}
         </p>
       )}
       {windowDraft && (
@@ -817,6 +889,55 @@ function alongWall(wall: PlanGeometry["walls"][number], x: number, z: number) {
   const dz = wall.end[1] - wall.start[1];
   const len = Math.hypot(dx, dz) || 1;
   return ((x - wall.start[0]) * dx + (z - wall.start[1]) * dz) / len;
+}
+
+const DOOR_FIT_COLOR = { fits: "#16a34a", gap: "#f59e0b", too_big: "#dc2626" } as const;
+
+/** A door opening while a door is being fitted: a translucent box filling it, green / amber / red by fit. */
+function DoorwayTarget({ opening, status, hovered, onHover, onClick }: { opening: Doorway; status: keyof typeof DOOR_FIT_COLOR; hovered: boolean; onHover: (on: boolean) => void; onClick: () => void }) {
+  const [ax, az] = opening.start;
+  const [bx, bz] = opening.end;
+  return (
+    <mesh
+      position={[(ax + bx) / 2, opening.height / 2, (az + bz) / 2]}
+      rotation={[0, -Math.atan2(bz - az, bx - ax), 0]}
+      onPointerOver={(event) => {
+        event.stopPropagation();
+        onHover(true);
+      }}
+      onPointerOut={() => onHover(false)}
+      onClick={(event) => {
+        event.stopPropagation();
+        onClick();
+      }}
+    >
+      <boxGeometry args={[opening.width, opening.height, opening.thickness + 0.04]} />
+      <meshStandardMaterial color={DOOR_FIT_COLOR[status]} transparent opacity={hovered ? 0.55 : 0.3} depthWrite={false} />
+    </mesh>
+  );
+}
+
+/** A fitted door: its cut-out image standing in the opening at the door's real size, centred, from the floor. */
+function DoorLeaf({ door, opening, onClick }: { door: PlacedDoor; opening: Doorway; onClick?: () => void }) {
+  const texture = usePaintTexture(door.image_url);
+  const [ax, az] = opening.start;
+  const [bx, bz] = opening.end;
+  return (
+    <mesh
+      position={[(ax + bx) / 2, door.height / 2, (az + bz) / 2]}
+      rotation={[0, -Math.atan2(bz - az, bx - ax), 0]}
+      onClick={
+        onClick &&
+        ((event) => {
+          event.stopPropagation();
+          onClick();
+        })
+      }
+    >
+      <planeGeometry args={[door.width, door.height]} />
+      <meshStandardMaterial key={texture?.uuid ?? "loading"} map={texture ?? undefined} transparent alphaTest={0.05} side={DoubleSide} roughness={0.5} />
+    </mesh>
+  );
 }
 
 /** A window on a wall face: its cut-out image (transparent background) at its real size, just in front of the face. */

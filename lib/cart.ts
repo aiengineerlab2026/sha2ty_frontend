@@ -8,7 +8,7 @@ import type { PriceUnit } from "./plan/pricing";
 /** One cart line. quantity is pieces for item prices, m² for area prices. */
 export interface CartLine {
   key: string;
-  kind: "model" | "carpet" | "wall" | "floor" | "window";
+  kind: "model" | "carpet" | "wall" | "floor" | "window" | "door";
   refId: string;
   name: string;
   quantity: number;

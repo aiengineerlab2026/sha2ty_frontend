@@ -5,7 +5,7 @@ import { supabase, supabaseConfigured } from "@/lib/supabase/client";
 import { uploadPublicFile } from "@/lib/vendor/storage";
 
 /** Catalogue item kinds with variant images. Models keep their own model_variants table. */
-export type VariantKind = "model" | "paint" | "carpet" | "window";
+export type VariantKind = "model" | "paint" | "carpet" | "window" | "door";
 
 export interface VariantRow {
   id: string;

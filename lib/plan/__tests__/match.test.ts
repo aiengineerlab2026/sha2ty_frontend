@@ -10,6 +10,12 @@ test("carpets skip the position step; furniture and wall paint ask for it", () =
   for (const type of ["carpet", "furniture", "wall_paint"] as const) assert.ok(!(stepsFor(type) as string[]).includes("calibrate"));
 });
 
+test("a picked cart / bought item skips size and photo; only furniture asks for the position", () => {
+  assert.deepEqual(stepsFor("furniture", { modelSizeMissing: false }), ["type", "position", "variations"]);
+  assert.deepEqual(stepsFor("carpet", { modelSizeMissing: false }), ["type", "variations"]);
+  assert.deepEqual(stepsFor("wall_paint", { modelSizeMissing: true }), ["type", "dimensions", "variations"]);
+});
+
 test("dimensions convert to centimetres", () => {
   assert.equal(toCm(2.4, "m"), 240);
   assert.equal(toCm(180, "cm"), 180);

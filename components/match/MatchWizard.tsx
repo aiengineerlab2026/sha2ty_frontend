@@ -1,7 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Armchair, ArrowLeft, ArrowRight, Images, ImagePlus, LoaderCircle, Minus, PaintRoller, Plus, RectangleHorizontal, Wand2 } from "lucide-react";
+import { Armchair, ArrowLeft, ArrowRight, Images, ImagePlus, LoaderCircle, Minus, PackageCheck, PaintRoller, Plus, RectangleHorizontal, ShoppingCart, Wand2 } from "lucide-react";
+import { useCart } from "@/lib/cart";
+import { fetchOrders } from "@/lib/orders";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { useT } from "@/lib/i18n";
 import { requestMatch } from "@/lib/match/api";
@@ -17,6 +19,10 @@ const TYPES: { id: MatchType; label: string; hint: string; icon: typeof Armchair
   { id: "wall_paint", label: "Wall paint", hint: "Paint or texture a wall behind it", icon: PaintRoller },
   { id: "carpet", label: "Carpet", hint: "Lay a carpet underneath it", icon: RectangleHorizontal },
 ];
+
+/** Cart / bought line kinds that can be matched, and the match type each becomes. */
+const PICKABLE = { model: "furniture", carpet: "carpet", wall: "wall_paint" } as const;
+type Pick = { kind: keyof typeof PICKABLE; id: string; name: string; bought: boolean };
 
 const POSITIONS: { id: MatchPosition; label: string }[] = [
   { id: "front", label: "Front" },
@@ -104,16 +110,18 @@ function MatchWizard({ open, onOpenChange, model, onDone }: { open: boolean; onO
   const [percent, setPercent] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const abort = useRef<AbortController | null>(null);
+  const [picked, setPicked] = useState<Pick | null>(null);
+  const picks = usePicks(model.id);
 
-  const steps = stepsFor(type);
-  const current = steps[step];
   const missing = { w: !model.width_m, d: !model.depth_m, h: !model.height_m };
+  const steps = stepsFor(type, picked ? { modelSizeMissing: missing.w || missing.d || missing.h } : undefined);
+  const current = steps[step];
   const num = (v: string) => Number(v.replace(",", "."));
   const positive = (v: string) => Number.isFinite(num(v)) && num(v) > 0;
 
   const valid: Record<string, boolean> = {
     type: Boolean(type),
-    dimensions: positive(width) && positive(height) && (!depth || positive(depth)) && (!missing.w || positive(modelDims.w)) && (!missing.d || positive(modelDims.d)) && (!missing.h || positive(modelDims.h)),
+    dimensions: (picked !== null || (positive(width) && positive(height) && (!depth || positive(depth)))) && (!missing.w || positive(modelDims.w)) && (!missing.d || positive(modelDims.d)) && (!missing.h || positive(modelDims.h)),
     image: type === "wall_paint" && useColor ? /^#[0-9a-f]{6}$/i.test(color) : Boolean(file) && (type !== "wall_paint" || positive(tile)),
     position: Boolean(position),
     variations: count >= 1 && count <= 5,
@@ -137,13 +145,15 @@ function MatchWizard({ open, onOpenChange, model, onDone }: { open: boolean; onO
         {
           modelId: model.id,
           matchType: type,
-          width: num(width),
-          height: num(height),
-          depth: depth ? num(depth) : undefined,
+          width: picked ? undefined : num(width),
+          height: picked ? undefined : num(height),
+          depth: !picked && depth ? num(depth) : undefined,
+          otherKind: picked?.kind,
+          otherId: picked?.id,
           unit,
           position: type === "carpet" ? undefined : (position ?? undefined),
           variationsCount: count,
-          uploadedImage: type === "wall_paint" && useColor ? null : file,
+          uploadedImage: picked || (type === "wall_paint" && useColor) ? null : file,
           color: type === "wall_paint" && useColor ? color : undefined,
           tileSize: type === "wall_paint" && !useColor ? num(tile) : undefined,
           modelWidth: missing.w ? num(modelDims.w) : undefined,
@@ -193,14 +203,15 @@ function MatchWizard({ open, onOpenChange, model, onDone }: { open: boolean; onO
                     key={id}
                     type="button"
                     role="radio"
-                    aria-checked={type === id}
+                    aria-checked={!picked && type === id}
                     onClick={() => {
                       setType(id);
+                      setPicked(null);
                       setPosition(null);
                     }}
-                    className={`flex flex-col items-start gap-2 rounded-2xl border p-4 text-start transition ${type === id ? "border-brand-amber bg-brand-amber-soft/50 shadow-sm" : "border-slate-200 hover:border-slate-300 hover:bg-slate-50"}`}
+                    className={`flex flex-col items-start gap-2 rounded-2xl border p-4 text-start transition ${!picked && type === id ? "border-brand-amber bg-brand-amber-soft/50 shadow-sm" : "border-slate-200 hover:border-slate-300 hover:bg-slate-50"}`}
                   >
-                    <span className={`flex size-10 items-center justify-center rounded-xl ${type === id ? "bg-brand-amber text-white" : "bg-slate-100 text-slate-600"}`}>
+                    <span className={`flex size-10 items-center justify-center rounded-xl ${!picked && type === id ? "bg-brand-amber text-white" : "bg-slate-100 text-slate-600"}`}>
                       <Icon className="size-5" aria-hidden />
                     </span>
                     <span className="text-sm font-semibold text-brand-navy">{t(label)}</span>
@@ -208,17 +219,56 @@ function MatchWizard({ open, onOpenChange, model, onDone }: { open: boolean; onO
                   </button>
                 ))}
               </div>
+              {picks.length > 0 && (
+                <div className="mt-6">
+                  <h4 className="text-sm font-semibold text-brand-navy">{t("Or pick something from your cart or bought items")}</h4>
+                  <p className="mt-0.5 text-xs text-slate-500">{t("Its photo and size are already known, so there's nothing to measure or upload.")}</p>
+                  <div role="radiogroup" className="mt-3 grid gap-2 sm:grid-cols-2">
+                    {picks.map((p) => {
+                      const on = picked?.kind === p.kind && picked.id === p.id;
+                      const Icon = TYPES.find((x) => x.id === PICKABLE[p.kind])!.icon;
+                      return (
+                        <button
+                          key={`${p.kind}:${p.id}`}
+                          type="button"
+                          role="radio"
+                          aria-checked={on}
+                          onClick={() => {
+                            setPicked(p);
+                            setType(PICKABLE[p.kind]);
+                            setPosition(null);
+                          }}
+                          className={`flex items-center gap-3 rounded-xl border p-3 text-start transition ${on ? "border-brand-amber bg-brand-amber-soft/50 shadow-sm" : "border-slate-200 hover:border-slate-300 hover:bg-slate-50"}`}
+                        >
+                          <span className={`flex size-9 shrink-0 items-center justify-center rounded-lg ${on ? "bg-brand-amber text-white" : "bg-slate-100 text-slate-600"}`}>
+                            <Icon className="size-4" aria-hidden />
+                          </span>
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate text-sm font-medium text-brand-navy">{p.name}</span>
+                            <span className="flex items-center gap-1 text-xs text-slate-500">
+                              {p.bought ? <PackageCheck className="size-3" aria-hidden /> : <ShoppingCart className="size-3" aria-hidden />}
+                              {t(p.bought ? "Bought" : "In your cart")}
+                            </span>
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
             </Question>
           )}
 
           {current === "dimensions" && (
             <Question title={t("How big is it in real life?")} hint={t(type === "carpet" ? "The carpet's size on the floor." : type === "wall_paint" ? "The real size of the wall to paint." : "Depth is optional but makes the placement more accurate.")}>
               <UnitToggle unit={unit} onUnit={setUnit} />
-              <div className="mt-3 grid gap-3 sm:grid-cols-3">
-                <NumberField label={t(dimLabels[0])} unit={unit} value={width} onChange={setWidth} required />
-                <NumberField label={t(dimLabels[1])} unit={unit} value={height} onChange={setHeight} required />
-                {type === "furniture" && <NumberField label={t("Depth (optional)")} unit={unit} value={depth} onChange={setDepth} />}
-              </div>
+              {!picked && (
+                <div className="mt-3 grid gap-3 sm:grid-cols-3">
+                  <NumberField label={t(dimLabels[0])} unit={unit} value={width} onChange={setWidth} required />
+                  <NumberField label={t(dimLabels[1])} unit={unit} value={height} onChange={setHeight} required />
+                  {type === "furniture" && <NumberField label={t("Depth (optional)")} unit={unit} value={depth} onChange={setDepth} />}
+                </div>
+              )}
               {(missing.w || missing.d || missing.h) && (
                 <div className="mt-5 rounded-xl border border-amber-200 bg-amber-50 p-3">
                   <p className="text-xs text-amber-800">{t("This model has no size in the catalogue. Enter it so both items are scaled correctly.")}</p>
@@ -420,4 +470,25 @@ function Upload({ file, onFile }: { file: File | null; onFile: (f: File | null) 
       {error && <p className="mt-2 text-xs text-red-700">{error}</p>}
     </div>
   );
+}
+
+/** Matchable items from the cart and from past orders (cart first, no duplicates, not this model). */
+function usePicks(modelId: string): Pick[] {
+  const cart = useCart();
+  const [bought, setBought] = useState<Pick[]>([]);
+  useEffect(() => {
+    void fetchOrders()
+      .then((orders) => setBought(orders.flatMap((o) => o.lines).flatMap((l) => (l.kind in PICKABLE ? [{ kind: l.kind as Pick["kind"], id: l.refId, name: l.name, bought: true }] : []))))
+      .catch(() => undefined); // signed out / orders table missing: cart only
+  }, []);
+  return useMemo(() => {
+    const fromCart = cart.flatMap((l): Pick[] => (l.kind in PICKABLE ? [{ kind: l.kind as Pick["kind"], id: l.refId, name: l.name, bought: false }] : []));
+    const seen = new Set<string>();
+    return [...fromCart, ...bought].filter((p) => {
+      const key = `${p.kind}:${p.id}`;
+      if (seen.has(key) || (p.kind === "model" && p.id === modelId)) return false;
+      seen.add(key);
+      return true;
+    });
+  }, [cart, bought, modelId]);
 }

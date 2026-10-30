@@ -1,4 +1,4 @@
-export type ModelSource = "photo" | "upload";
+export type ModelSource = "photo" | "upload" | "none"; // none: photos only, no 3D
 /** "item" = total price per piece; "m2" = price per square metre. */
 export type PriceUnit = "item" | "m2";
 export type ModelProvider = "meshy" | "astra";
@@ -79,6 +79,9 @@ export interface WindowItem {
   price: number | null;
   price_unit: PriceUnit;
 }
+
+/** Door: same shape as a window; fitted into the plan's door openings only. */
+export type DoorItem = WindowItem;
 
 /** Carpet: an image laid flat on the floor at its real width × length. */
 export interface Carpet {

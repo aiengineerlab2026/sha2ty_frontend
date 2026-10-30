@@ -7,7 +7,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { clearCart, lineTotal, setCartQuantity, useCart } from "@/lib/cart";
 import { formatPrice } from "@/lib/plan/pricing";
 
-const KIND = { model: "Furniture", carpet: "Carpet", wall: "Wall finish", floor: "Floor finish", window: "Window" } as const;
+const KIND = { model: "Furniture", carpet: "Carpet", wall: "Wall finish", floor: "Floor finish", window: "Window", door: "Door" } as const;
 
 /** Header cart: lines with quantity steppers (pieces, or m² for area-priced finishes) and the total. */
 export function CartMenu() {

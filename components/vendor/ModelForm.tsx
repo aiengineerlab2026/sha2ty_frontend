@@ -10,7 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
 import { supabase, supabaseConfigured } from "@/lib/supabase/client";
-import { generateFromPhoto } from "@/lib/vendor/generate";
+import { fetchGenerationQuota, generateFromPhoto } from "@/lib/vendor/generate";
 import { uploadPublicFile } from "@/lib/vendor/storage";
 import type { ModelProvider, ModelSource, VendorProfile } from "@/lib/vendor/types";
 import { Dimensions, numberOrNull } from "./Dimensions";
@@ -46,6 +46,8 @@ export function ModelForm() {
   const [busy, setBusy] = useState(false);
   const [progressLabel, setProgressLabel] = useState<string | null>(null);
   const [progressPercent, setProgressPercent] = useState(0);
+  const [quota, setQuota] = useState<Record<ModelProvider, number> | null>(null);
+  const refreshQuota = () => void fetchGenerationQuota().then(setQuota);
 
   useEffect(() => {
     if (!supabaseConfigured()) return;
@@ -57,7 +59,9 @@ export function ModelForm() {
         }
         const profile = await supabase().from("vendors").select("*").eq("id", data.session.user.id).maybeSingle();
         setVendor(profile.data);
+        refreshQuota();
       });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const submit = async (event: React.FormEvent) => {
@@ -100,7 +104,9 @@ export function ModelForm() {
         setProgressPercent(6);
         sourceImageUrl = await uploadPublicFile(vendor.id, photo, `${id}/photo`);
       }
-      if (source === "upload") {
+      if (source === "none") {
+        if (!photo && !variants.length) throw new Error(t("Add at least one photo."));
+      } else if (source === "upload") {
         if (!glb) throw new Error(t("Choose a GLB file."));
         setProgressLabel(t("Uploading GLB…"));
         setProgressPercent(20);
@@ -109,6 +115,7 @@ export function ModelForm() {
         setProgressLabel(t("Upload complete"));
       } else {
         if (!photo) throw new Error(t("Choose a photo to generate from."));
+        if (quota && quota[provider] <= 0) throw new Error(t("No {name} generations left on this account.", { name: provider === "astra" ? "GPT Astra" : "Meshy" }));
         glbUrl = await generateFromPhoto(
           photo,
           provider,
@@ -152,6 +159,7 @@ export function ModelForm() {
       }
       setError(message);
     } finally {
+      if (source === "photo") refreshQuota();
       setBusy(false);
     }
   };
@@ -184,6 +192,10 @@ export function ModelForm() {
               <input type="radio" checked={source === "upload"} onChange={() => setSource("upload")} />
               {t("Upload an existing GLB")}
             </label>
+            <label className="flex items-center gap-2 text-sm">
+              <input type="radio" checked={source === "none"} onChange={() => setSource("none")} />
+              {t("Photos only (no 3D model)")}
+            </label>
           </fieldset>
           {source === "photo" && (
             <>
@@ -192,13 +204,21 @@ export function ModelForm() {
                 <label className="flex items-center gap-2 text-sm">
                   <input type="radio" checked={provider === "meshy"} onChange={() => setProvider("meshy")} />
                   {t("Meshy")}
+                  <TriesLeft n={quota?.meshy} />
                 </label>
                 <label className="flex items-center gap-2 text-sm">
                   <input type="radio" checked={provider === "astra"} onChange={() => setProvider("astra")} />
                   {t("GPT Astra")}
+                  <TriesLeft n={quota?.astra} />
                 </label>
               </fieldset>
               {/* Upload, drag and drop, or paste a copied image (button or Ctrl/⌘+V). */}
+              <ImagePicker variant="dropzone" label={t("Photo")} value={photo} onChange={setPhoto} />
+            </>
+          )}
+          {source === "none" && (
+            <>
+              <p className="text-xs text-slate-500">{t("Shown in the shop with its photos. It can't be placed in the plan builder until you add a 3D model.")}</p>
               <ImagePicker variant="dropzone" label={t("Photo")} value={photo} onChange={setPhoto} />
             </>
           )}
@@ -228,3 +248,14 @@ export function ModelForm() {
   );
 }
 
+
+/** "12 tries left" next to a generator (red when none are left). */
+function TriesLeft({ n }: { n: number | undefined }) {
+  const t = useT();
+  if (n == null) return null;
+  return (
+    <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${n > 0 ? "bg-slate-100 text-slate-600" : "bg-red-50 text-red-700"}`}>
+      {n > 0 ? t("{n} tries left", { n }) : t("No tries left")}
+    </span>
+  );
+}

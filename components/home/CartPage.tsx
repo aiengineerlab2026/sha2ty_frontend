@@ -4,7 +4,9 @@ import { authSession } from "@/lib/auth/client";
 import { useT } from "@/lib/i18n";
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { AppWindow, Armchair, BrickWall, LayoutGrid, Minus, Plus, RectangleHorizontal, ShoppingCart, Trash2 } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { placeOrder } from "@/lib/orders";
+import { AppWindow, Armchair, BrickWall, DoorOpen, LayoutGrid, LoaderCircle, Minus, Plus, RectangleHorizontal, ShoppingCart, Trash2 } from "lucide-react";
 import { Header } from "@/components/shatably/Header";
 import { clearCart, lineTotal, setCartQuantity, useCart, type CartLine } from "@/lib/cart";
 import { formatPrice } from "@/lib/plan/pricing";
@@ -17,6 +19,7 @@ const GROUPS: { kind: CartLine["kind"]; title: string; icon: typeof Armchair }[]
   { kind: "wall", title: "Wall finishes", icon: BrickWall },
   { kind: "floor", title: "Floor finishes", icon: LayoutGrid },
   { kind: "window", title: "Windows", icon: AppWindow },
+  { kind: "door", title: "Doors", icon: DoorOpen },
 ];
 
 /** Cart: everything the user added, grouped by kind, with quantities (pieces or m²) and totals. */
@@ -24,6 +27,22 @@ export function CartPage() {
   const t = useT();
   const lines = useCart();
   const [vendor, setVendor] = useState<VendorProfile | null>(null);
+  const router = useRouter();
+  const [placing, setPlacing] = useState(false);
+  const [orderError, setOrderError] = useState<string | null>(null);
+  // ponytail: no payment step yet; placing the order records it in the user's bought items.
+  const order = async () => {
+    setPlacing(true);
+    setOrderError(null);
+    try {
+      await placeOrder(lines);
+      clearCart();
+      router.push("/orders");
+    } catch (caught) {
+      setOrderError((caught as Error).message);
+      setPlacing(false);
+    }
+  };
 
   useEffect(() => {
     if (!supabaseConfigured()) return;
@@ -128,7 +147,17 @@ export function CartPage() {
                 </div>
               </dl>
               {unpriced > 0 && <p className="text-xs text-amber-700">{unpriced} without a price (price on request, not in the total).</p>}
-              <p className="text-xs leading-relaxed text-slate-500">{t("Area-priced finishes are counted in m². Checkout isn't available yet; your cart is kept in this browser.")}</p>
+              <button
+                type="button"
+                onClick={() => void order()}
+                disabled={placing}
+                className="flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-brand-amber text-sm font-semibold text-brand-navy shadow-sm transition hover:bg-[#e8952a] disabled:opacity-60"
+              >
+                {placing && <LoaderCircle className="size-4 animate-spin" aria-hidden />}
+                {t("Place order")}
+              </button>
+              {orderError && <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">{orderError}</p>}
+              <p className="text-xs leading-relaxed text-slate-500">{t("Area-priced finishes are counted in m². Placed orders appear in your bought items.")}</p>
             </aside>
           </div>
         )}

@@ -55,8 +55,6 @@ export function HomePage({ only }: { only?: CatalogKind } = {}) {
   const [paints, setPaints] = useState<Paint[]>([]);
   const [carpets, setCarpets] = useState<Carpet[]>([]);
   const [windows, setWindows] = useState<WindowItem[]>([]);
-  // Vendor name + logo for paints, carpets and windows (models carry their company already).
-  const [vendors, setVendors] = useState<Map<string, Maker>>(new Map());
   const [loaded, setLoaded] = useState(false); // catalogue fetched: until then rows show placeholders, not "none yet"
 
   useEffect(() => {
@@ -66,20 +64,8 @@ export function HomePage({ only }: { only?: CatalogKind } = {}) {
       supabase().from("paints").select("*").order("name"),
       supabase().from("carpets").select("*").order("name"),
       supabase().from("windows").select("*").order("name"),
-      fetchCatalog("", 0).catch(() => ({ companies: [] })),
-      supabase().from("vendors").select("id, name, logo_url"),
-    ]).then(([paintRows, carpetRows, windowRows, catalog, vendorRows]) => {
-      setVendors(
-        new Map(
-          (
-            (vendorRows.data ?? []) as {
-              id: string;
-              name: string;
-              logo_url: string | null;
-            }[]
-          ).map((v) => [v.id, { name: v.name, logo: v.logo_url }]),
-        ),
-      );
+      fetchCatalog("", 0, false).catch(() => ({ companies: [] })),
+    ]).then(([paintRows, carpetRows, windowRows, catalog]) => {
       setPaints((paintRows.data ?? []) as Paint[]);
       setCarpets((carpetRows.data ?? []) as Carpet[]);
       setWindows((windowRows.data ?? []) as WindowItem[]);
@@ -227,7 +213,6 @@ export function HomePage({ only }: { only?: CatalogKind } = {}) {
                           ? null
                           : formatPrice(m.price, m.price_unit ?? "item")
                       }
-                      maker={{ name: m.company, logo: m.company_logo ?? null }}
                       title={m.title}
                       meta={
                         m.width_m && m.height_m && m.depth_m
@@ -263,7 +248,6 @@ export function HomePage({ only }: { only?: CatalogKind } = {}) {
                 {colours.map((p) => (
                   <Card
                     key={p.id}
-                    maker={vendors.get(p.vendor_id)}
                     href={`/catalog/paints/${p.id}`}
                     price={
                       p.price == null
@@ -297,7 +281,6 @@ export function HomePage({ only }: { only?: CatalogKind } = {}) {
                 {floors.map((p) => (
                   <Card
                     key={p.id}
-                    maker={vendors.get(p.vendor_id)}
                     href={`/catalog/paints/${p.id}`}
                     price={
                       p.price == null
@@ -331,7 +314,6 @@ export function HomePage({ only }: { only?: CatalogKind } = {}) {
                 {carpets.map((c) => (
                   <Card
                     key={c.id}
-                    maker={vendors.get(c.vendor_id)}
                     href={`/catalog/carpets/${c.id}`}
                     price={
                       c.price == null
@@ -364,7 +346,6 @@ export function HomePage({ only }: { only?: CatalogKind } = {}) {
                 {windows.map((w) => (
                   <Card
                     key={w.id}
-                    maker={vendors.get(w.vendor_id)}
                     href={`/catalog/windows/${w.id}`}
                     price={
                       w.price == null
@@ -617,12 +598,9 @@ function Banner() {
   );
 }
 
-type Maker = { name: string; logo: string | null };
-
 function Card({
   href,
   tag,
-  maker,
   title,
   meta,
   price,
@@ -632,8 +610,6 @@ function Card({
   href: string;
   /** Type chip on the image (models skip it: their row already says the type). */
   tag?: string;
-  /** The vendor, shown with its logo. */
-  maker?: Maker;
   title: string;
   meta: string;
   /** Formatted price, or null for "Price on request". */
@@ -658,23 +634,6 @@ function Card({
         )}
       </div>
       <div className="flex flex-1 flex-col gap-1 p-3.5">
-        {maker && (
-          <span className="flex min-w-0 items-center gap-1.5 text-[11px] font-medium text-slate-500">
-            {maker.logo ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={maker.logo}
-                alt=""
-                className="size-5 shrink-0 rounded-full bg-white object-contain ring-1 ring-slate-200"
-              />
-            ) : (
-              <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-brand-navy text-[9px] font-semibold text-white">
-                {maker.name.slice(0, 1).toUpperCase()}
-              </span>
-            )}
-            <span className="truncate">{maker.name}</span>
-          </span>
-        )}
         <h3 className="truncate text-sm font-semibold text-brand-navy">
           {title}
         </h3>

@@ -12,7 +12,10 @@ export type Step = "type" | "dimensions" | "image" | "position" | "variations";
 
 /** Wizard steps per match type: carpets always go under the model, so they skip the position. The
  * model's footprint, the floor perspective and the wall are estimated by the backend (no clicks). */
-export function stepsFor(type: MatchType | null): Step[] {
+export function stepsFor(type: MatchType | null, picked?: { modelSizeMissing: boolean }): Step[] {
+  // An item from the cart / purchases brings its own photo and size: only furniture asks where it goes
+  // (sizes are asked only when the catalogue model itself has none).
+  if (picked) return ["type", ...(picked.modelSizeMissing ? (["dimensions"] as const) : []), ...(type === "furniture" ? (["position"] as const) : []), "variations"];
   if (type === "carpet") return ["type", "dimensions", "image", "variations"];
   return ["type", "dimensions", "image", "position", "variations"];
 }
@@ -29,8 +32,8 @@ export function stepIndex(index: number, count: number, dir: 1 | -1) {
 export interface MatchRequest {
   modelId: string;
   matchType: MatchType;
-  width: number;
-  height: number;
+  width?: number;
+  height?: number;
   depth?: number;
   unit: Unit;
   position?: MatchPosition;
@@ -42,6 +45,9 @@ export interface MatchRequest {
   modelWidth?: number;
   modelDepth?: number;
   modelHeight?: number;
+  /** Match with a cart / bought item instead of an upload (the backend reads its photo and size). */
+  otherKind?: "model" | "carpet" | "wall";
+  otherId?: string;
 }
 
 export function matchForm(req: MatchRequest) {
