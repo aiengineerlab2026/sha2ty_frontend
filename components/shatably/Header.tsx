@@ -11,7 +11,10 @@ import type { VendorProfile } from "@/lib/vendor/types";
 import { Logo, LogoMark } from "./Logo";
 import { CartMenu } from "./CartMenu";
 
-const NAV = [
+type NavItem = { href: string; label: string };
+
+/** Vendors manage their own items in the studio. */
+const STUDIO_NAV: NavItem[] = [
   { href: "/vendor", label: "Models" },
   { href: "/vendor/paints", label: "Paints" },
   { href: "/vendor/carpets", label: "Carpets" },
@@ -19,10 +22,19 @@ const NAV = [
   { href: "/plan", label: "Plan" },
 ];
 
+/** Everyone else (guests, customers) browses the public catalogue. */
+const CATALOG_NAV: NavItem[] = [
+  { href: "/catalog/models", label: "Models" },
+  { href: "/catalog/paints", label: "Paints" },
+  { href: "/catalog/carpets", label: "Carpets" },
+  { href: "/catalog/windows", label: "Windows" },
+  { href: "/plan", label: "Plan" },
+];
+
 /** The most specific nav entry containing the path (/vendor/paints is Paints, not Models). */
-function activeHref(pathname: string) {
+function activeHref(pathname: string, nav: NavItem[]) {
   if (/^\/vendor\/(login|signup|reset-password)/.test(pathname)) return null;
-  const hits = NAV.filter((item) => pathname === item.href || pathname.startsWith(`${item.href}/`));
+  const hits = nav.filter((item) => pathname === item.href || pathname.startsWith(`${item.href}/`));
   return hits.sort((a, b) => b.href.length - a.href.length)[0]?.href ?? null;
 }
 
@@ -31,7 +43,8 @@ export function Header({ vendor, actions }: { vendor?: VendorProfile | null; act
   const t = useT();
   const router = useRouter();
   const pathname = usePathname();
-  const current = activeHref(pathname);
+  const nav = vendor ? STUDIO_NAV : CATALOG_NAV;
+  const current = activeHref(pathname, nav);
   // Signed in without a vendor profile: a customer (or a vendor page still loading its profile).
   const [user, setUser] = useState<AuthUser | null>(null);
   useEffect(() => {
@@ -50,7 +63,7 @@ export function Header({ vendor, actions }: { vendor?: VendorProfile | null; act
       <div className="flex h-16 w-full items-center gap-2 px-3 sm:gap-5 sm:px-5 xl:gap-8">
         {/* With page actions (the plan editor) the links collapse into the menu until 2xl, so the
             document title and its save badge keep their room. */}
-        <MobileNav current={current} signedIn={Boolean(vendor)} wideOnly={Boolean(actions)} />
+        <MobileNav nav={nav} current={current} signedIn={Boolean(vendor)} wideOnly={Boolean(actions)} />
         <Link href={vendor ? "/vendor" : "/"} className="flex shrink-0 items-center" aria-label={t("sha2ty home")}>
           {/* Phones: the mark alone, so page actions (plan title, Save) keep their room. */}
           <span className="sm:hidden">
@@ -63,7 +76,7 @@ export function Header({ vendor, actions }: { vendor?: VendorProfile | null; act
 
         <nav className="flex h-full min-w-0 flex-1 items-center gap-4 xl:gap-6" aria-label={t("Main")}>
           <ul className={`hidden h-full shrink-0 items-center gap-1 ${actions ? "2xl:flex" : "lg:flex"}`}>
-            {NAV.map((item) => {
+            {nav.map((item) => {
               const active = current === item.href;
               return (
                 <li key={item.href} className="h-full">
@@ -192,7 +205,7 @@ function ProfileMenu({ vendor, onSignOut }: { vendor: VendorProfile; onSignOut: 
 }
 
 /** Below lg the nav links live in a menu, so the bar never overflows on tablets and phones. */
-function MobileNav({ current, signedIn, wideOnly }: { current: string | null; signedIn: boolean; wideOnly: boolean }) {
+function MobileNav({ nav, current, signedIn, wideOnly }: { nav: NavItem[]; current: string | null; signedIn: boolean; wideOnly: boolean }) {
   const t = useT();
   return (
     <DropdownMenu>
@@ -206,7 +219,7 @@ function MobileNav({ current, signedIn, wideOnly }: { current: string | null; si
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" sideOffset={8} className="w-52 p-1.5">
-        {NAV.map((item) => (
+        {nav.map((item) => (
           <DropdownMenuItem key={item.href} asChild>
             <Link href={item.href} aria-current={current === item.href ? "page" : undefined} className={`cursor-pointer ${current === item.href ? "font-semibold text-brand-navy" : ""}`}>
               {current === item.href && <span className="size-1.5 rounded-full bg-brand-amber" aria-hidden />}

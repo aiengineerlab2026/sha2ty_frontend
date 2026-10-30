@@ -17,13 +17,11 @@ export interface CartLine {
 }
 
 /**
- * The cart belongs to whoever is signed in: a signed-in user's cart lives in the `carts` table
- * (one row per user, owner-only RLS), so it follows them across devices; a guest's cart lives in
- * this browser and is merged into their account when they log in. Logging out shows the guest
- * cart again, never the previous user's.
+ * Only signed-in users have a cart. It lives in the `carts` table (one row per user, owner-only RLS),
+ * so it follows them across devices. Guests see an empty cart, and adding to it sends them to log
+ * in. Logging out empties the cart on screen, never showing the previous user's.
  */
-const GUEST_KEY = "shatably.cart.guest";
-const LEGACY_KEY = "shatably.cart.v1";
+const OLD_KEYS = ["shatably.cart.v1", "shatably.cart.guest"]; // browser carts from before; dropped
 const userKey = (id: string) => `shatably.cart.${id}`; // fallback while the carts table is missing
 const SAVE_DELAY = 400;
 
@@ -86,48 +84,29 @@ function merge(base: CartLine[], extra: CartLine[]): CartLine[] {
   return [...next.values()];
 }
 
-/** Switch the cart to `user` (or the guest), merging a guest cart into the account on login. */
+/** Switch the cart to `user`; signed out, the cart is empty. */
 async function switchTo(user: AuthUser | null) {
   if (saveTimer) {
     clearTimeout(saveTimer);
     saveTimer = null;
     if (owner) await saveRemote(owner, lines); // flush the previous owner's pending change
   }
-  if (!user) {
-    owner = null;
-    emit(local(GUEST_KEY));
-    return;
-  }
-  owner = user.id;
-  const guest = local(GUEST_KEY);
+  owner = user?.id ?? null;
+  if (!user) return emit(EMPTY);
   const mine = await loadRemote(user.id);
-  if (owner !== user.id) return; // switched again meanwhile
-  if (guest.length) {
-    const merged = merge(mine, guest);
-    emit(merged);
-    storeLocal(GUEST_KEY, []);
-    await saveRemote(user.id, merged);
-  } else {
-    emit(mine);
-  }
+  if (owner === user.id) emit(mine); // unless switched again meanwhile
 }
 
 function init() {
   if (ready || typeof window === "undefined") return;
-  // One-time move of the old shared cart into the guest cart.
-  const legacy = local(LEGACY_KEY);
-  if (legacy.length) {
-    storeLocal(GUEST_KEY, merge(local(GUEST_KEY), legacy));
-    storeLocal(LEGACY_KEY, []);
-  }
-  emit(local(GUEST_KEY)); // instant guest cart; replaced once the user is known
+  OLD_KEYS.forEach((key) => storeLocal(key, []));
   ready = getUser().then(switchTo);
   onAuthChange((user) => void switchTo(user));
 }
 
 function write(next: CartLine[]) {
+  if (!owner) return;
   emit(next);
-  if (!owner) return storeLocal(GUEST_KEY, next);
   const id = owner;
   if (saveTimer) clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
@@ -148,9 +127,14 @@ export function useCart() {
   );
 }
 
-/** Adds lines; the same item adds up its quantity. */
-export function addToCart(added: CartLine[]) {
+/** Adds lines (the same item adds up its quantity). Signed out: goes to log in, then back here. */
+export async function addToCart(added: CartLine[]) {
   init();
+  await ready;
+  if (!owner) {
+    window.location.href = `/vendor/login?next=${encodeURIComponent(location.pathname + location.search)}`;
+    return;
+  }
   write(merge(lines, added));
 }
 

@@ -42,7 +42,8 @@ type Slot = {
 const has = (re: RegExp) => (m: CatalogModel) => re.test(`${m.title} ${m.category ?? ""}`);
 // Order matters: a model goes to the first free slot it matches ("Tv table" is a table, not a TV).
 const SLOTS: Slot[] = [
-  { test: has(/bed/i), at: ({ w }) => [T + w / 2, 7.1], rot: 0, box: [2.1, 0.5, 1.8], fill: "#f8fafc", headToWall: true },
+  // ponytail: bed hidden for now; to bring it back, restore this slot first and drop the bed filter in assign():
+  // { test: has(/bed/i), at: ({ w }) => [T + w / 2, 7.1], rot: 0, box: [2.1, 0.5, 1.8], fill: "#f8fafc", headToWall: true },
   { test: has(/wardrobe|cupboard|closet/i), at: ({ w, d }) => [5 - d / 2, 5 + T + w / 2], rot: -90, box: [1.2, 2, 0.6], fill: "#cbd5e1" },
   { test: (m) => m.category === "table" || has(/table/i)(m), at: ({ d }) => [3, T + d / 2], rot: 0, box: [1.6, 0.5, 0.45], fill: "#ffffff" },
   { test: (m) => m.category === "tv", at: () => [3, T + 0.2], rot: 0, box: [1.4, 0.8, 0.08], fill: "#1f2937" },
@@ -50,8 +51,12 @@ const SLOTS: Slot[] = [
   { test: () => true, at: ({ d }) => [8, T + d / 2], rot: 0, box: [2.8, 0.9, 0.6], fill: "#94a3b8" },
 ];
 
+// The TV stands on the TV table: their slots, by position in SLOTS.
+const TABLE = 1;
+const TV = TABLE + 1;
+
 function assign(models: CatalogModel[]): (CatalogModel | null)[] {
-  const pool = models.filter((m) => m.glb_url && m.width_m && m.height_m && m.depth_m);
+  const pool = models.filter((m) => m.glb_url && m.width_m && m.height_m && m.depth_m && !has(/bed/i)(m));
   return SLOTS.map((slot) => {
     const i = pool.findIndex(slot.test);
     return i < 0 ? null : pool.splice(i, 1)[0];
@@ -68,10 +73,10 @@ export function AuthRoom({ className }: { className?: string }) {
   }, []);
   // The TV stands on the TV table: centred on it, at the loaded table's measured height
   // (the scaled model can come out lower than its catalogue height).
-  const table = models[2];
+  const table = models[TABLE];
   const [tableTop, setTableTop] = useState<number | null>(null);
-  const tvSpot = SLOTS[2].at(table ? { w: table.width_m!, d: table.depth_m! } : { w: SLOTS[2].box[0], d: SLOTS[2].box[2] });
-  const tvY = table ? (tableTop ?? table.height_m!) : SLOTS[2].box[1];
+  const tvSpot = SLOTS[TABLE].at(table ? { w: table.width_m!, d: table.depth_m! } : { w: SLOTS[TABLE].box[0], d: SLOTS[TABLE].box[2] });
+  const tvY = table ? (tableTop ?? table.height_m!) : SLOTS[TABLE].box[1];
 
   return (
     <Canvas className={className} shadows dpr={[1, 2]} gl={{ alpha: true }}>
@@ -99,10 +104,10 @@ export function AuthRoom({ className }: { className?: string }) {
         {SLOTS.map((slot, i) => (
           <Furniture
             key={models[i]?.id ?? i}
-            slot={i === 3 ? { ...slot, at: () => tvSpot } : slot}
+            slot={i === TV ? { ...slot, at: () => tvSpot } : slot}
             model={models[i]}
-            y={i === 3 ? tvY : 0}
-            onHeight={i === 2 ? setTableTop : undefined}
+            y={i === TV ? tvY : 0}
+            onHeight={i === TABLE ? setTableTop : undefined}
           />
         ))}
       </group>

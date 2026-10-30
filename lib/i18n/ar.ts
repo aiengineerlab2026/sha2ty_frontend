@@ -776,4 +776,5 @@ export const AR: Record<string, string> = {
   "Approve": "موافقة",
   "Reject": "رفض",
   "Suspend": "إيقاف",
+  "Wall and floor finishes": "تشطيبات الجدران والأرضيات",
 };
