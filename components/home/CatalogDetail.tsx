@@ -80,7 +80,7 @@ export function CatalogDetail({ kind, id }: { kind: CatalogKind; id: string }) {
 function ModelView({ model, signedIn }: { model: CatalogModel; signedIn: boolean }) {
   const t = useT();
   const photos = useMemo(() => [...new Set([model.thumbnail, ...(model.variants ?? [])].filter((u): u is string => Boolean(u)))], [model]);
-  const [shown, setShown] = useState<"3d" | number>(model.glb_url ? "3d" : 0);
+  const [shown, setShown] = useState<"3d" | number>(photos.length || !model.glb_url ? 0 : "3d");
   const description = useMemo(() => safeHtml(model.description ?? ""), [model.description]);
   const dims = model.width_m && model.height_m && model.depth_m ? { width: model.width_m, height: model.height_m, depth: model.depth_m } : null;
 
@@ -91,14 +91,14 @@ function ModelView({ model, signedIn }: { model: CatalogModel; signedIn: boolean
         <div className="space-y-3">
           {shown === "3d" ? <ModelViewer url={model.glb_url} dimensions={dims} /> : <ImageCarousel images={photos} alt={model.title} className="aspect-4/3 bg-white" />}
           <div className="flex gap-2" role="tablist" aria-label={t("View")}>
-            {model.glb_url && (
-              <button type="button" role="tab" aria-selected={shown === "3d"} onClick={() => setShown("3d")} className={VIEW_TAB(shown === "3d")}>
-                {t("3D view")}
-              </button>
-            )}
             {photos.length > 0 && (
               <button type="button" role="tab" aria-selected={shown !== "3d"} onClick={() => setShown(0)} className={VIEW_TAB(shown !== "3d")}>
                 {t("Photos · {n}", { n: photos.length })}
+              </button>
+            )}
+            {model.glb_url && (
+              <button type="button" role="tab" aria-selected={shown === "3d"} onClick={() => setShown("3d")} className={VIEW_TAB(shown === "3d")}>
+                {t("3D view")}
               </button>
             )}
           </div>

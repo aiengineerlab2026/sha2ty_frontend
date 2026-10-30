@@ -4,7 +4,7 @@ import { setLocale, useLocale, useT } from "@/lib/i18n";
 import { useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { ChevronDown, Languages, LayoutGrid, LogOut, Map as MapIcon, Menu, Plus, Settings } from "lucide-react";
+import { Check, ChevronDown, LayoutGrid, LogOut, Map as MapIcon, Menu, Plus, Settings } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { getUser, logout, onAuthChange, type AuthUser } from "@/lib/auth/client";
 import type { VendorProfile } from "@/lib/vendor/types";
@@ -244,19 +244,87 @@ function MobileNav({ nav, current, signedIn, wideOnly }: { nav: NavItem[]; curre
 }
 
 /** Arabic ⇄ English. Shows the language you switch to, in that language. */
+// ponytail: two languages, so no search box; add one if the list grows past ~8.
+const LANGUAGES = [
+  { code: "ar", short: "AR", name: "العربية", region: "مصر", Flag: EgyptFlag },
+  { code: "en", short: "EN", name: "English", region: "United Kingdom", Flag: UkFlag },
+] as const;
+
+function FlagCircle({ Flag, size = "size-5" }: { Flag: () => ReactNode; size?: string }) {
+  return (
+    <span className={`${size} shrink-0 overflow-hidden rounded-full shadow-[0_0_0_1px_rgb(0_0_0/0.08)]`}>
+      <Flag />
+    </span>
+  );
+}
+
+/** Flag + code trigger; the dropdown picks the language. */
 export function LanguageSwitch() {
   const locale = useLocale();
-  const next = locale === "ar" ? "en" : "ar";
+  const t = useT();
+  const current = LANGUAGES.find((l) => l.code === locale) ?? LANGUAGES[1];
   return (
-    <button
-      type="button"
-      onClick={() => setLocale(next)}
-      lang={next}
-      aria-label={next === "en" ? "Switch to English" : "التبديل إلى العربية"}
-      className="inline-flex h-9 items-center gap-1.5 rounded-lg px-2 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-50 hover:text-brand-navy"
-    >
-      <Languages className="size-4" aria-hidden />
-      <span className="hidden sm:inline">{next === "en" ? "English" : "العربية"}</span>
-    </button>
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          aria-label={t("Language")}
+          className="group inline-flex h-9 items-center gap-1.5 rounded-lg border border-transparent ps-2 pe-1.5 text-sm font-semibold text-slate-600 transition-colors hover:border-slate-200 hover:bg-slate-50 hover:text-brand-navy focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-amber/40 data-[state=open]:border-slate-200 data-[state=open]:bg-slate-50 data-[state=open]:text-brand-navy"
+        >
+          <FlagCircle Flag={current.Flag} />
+          <span className="tracking-wide">{current.short}</span>
+          <ChevronDown className="size-3.5 text-slate-400 transition-transform group-data-[state=open]:rotate-180" aria-hidden />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" sideOffset={8} className="w-56 p-1.5">
+        <DropdownMenuLabel className="px-2 pt-1.5 pb-1 text-xs font-medium text-slate-400">{t("Language")}</DropdownMenuLabel>
+        {LANGUAGES.map(({ code, short, name, region, Flag }) => {
+          const active = code === locale;
+          return (
+            <DropdownMenuItem
+              key={code}
+              lang={code}
+              onSelect={() => setLocale(code)}
+              className={`cursor-pointer gap-3 rounded-md px-2 py-2 ${active ? "bg-brand-amber/10 focus:bg-brand-amber/15" : ""}`}
+            >
+              <FlagCircle Flag={Flag} size="size-7" />
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-sm font-medium text-brand-navy">{name}</span>
+                <span className="block truncate text-xs text-slate-500">{region}</span>
+              </span>
+              {active ? <Check className="size-4 text-brand-amber" aria-hidden /> : <span className="text-xs font-semibold text-slate-400">{short}</span>}
+            </DropdownMenuItem>
+          );
+        })}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+// Inline SVG flags: emoji flags don't render on Windows. Both are cropped to a square for the circle.
+function UkFlag() {
+  return (
+    <svg viewBox="15 0 30 30" className="size-full" aria-hidden>
+      <clipPath id="uk-flag-diagonals">
+        <path d="M30,15 h30 v15 z v15 h-30 z h-30 v-15 z v-15 h30 z" />
+      </clipPath>
+      <path d="M0,0 v30 h60 v-30 z" fill="#012169" />
+      <path d="M0,0 L60,30 M60,0 L0,30" stroke="#fff" strokeWidth="6" />
+      <path d="M0,0 L60,30 M60,0 L0,30" clipPath="url(#uk-flag-diagonals)" stroke="#C8102E" strokeWidth="4" />
+      <path d="M30,0 v30 M0,15 h60" stroke="#fff" strokeWidth="10" />
+      <path d="M30,0 v30 M0,15 h60" stroke="#C8102E" strokeWidth="6" />
+    </svg>
+  );
+}
+
+function EgyptFlag() {
+  return (
+    <svg viewBox="0 0 30 30" className="size-full" aria-hidden>
+      <path d="M0,0 h30 v10 h-30 z" fill="#CE1126" />
+      <path d="M0,10 h30 v10 h-30 z" fill="#fff" />
+      <path d="M0,20 h30 v10 h-30 z" fill="#000" />
+      {/* ponytail: eagle simplified to a gold mark; it's ~5px at this size */}
+      <path d="M15,11.5 l2.6,1.6 -0.6,4.6 -2,1 -2,-1 -0.6,-4.6 z" fill="#C09300" />
+    </svg>
   );
 }

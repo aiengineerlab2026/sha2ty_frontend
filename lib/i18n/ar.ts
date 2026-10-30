@@ -777,4 +777,5 @@ export const AR: Record<string, string> = {
   "Reject": "رفض",
   "Suspend": "إيقاف",
   "Wall and floor finishes": "تشطيبات الجدران والأرضيات",
+  "Language": "اللغة",
 };
