@@ -1,4 +1,4 @@
-export type ModelSource = "photo" | "upload";
+export type ModelSource = "photo" | "upload" | "none"; // none: photos only, no 3D
 /** "item" = total price per piece; "m2" = price per square metre. */
 export type PriceUnit = "item" | "m2";
 export type ModelProvider = "meshy" | "astra";

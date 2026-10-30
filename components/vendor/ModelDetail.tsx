@@ -160,7 +160,7 @@ export function ModelDetail({ id }: { id: string }) {
         )}
         {model && !model.glb_url && (
           <p className="rounded-xl border border-slate-200 bg-white p-6 text-sm text-slate-600">
-            {t("This model does not have a GLB yet. Generate or upload one first.")}
+            {t("No 3D model: it is listed with its photos only and can't be placed in the plan builder.")}
           </p>
         )}
         {model?.glb_url && <ModelViewer url={model.glb_url} dimensions={catalogDimensions(model)} />}

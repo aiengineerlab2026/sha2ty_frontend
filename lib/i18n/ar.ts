@@ -459,7 +459,7 @@ export const AR: Record<string, string> = {
   "Loading viewer…": "جارٍ تحميل العارض…",
   "Drag to orbit, scroll to zoom, end-drag to pan.": "اسحب للدوران، ومرّر للتكبير، واسحب بالزر الأيمن للتحريك.",
   "Dimensions are stored in meters.": "تُحفظ المقاسات بالمتر.",
-  "This model does not have a GLB yet. Generate or upload one first.": "لا يوجد ملف GLB لهذا الموديل بعد. أنشئ ملفًا أو ارفعه أولًا.",
+  "No 3D model: it is listed with its photos only and can't be placed in the plan builder.": "لا يوجد نموذج ثلاثي الأبعاد: يُعرض بصوره فقط ولا يمكن وضعه في مخطط الشقة.",
   "Scaled to the catalogue width": "بمقياس عرض الكتالوج",
   "No catalogue size yet: authored size": "لا يوجد مقاس في الكتالوج بعد: المقاس الأصلي",
   Shape: "الشكل",
@@ -778,4 +778,7 @@ export const AR: Record<string, string> = {
   "Suspend": "إيقاف",
   "Wall and floor finishes": "تشطيبات الجدران والأرضيات",
   "Language": "اللغة",
+  "Photos only (no 3D model)": "صور فقط (بدون نموذج ثلاثي الأبعاد)",
+  "Add at least one photo.": "أضف صورة واحدة على الأقل.",
+  "Shown in the shop with its photos. It can't be placed in the plan builder until you add a 3D model.": "يظهر في المتجر بصوره. لا يمكن وضعه في مخطط الشقة حتى تضيف نموذجاً ثلاثي الأبعاد.",
 };

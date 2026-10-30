@@ -66,7 +66,7 @@ export function HomePage({ only }: { only?: CatalogKind } = {}) {
       supabase().from("paints").select("*").order("name"),
       supabase().from("carpets").select("*").order("name"),
       supabase().from("windows").select("*").order("name"),
-      fetchCatalog("", 0).catch(() => ({ companies: [] })),
+      fetchCatalog("", 0, false).catch(() => ({ companies: [] })),
       supabase().from("vendors").select("id, name, logo_url"),
     ]).then(([paintRows, carpetRows, windowRows, catalog, vendorRows]) => {
       setVendors(

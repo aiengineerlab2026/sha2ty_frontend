@@ -50,14 +50,15 @@ async function publicGet<T>(path: string): Promise<T> {
   return json as T;
 }
 
-export function fetchCatalog(q = "", offset = 0) {
-  const params = new URLSearchParams({ q, limit: "40", offset: String(offset) });
+/** `require3d: false` also lists photo-only models (the shop); the plan builder needs a GLB. */
+export function fetchCatalog(q = "", offset = 0, require3d = true) {
+  const params = new URLSearchParams({ q, limit: "40", offset: String(offset), require_3d: String(require3d) });
   return publicGet<{ companies: CompanyGroup[]; count: number }>(`/api/plans/models?${params}`);
 }
 
 /** One catalogue model by id (any vendor's), or null when it is not ready / not found. */
 export async function fetchCatalogModel(id: string) {
-  const data = await publicGet<{ companies: CompanyGroup[] }>(`/api/plans/models?${new URLSearchParams({ id, limit: "1" })}`);
+  const data = await publicGet<{ companies: CompanyGroup[] }>(`/api/plans/models?${new URLSearchParams({ id, limit: "1", require_3d: "false" })}`);
   return data.companies[0]?.models[0] ?? null;
 }
 

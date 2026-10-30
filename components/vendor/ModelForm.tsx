@@ -100,7 +100,9 @@ export function ModelForm() {
         setProgressPercent(6);
         sourceImageUrl = await uploadPublicFile(vendor.id, photo, `${id}/photo`);
       }
-      if (source === "upload") {
+      if (source === "none") {
+        if (!photo && !variants.length) throw new Error(t("Add at least one photo."));
+      } else if (source === "upload") {
         if (!glb) throw new Error(t("Choose a GLB file."));
         setProgressLabel(t("Uploading GLB…"));
         setProgressPercent(20);
@@ -184,6 +186,10 @@ export function ModelForm() {
               <input type="radio" checked={source === "upload"} onChange={() => setSource("upload")} />
               {t("Upload an existing GLB")}
             </label>
+            <label className="flex items-center gap-2 text-sm">
+              <input type="radio" checked={source === "none"} onChange={() => setSource("none")} />
+              {t("Photos only (no 3D model)")}
+            </label>
           </fieldset>
           {source === "photo" && (
             <>
@@ -199,6 +205,12 @@ export function ModelForm() {
                 </label>
               </fieldset>
               {/* Upload, drag and drop, or paste a copied image (button or Ctrl/⌘+V). */}
+              <ImagePicker variant="dropzone" label={t("Photo")} value={photo} onChange={setPhoto} />
+            </>
+          )}
+          {source === "none" && (
+            <>
+              <p className="text-xs text-slate-500">{t("Shown in the shop with its photos. It can't be placed in the plan builder until you add a 3D model.")}</p>
               <ImagePicker variant="dropzone" label={t("Photo")} value={photo} onChange={setPhoto} />
             </>
           )}
