@@ -781,4 +781,8 @@ export const AR: Record<string, string> = {
   "Photos only (no 3D model)": "صور فقط (بدون نموذج ثلاثي الأبعاد)",
   "Add at least one photo.": "أضف صورة واحدة على الأقل.",
   "Shown in the shop with its photos. It can't be placed in the plan builder until you add a 3D model.": "يظهر في المتجر بصوره. لا يمكن وضعه في مخطط الشقة حتى تضيف نموذجاً ثلاثي الأبعاد.",
+  "{n} tries left": "متبقٍ {n} محاولات",
+  "No tries left": "لا توجد محاولات متبقية",
+  "No {name} generations left on this account.": "لا توجد محاولات {name} متبقية لهذا الحساب.",
+  "Generation limits are not set up. Run backend/supabase/generation_quota.sql in Supabase.": "حدود الإنشاء غير مُعدّة. شغّل backend/supabase/generation_quota.sql في Supabase.",
 };

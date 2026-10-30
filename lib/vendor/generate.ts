@@ -62,6 +62,14 @@ export async function generateFromPhoto(
   throw new Error("Generation timed out. Try again.");
 }
 
+/** Generation tries left per provider for the signed-in vendor, or null when unavailable. */
+export async function fetchGenerationQuota(): Promise<Record<ModelProvider, number> | null> {
+  const res = await fetch(`${API}/api/vendor/generation-quota`).catch(() => null);
+  if (!res?.ok) return null;
+  const body = await res.json().catch(() => null);
+  return body?.remaining ?? null;
+}
+
 function conversionLabel(status: string, percent: number): string {
   if (status === "PENDING") return "Queued for conversion…";
   if (percent < 35) return "Analyzing the photo…";
