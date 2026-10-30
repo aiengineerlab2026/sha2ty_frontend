@@ -1,0 +1,16 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "noEmit": false,
+    "outDir": ".test-build",
+    "rootDir": ".",
+    "incremental": false,
+    "jsx": "preserve",
+    "isolatedModules": false,
+    "verbatimModuleSyntax": false,
+    "plugins": []
+  },
+  "include": ["lib/plan/__tests__/*.test.ts"]
+}
