@@ -4,7 +4,7 @@ import { setLocale, useLocale, useT } from "@/lib/i18n";
 import { useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Check, ChevronDown, LayoutGrid, LogOut, Map as MapIcon, Menu, Plus, Settings } from "lucide-react";
+import { Check, ChevronDown, LayoutGrid, LogOut, Map as MapIcon, Menu, PackageCheck, Plus, Settings } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { getUser, logout, onAuthChange, type AuthUser } from "@/lib/auth/client";
 import type { VendorProfile } from "@/lib/vendor/types";
@@ -118,15 +118,25 @@ export function Header({ vendor, actions }: { vendor?: VendorProfile | null; act
           {vendor ? (
             <ProfileMenu vendor={vendor} onSignOut={() => void signOut()} />
           ) : user ? (
-            <button
-              type="button"
-              onClick={() => void signOut()}
-              title={user.email}
-              className="inline-flex h-9 items-center gap-1.5 rounded-lg px-3 font-medium text-slate-600 transition-colors hover:bg-slate-50 hover:text-red-600"
-            >
-              <LogOut className="size-4" aria-hidden />
-              <span className="hidden sm:inline">{t("Sign out")}</span>
-            </button>
+            <>
+              <Link
+                href="/orders"
+                title={t("Bought items")}
+                className="inline-flex h-9 items-center gap-1.5 rounded-lg px-2.5 font-medium text-slate-600 transition-colors hover:bg-slate-50 hover:text-brand-navy"
+              >
+                <PackageCheck className="size-4" aria-hidden />
+                <span className="sr-only lg:not-sr-only">{t("Bought items")}</span>
+              </Link>
+              <button
+                type="button"
+                onClick={() => void signOut()}
+                title={user.email}
+                className="inline-flex h-9 items-center gap-1.5 rounded-lg px-3 font-medium text-slate-600 transition-colors hover:bg-slate-50 hover:text-red-600"
+              >
+                <LogOut className="size-4" aria-hidden />
+                <span className="hidden sm:inline">{t("Sign out")}</span>
+              </button>
+            </>
           ) : (
             <>
               <Link href="/vendor/login" className="hidden h-9 items-center rounded-lg px-3 font-medium text-slate-600 transition-colors hover:bg-slate-50 hover:text-brand-navy sm:inline-flex">
@@ -183,6 +193,11 @@ function ProfileMenu({ vendor, onSignOut }: { vendor: VendorProfile; onSignOut: 
         <DropdownMenuItem asChild>
           <Link href="/vendor" className="cursor-pointer gap-2">
             <LayoutGrid className="size-4" aria-hidden /> {t("My models")}
+          </Link>
+        </DropdownMenuItem>
+        <DropdownMenuItem asChild>
+          <Link href="/orders" className="cursor-pointer gap-2">
+            <PackageCheck className="size-4" aria-hidden /> {t("Bought items")}
           </Link>
         </DropdownMenuItem>
         <DropdownMenuItem asChild>
