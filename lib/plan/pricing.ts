@@ -15,7 +15,7 @@ export function formatPrice(price: number | null | undefined, unit: PriceUnit = 
 export interface CostLine {
   /** Stable key: what the line is for (merges same model / paint / carpet). */
   key: string;
-  kind: "model" | "carpet" | "wall" | "floor" | "window";
+  kind: "model" | "carpet" | "wall" | "floor" | "window" | "door";
   refId: string;
   name: string;
   /** Pieces for item prices, m² for area prices. */
@@ -49,6 +49,10 @@ export function planCost(geometry: PlanGeometry, items: PlacedItem[]): { lines: 
   for (const win of geometry.placed_windows ?? []) {
     const unit = win.price_unit ?? "item";
     add({ key: `window:${win.windowId}`, kind: "window", refId: win.windowId, name: win.name, unit, price: win.price ?? null, quantity: unit === "m2" ? win.width * win.height : 1 });
+  }
+  for (const door of geometry.placed_doors ?? []) {
+    const unit = door.price_unit ?? "item";
+    add({ key: `door:${door.doorId}`, kind: "door", refId: door.doorId, name: door.name, unit, price: door.price ?? null, quantity: unit === "m2" ? door.width * door.height : 1 });
   }
   const paint = (kind: "wall" | "floor", p: WallPaint, area: number) => {
     const unit = p.price_unit ?? "m2";

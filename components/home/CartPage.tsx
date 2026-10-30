@@ -6,7 +6,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { placeOrder } from "@/lib/orders";
-import { AppWindow, Armchair, BrickWall, LayoutGrid, LoaderCircle, Minus, Plus, RectangleHorizontal, ShoppingCart, Trash2 } from "lucide-react";
+import { AppWindow, Armchair, BrickWall, DoorOpen, LayoutGrid, LoaderCircle, Minus, Plus, RectangleHorizontal, ShoppingCart, Trash2 } from "lucide-react";
 import { Header } from "@/components/shatably/Header";
 import { clearCart, lineTotal, setCartQuantity, useCart, type CartLine } from "@/lib/cart";
 import { formatPrice } from "@/lib/plan/pricing";
@@ -19,6 +19,7 @@ const GROUPS: { kind: CartLine["kind"]; title: string; icon: typeof Armchair }[]
   { kind: "wall", title: "Wall finishes", icon: BrickWall },
   { kind: "floor", title: "Floor finishes", icon: LayoutGrid },
   { kind: "window", title: "Windows", icon: AppWindow },
+  { kind: "door", title: "Doors", icon: DoorOpen },
 ];
 
 /** Cart: everything the user added, grouped by kind, with quantities (pieces or m²) and totals. */

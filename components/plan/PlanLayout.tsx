@@ -4,7 +4,7 @@ import { authSession } from "@/lib/auth/client";
 import { useT } from "@/lib/i18n";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { AppWindow, Armchair, ChevronUp, Footprints, LayoutGrid, FolderOpen, LoaderCircle, PaintRoller, RectangleHorizontal, TriangleAlert, X } from "lucide-react";
+import { AppWindow, Armchair, DoorOpen, ChevronUp, Footprints, LayoutGrid, FolderOpen, LoaderCircle, PaintRoller, RectangleHorizontal, TriangleAlert, X } from "lucide-react";
 import { Header } from "@/components/shatably/Header";
 import { supabase, supabaseConfigured } from "@/lib/supabase/client";
 import { PlanValidationError, createRoomFromDimensions, createRoomFromImage, exportRoomGlb, listPlans, loadPlan, rebuildFromGeometry, savePlan } from "@/lib/plan/api";
@@ -13,7 +13,7 @@ import type { CameraView } from "@/lib/plan/coordinateSystem";
 import { clampTilt, localWarnings, nearestValidSpot, normalizeYaw, restOnSurfaces } from "@/lib/plan/placementValidation";
 import { baseHeight, mountFor } from "@/lib/plan/categories";
 import { clearPendingPlan, stashPlan, takePendingPlan } from "@/lib/plan/pendingPlan";
-import type { CatalogModel, PlanGeometry, PlacedItem, PlacedRug, PlacedWindow, WallPaint } from "@/lib/plan/types";
+import type { CatalogModel, PlanGeometry, PlacedItem, PlacedDoor, PlacedRug, PlacedWindow, WallPaint } from "@/lib/plan/types";
 import type { VendorProfile } from "@/lib/vendor/types";
 import { FloorPlanViewer, rotationKey } from "./FloorPlanViewer";
 import { ModelSidebar } from "./ModelSidebar";
@@ -22,7 +22,7 @@ import { PlanEstimate } from "./PlanEstimate";
 import { CarpetPicker, PaintPicker, WindowPicker, brushFor, type Brush } from "./PaintPicker";
 import { FinishDetails, type Finish } from "./FinishDetails";
 import { finishUsage } from "@/lib/plan/pricing";
-import type { Carpet, WindowItem } from "@/lib/vendor/types";
+import type { Carpet, DoorItem, WindowItem } from "@/lib/vendor/types";
 import { PlacementWarnings } from "./PlacementWarnings";
 import { PlanActions, ViewportToolbar } from "./PlanToolbar";
 import { RoomCreationDialog } from "./RoomCreationDialog";
@@ -85,9 +85,11 @@ export function PlanLayout() {
   // Paint / floor finish / carpet whose details are open; "Apply to apartment" starts using it.
   const [finish, setFinish] = useState<Finish | null>(null);
   const [showDebug, setShowDebug] = useState(false);
-  const [tab, setTab] = useState<"models" | "paints" | "carpets" | "windows">("models");
+  const [tab, setTab] = useState<"models" | "paints" | "carpets" | "windows" | "doors">("models");
   // Window being placed on a wall (new, or a placed one picked up: `restore` puts it back on Esc).
   const [windowDraft, setWindowDraft] = useState<{ win: Omit<PlacedWindow, "wall_id" | "side" | "along" | "y">; restore?: PlacedWindow } | null>(null);
+  // Door being fitted: the next click on a doorway that fits puts it there (picked-up doors keep `restore`).
+  const [doorDraft, setDoorDraft] = useState<{ door: Omit<PlacedDoor, "opening_id">; restore?: PlacedDoor } | null>(null);
   const [brush, setBrush] = useState<Brush | null>(null);
   // Carpet being laid (new from the sidebar, or a placed one picked up: `restore` puts it back on Esc).
   const [rugDraft, setRugDraft] = useState<{ rug: Omit<PlacedRug, "x" | "z">; restore?: PlacedRug } | null>(null);
@@ -352,6 +354,35 @@ export function PlanLayout() {
     setWindowDraft(null);
   };
 
+  const cancelDoor = () => {
+    const restore = doorDraft?.restore;
+    if (restore) setGeometry((g) => (g ? { ...g, placed_doors: [...(g.placed_doors ?? []), restore] } : g));
+    setDoorDraft(null);
+  };
+
+  const startDoor = (door: DoorItem) => {
+    cancelDoor();
+    cancelWindow();
+    cancelRug();
+    setPlacing(null);
+    setBrush(null);
+    setDoorDraft({
+      door: { id: crypto.randomUUID(), doorId: door.id, name: door.name, image_url: door.image_url, width: Number(door.width_m), height: Number(door.height_m), price: door.price == null ? null : Number(door.price), price_unit: door.price_unit ?? "item" },
+    });
+  };
+
+  useEffect(() => {
+    if (!doorDraft) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.target instanceof HTMLInputElement) return;
+      if (event.key === "Escape") cancelDoor();
+      if (doorDraft.restore && (event.key === "Delete" || event.key === "Backspace")) setDoorDraft(null); // picked-up door: delete it
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [doorDraft]);
+
   useEffect(() => {
     // Something was picked from the catalogue (or a placement started): show the plan on phones.
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -372,6 +403,7 @@ export function PlanLayout() {
     setPlacing(null);
     cancelRug();
     cancelWindow();
+    cancelDoor();
   };
 
   // Start placing a window: the next click on a wall face puts it there (from the details panel).
@@ -476,8 +508,8 @@ export function PlanLayout() {
   // Starting any action leaves the pan tool.
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    if (placing || brush || rugDraft || windowDraft || measureIds) setPanning(false);
-  }, [placing, brush, rugDraft, windowDraft, measureIds]);
+    if (placing || brush || rugDraft || windowDraft || doorDraft || measureIds) setPanning(false);
+  }, [placing, brush, rugDraft, windowDraft, doorDraft, measureIds]);
 
   // H toggles the pan tool (not while typing; not while walking).
   useEffect(() => {
@@ -721,7 +753,7 @@ export function PlanLayout() {
               aria-label={t("Catalogue")}
               className="m-3 mb-0 grid shrink-0 grid-cols-2 gap-1.5"
               onKeyDown={(event) => {
-                const order = ["models", "paints", "carpets", "windows"] as const;
+                const order = ["models", "paints", "carpets", "windows", "doors"] as const;
                 const step = event.key === "ArrowRight" || event.key === "ArrowDown" ? 1 : event.key === "ArrowLeft" || event.key === "ArrowUp" ? -1 : 0;
                 if (!step) return;
                 event.preventDefault();
@@ -736,6 +768,7 @@ export function PlanLayout() {
                   ["paints", "Paint", PaintRoller],
                   ["carpets", "Carpets", RectangleHorizontal],
                   ["windows", "Windows", AppWindow],
+                  ["doors", "Doors", DoorOpen],
                 ] as const
               ).map(([id, label, Icon]) => {
                 const on = tab === id;
@@ -794,6 +827,16 @@ export function PlanLayout() {
                   setFinish({ kind: "carpet", carpet });
                 }}
               />
+            ) : tab === "doors" ? (
+              <WindowPicker
+                doors
+                activeId={doorDraft?.door.doorId ?? null}
+                onPick={(door) => {
+                  setDetail(null);
+                  setFinish(null);
+                  startDoor(door);
+                }}
+              />
             ) : (
               <WindowPicker
                 activeId={windowDraft?.win.windowId ?? (finish?.kind === "window" ? finish.window.id : null)}
@@ -823,6 +866,17 @@ export function PlanLayout() {
                 onPaintWall={(key) => applyPaint("wall_paints", key)}
                 onPaintFloor={(id) => applyPaint("floor_paints", id)}
                 rugDraft={rugDraft?.rug ?? null}
+                doorDraft={doorDraft?.door ?? null}
+                onPlaceDoor={(placed) => {
+                  setGeometry((g) => (g ? { ...g, placed_doors: [...(g.placed_doors ?? []).filter((d) => d.opening_id !== placed.opening_id), placed] } : g));
+                  setDoorDraft(null);
+                }}
+                onPickDoor={(placed) => {
+                  if (brush || placing || rugDraft || windowDraft || doorDraft) return;
+                  setGeometry((g) => (g ? { ...g, placed_doors: (g.placed_doors ?? []).filter((d) => d.id !== placed.id) } : g));
+                  const { opening_id: _o, ...door } = placed;
+                  setDoorDraft({ door, restore: placed });
+                }}
                 windowDraft={windowDraft?.win ?? null}
                 onPlaceWindow={(placed) => {
                   setGeometry((g) => (g ? { ...g, placed_windows: [...(g.placed_windows ?? []), placed] } : g));
@@ -1011,7 +1065,7 @@ export function PlanLayout() {
             </button>
             {/* Hidden while walking: the walk key guide uses the bottom of the view. */}
             {/* Hidden while a key guide or hint owns the bottom of the view (walking, placing, measuring…). */}
-            {view !== "walk" && !measureIds && !placing && !rugDraft && !windowDraft && !brush && <PlanEstimate geometry={geometry} items={items} />}
+            {view !== "walk" && !measureIds && !placing && !rugDraft && !windowDraft && !doorDraft && !brush && <PlanEstimate geometry={geometry} items={items} />}
             {walkPicker && (
               <WalkRoomBanner
                 onCancel={() => {

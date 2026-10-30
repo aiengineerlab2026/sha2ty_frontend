@@ -161,7 +161,7 @@ export function CarpetPicker({ activeId, onPick }: { activeId: string | null; on
 }
 
 /** Windows tab: vendor windows (transparent cut-outs); click one for details, then click a wall to place it. */
-export function WindowPicker({ activeId, onPick }: { activeId: string | null; onPick: (win: WindowItem) => void }) {
+export function WindowPicker({ activeId, onPick, doors = false }: { activeId: string | null; onPick: (win: WindowItem) => void; /** Doors tab: same list from the doors table. */ doors?: boolean }) {
   const t = useT();
   const [windows, setWindows] = useState<WindowItem[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -169,19 +169,19 @@ export function WindowPicker({ activeId, onPick }: { activeId: string | null; on
   useEffect(() => {
     if (!supabaseConfigured()) return;
     void supabase()
-      .from("windows")
+      .from(doors ? "doors" : "windows")
       .select("*")
       .order("name")
       .then(({ data, error: next }) => {
         if (next) setError(next.message);
         else setWindows((data ?? []) as WindowItem[]);
       });
-  }, []);
+  }, [doors]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="min-h-0 flex-1 space-y-1 overflow-y-auto p-3">
-        <p className="px-1 pb-1 text-xs text-slate-500">{t("Click a window to see its details, then click a wall to place it.")}</p>
+        <p className="px-1 pb-1 text-xs text-slate-500">{t(doors ? "Click a door, then click a doorway in the plan to fit it. Doorways turn green when it fits." : "Click a window to see its details, then click a wall to place it.")}</p>
         {windows.map((win) => (
           <button key={win.id} type="button" className={rowClass(activeId === win.id)} onClick={() => onPick(win)}>
             <span className="size-12 shrink-0 overflow-hidden rounded-lg bg-[length:10px_10px] ring-1 ring-slate-900/5 [background-image:repeating-conic-gradient(#f1f5f9_0_25%,#fff_0_50%)]">
@@ -200,9 +200,9 @@ export function WindowPicker({ activeId, onPick }: { activeId: string | null; on
           </button>
         ))}
         {error && <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">{error}</p>}
-        {!error && windows.length === 0 && <p className="px-1 py-6 text-center text-sm text-slate-400">{t("No windows yet. Vendors add them under Windows.")}</p>}
+        {!error && windows.length === 0 && <p className="px-1 py-6 text-center text-sm text-slate-400">{t(doors ? "No doors yet. Vendors add them under Doors." : "No windows yet. Vendors add them under Windows.")}</p>}
       </div>
-      <SidebarStatus count={windows.length} noun={["window", "windows"]} error={Boolean(error)} />
+      <SidebarStatus count={windows.length} noun={doors ? ["door", "doors"] : ["window", "windows"]} error={Boolean(error)} />
     </div>
   );
 }

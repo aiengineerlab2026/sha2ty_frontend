@@ -80,6 +80,9 @@ export interface WindowItem {
   price_unit: PriceUnit;
 }
 
+/** Door: same shape as a window; fitted into the plan's door openings only. */
+export type DoorItem = WindowItem;
+
 /** Carpet: an image laid flat on the floor at its real width × length. */
 export interface Carpet {
   id: string;

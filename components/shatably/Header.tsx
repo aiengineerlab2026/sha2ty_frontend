@@ -19,6 +19,7 @@ const STUDIO_NAV: NavItem[] = [
   { href: "/vendor/paints", label: "Paints" },
   { href: "/vendor/carpets", label: "Carpets" },
   { href: "/vendor/windows", label: "Windows" },
+  { href: "/vendor/doors", label: "Doors" },
   { href: "/plan", label: "Plan" },
 ];
 

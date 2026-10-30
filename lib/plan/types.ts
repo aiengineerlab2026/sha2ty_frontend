@@ -154,6 +154,19 @@ export interface PlacedRug {
   tilt?: number;
 }
 
+/** Vendor door fitted into one of the plan's door openings (`doors[].id`), filling it from the floor. */
+export interface PlacedDoor {
+  id: string;
+  doorId: string;
+  name: string;
+  image_url: string;
+  width: number;
+  height: number;
+  opening_id: string;
+  price?: number | null;
+  price_unit?: "item" | "m2";
+}
+
 /** Window applied to a wall face: centred `along` metres from the wall's start, centre `y` above the floor. */
 export interface PlacedWindow {
   id: string;
@@ -194,6 +207,8 @@ export interface PlanGeometry {
   rugs?: PlacedRug[];
   /** Vendor windows on wall faces (not the detected window openings in `windows`). */
   placed_windows?: PlacedWindow[];
+  /** Vendor doors fitted into door openings. */
+  placed_doors?: PlacedDoor[];
   floors?: Vec2[][];
   meters_per_pixel?: number | null;
   // Pixel-space plan (present on image imports) — see CorrectionState.

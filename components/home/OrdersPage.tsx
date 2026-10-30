@@ -11,8 +11,8 @@ import { fetchOrders, type Order } from "@/lib/orders";
 import { formatPrice } from "@/lib/plan/pricing";
 import { supabaseConfigured } from "@/lib/supabase/client";
 
-const KIND = { model: "Furniture", carpet: "Carpet", wall: "Wall finish", floor: "Floor finish", window: "Window" } as const;
-const HREF = { model: "models", carpet: "carpets", wall: "paints", floor: "paints", window: "windows" } as const;
+const KIND = { model: "Furniture", carpet: "Carpet", wall: "Wall finish", floor: "Floor finish", window: "Window", door: "Door" } as const;
+const HREF: Partial<Record<keyof typeof KIND, string>> = { model: "models", carpet: "carpets", wall: "paints", floor: "paints", window: "windows" }; // doors have no catalogue page yet
 
 /** Bought items: every order the user placed since signing up, newest first. */
 export function OrdersPage() {
@@ -63,9 +63,13 @@ export function OrdersPage() {
                 {o.lines.map((l) => (
                   <li key={l.key} className="flex items-center gap-4 px-5 py-3">
                     <div className="min-w-0 flex-1">
-                      <Link href={`/catalog/${HREF[l.kind]}/${l.refId}`} className="block truncate font-medium text-brand-navy hover:underline">
-                        {l.name}
-                      </Link>
+                      {HREF[l.kind] ? (
+                        <Link href={`/catalog/${HREF[l.kind]}/${l.refId}`} className="block truncate font-medium text-brand-navy hover:underline">
+                          {l.name}
+                        </Link>
+                      ) : (
+                        <p className="truncate font-medium text-brand-navy">{l.name}</p>
+                      )}
                       <p className="text-xs text-slate-500">
                         {t(KIND[l.kind])} · {l.quantity}
                         {l.unit === "m2" ? " m²" : " ×"} {formatPrice(l.price, l.unit)}
