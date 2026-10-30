@@ -37,7 +37,7 @@ export function AdminLoginForm() {
 
   return (
     <form onSubmit={submit} className="space-y-5">
-      <AuthInput label={t("Username")} icon={UserRound} value={username} onChange={setUsername} autoComplete="username" autoFocus />
+      <AuthInput label={t("Email")} type="email" icon={Mail} value={username} onChange={setUsername} autoComplete="email" placeholder="admin@admin.com" autoFocus />
       <AuthInput label={t("Password")} type="password" icon={Lock} value={password} onChange={setPassword} autoComplete="current-password" />
       {error && <p className="rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p>}
       <Button type="submit" disabled={busy || !username || !password} className="h-12 w-full rounded-xl text-base">
