@@ -1,5 +1,6 @@
 "use client";
 
+import { authSession } from "@/lib/auth/client";
 import { useT } from "@/lib/i18n";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { LoaderCircle, Sparkles } from "lucide-react";
@@ -105,8 +106,7 @@ export function CutoutLibrary({ kind }: { kind: CutoutKind }) {
 
   useEffect(() => {
     if (!supabaseConfigured()) return;
-    void supabase()
-      .auth.getSession()
+    void authSession()
       .then(async ({ data }) => {
         if (!data.session) {
           window.location.href = "/vendor/login";

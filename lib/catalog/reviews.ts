@@ -1,5 +1,6 @@
 "use client";
 
+import { authSession } from "@/lib/auth/client";
 import { supabase } from "@/lib/supabase/client";
 import type { VariantKind } from "./variants";
 
@@ -28,7 +29,7 @@ export async function listReviews(kind: ReviewKind, itemId: string): Promise<Rev
 
 /** One review per user per item: a second submit updates it. */
 export async function saveReview(kind: ReviewKind, itemId: string, rating: number, comment: string, authorName: string) {
-  const { data: session } = await supabase().auth.getSession();
+  const { data: session } = await authSession();
   const user = session.session?.user;
   if (!user) throw new Error("Log in to leave a review.");
   const { error } = await supabase()

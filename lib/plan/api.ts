@@ -1,27 +1,15 @@
-import { supabase } from "@/lib/supabase/client";
 import type { CompanyGroup, CorrectionState, PlanGeometry, SavedPlan } from "./types";
 
-export const API = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
-
-async function token(): Promise<string> {
-  const { data, error } = await supabase().auth.getSession();
-  if (error || !data.session?.access_token) throw new Error("Sign in required.");
-  return data.session.access_token;
-}
-
-/** Authorization header when signed in, none for guests (plan building is public; saving is not). */
-async function authHeader(): Promise<Record<string, string>> {
-  const { data } = await supabase().auth.getSession();
-  return data.session?.access_token ? { Authorization: `Bearer ${data.session.access_token}` } : {};
-}
+/** The FastAPI backend, through the same-origin proxy that adds the user's JWT from the httpOnly
+ * cookie (app/api/backend). Guests go through it too, without a token. */
+export const API = "/api/backend";
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const auth = await authHeader();
   let response: Response;
   try {
     response = await fetch(`${API}${path}`, {
       ...init,
-      headers: { ...auth, ...(init.headers || {}) },
+      headers: init.headers,
     });
   } catch {
     throw new Error("Cannot reach the API. Is the backend running on port 8000?");
@@ -82,7 +70,6 @@ export function createRoomFromDimensions(body: { width: number; depth: number; h
 }
 
 export async function createRoomFromImage(file: File, height: number) {
-  const auth = await authHeader();
   const data = new FormData();
   data.append("image", file);
   data.append("height", String(height));
@@ -91,7 +78,6 @@ export async function createRoomFromImage(file: File, height: number) {
   try {
     response = await fetch(`${API}/api/plans/from-image`, {
       method: "POST",
-      headers: auth,
       body: data,
     });
   } catch {
@@ -146,8 +132,7 @@ export function listPlans() {
 }
 
 export async function exportRoomGlb(id: string) {
-  const auth = await token();
-  const response = await fetch(`${API}/api/plans/${id}/export?format=glb`, { headers: { Authorization: `Bearer ${auth}` } });
+  const response = await fetch(`${API}/api/plans/${id}/export?format=glb`);
   if (!response.ok) {
     const json = await response.json().catch(() => ({}));
     throw new Error(typeof json.detail === "string" ? json.detail : "Export failed.");
@@ -163,7 +148,7 @@ export async function extractCarpet(image: Blob, widthM: number, lengthM: number
   form.append("length_m", String(lengthM));
   let response: Response;
   try {
-    response = await fetch(`${API}/api/vendor/carpets/extract`, { method: "POST", headers: { Authorization: `Bearer ${await token()}` }, body: form });
+    response = await fetch(`${API}/api/vendor/carpets/extract`, { method: "POST", body: form });
   } catch {
     throw new Error("Cannot reach the API. Is the backend running on port 8000?");
   }

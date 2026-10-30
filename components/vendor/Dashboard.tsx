@@ -1,5 +1,6 @@
 "use client";
 
+import { authSession } from "@/lib/auth/client";
 import { useT } from "@/lib/i18n";
 import { useEffect, useState } from "react";
 import Link from "next/link";
@@ -7,6 +8,7 @@ import { Header } from "@/components/shatably/Header";
 import { Button } from "@/components/ui/button";
 import { supabase, supabaseConfigured } from "@/lib/supabase/client";
 import type { CatalogModel, VendorProfile } from "@/lib/vendor/types";
+import { Clock, XCircle } from "lucide-react";
 
 export function Dashboard() {
   const t = useT();
@@ -21,12 +23,16 @@ export function Dashboard() {
       setLoading(false);
       return;
     }
-    const { data: session } = await supabase().auth.getSession();
+    const { data: session } = await authSession();
     if (!session.session) {
       window.location.href = "/vendor/login";
       return;
     }
     const userId = session.session.user.id;
+    if (session.session.user.user_metadata?.role === "customer") {
+      window.location.href = "/"; // shoppers have no studio
+      return;
+    }
     let profile = await supabase().from("vendors").select("*").eq("id", userId).maybeSingle();
     if (!profile.data) {
       const meta = session.session.user.user_metadata ?? {};
@@ -62,6 +68,8 @@ export function Dashboard() {
     }
     setModels((current) => current.filter((model) => model.id !== id));
   };
+
+  if (vendor?.status && vendor.status !== "approved") return <AwaitingApproval vendor={vendor} />;
 
   return (
     <div className="min-h-full bg-slate-50 text-slate-900">
@@ -142,6 +150,32 @@ export function Dashboard() {
             ))}
           </ul>
         )}
+      </main>
+    </div>
+  );
+}
+
+/** A vendor signup the admin has not approved (or has rejected): no studio until approval. */
+function AwaitingApproval({ vendor }: { vendor: VendorProfile }) {
+  const t = useT();
+  const rejected = vendor.status === "rejected";
+  const Icon = rejected ? XCircle : Clock;
+  return (
+    <div className="min-h-full bg-slate-50 text-slate-900">
+      <Header />
+      <main className="mx-auto flex max-w-lg flex-col items-center px-4 py-20 text-center">
+        <span className={`flex size-14 items-center justify-center rounded-full ${rejected ? "bg-red-50 text-red-600" : "bg-amber-50 text-amber-600"}`}>
+          <Icon className="size-7" aria-hidden />
+        </span>
+        <h1 className="mt-5 text-2xl font-bold text-brand-navy">{rejected ? t("Your vendor request was declined") : t("Your vendor account is awaiting approval")}</h1>
+        <p className="mt-2 text-slate-500">
+          {rejected
+            ? t("Contact sha2ty support if you think this is a mistake.")
+            : t("An admin reviews every new studio. Once {name} is approved you can add models, paints and carpets here.", { name: vendor.name })}
+        </p>
+        <Button asChild variant="outline" className="mt-6">
+          <Link href="/">{t("Back to home")}</Link>
+        </Button>
       </main>
     </div>
   );

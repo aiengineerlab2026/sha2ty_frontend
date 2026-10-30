@@ -46,13 +46,18 @@ const GAP = 18;
 const TEXT_X = MARK + GAP;
 const WORD_W = 196.6;
 const SWOOSH_W = 190;
-const W = TEXT_X + WORD_W + 1;
+// Amber "BETA" pill, 10 px after the word and 6 px below its top: 15 px Fredoka 600, 0.1em tracking, 5 × 11 padding.
+const PILL_X = TEXT_X + WORD_W + 10;
+const PILL_TEXT_W = 44;
+const PILL_W = PILL_TEXT_W + 22;
+const PILL_H = 25;
+const W = PILL_X + PILL_W + 1;
 const H = 84;
 const BLOCK_TOP = (H - (64 + 17)) / 2;
 const BASELINE = BLOCK_TOP + 55.62; // CSS line-height 1: baseline sits 55.62 px into Fredoka's 64 px line box
 
 /**
- * Full logo as one SVG of shapes only: mark + "sha2ty" outlines + amber swoosh. `size` is the mark's height
+ * Full logo as one SVG: mark + "sha2ty" outlines + amber swoosh + amber "BETA" pill. `size` is the mark's height
  * in px, so the lockup scales from it. `label` (e.g. "Vendor Studio") follows a small amber dot.
  */
 export function Logo({
@@ -80,6 +85,19 @@ export function Logo({
         <svg x={TEXT_X} y={BLOCK_TOP + 64} width={SWOOSH_W} height={17} viewBox="0 0 260 18" overflow="visible">
           <path d="M6 12Q90 2 254 9" fill="none" stroke={AMBER} strokeWidth={8} strokeLinecap="round" />
         </svg>
+        <rect x={PILL_X} y={BLOCK_TOP + 6} width={PILL_W} height={PILL_H} rx={PILL_H / 2} fill={AMBER} />
+        <text
+          x={PILL_X + PILL_W / 2}
+          y={BLOCK_TOP + 6 + PILL_H / 2}
+          textAnchor="middle"
+          dominantBaseline="central"
+          textLength={PILL_TEXT_W}
+          lengthAdjust="spacingAndGlyphs"
+          fill={NAVY}
+          style={{ fontFamily: "Fredoka, ui-rounded, system-ui, sans-serif", fontSize: 15, fontWeight: 600, letterSpacing: "0.1em" }}
+        >
+          BETA
+        </text>
       </svg>
       {label && (
         <span className={`items-center ${labelClassName} ${jakarta.className}`}>

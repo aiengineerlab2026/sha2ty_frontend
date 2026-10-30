@@ -9,6 +9,13 @@ export interface VendorProfile {
   name: string;
   location: string;
   logo_url: string | null;
+  /** Admin approval (supabase/vendor_approval.sql); missing before that migration runs. */
+  status?: "pending" | "approved" | "rejected";
+  full_name?: string | null;
+  email?: string | null;
+  lat?: number | null;
+  lng?: number | null;
+  created_at?: string;
 }
 
 export interface ModelVariant {

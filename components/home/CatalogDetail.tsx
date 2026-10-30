@@ -1,5 +1,6 @@
 "use client";
 
+import { authSession } from "@/lib/auth/client";
 import { useT } from "@/lib/i18n";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import Link from "next/link";
@@ -33,8 +34,7 @@ export function CatalogDetail({ kind, id }: { kind: CatalogKind; id: string }) {
 
   useEffect(() => {
     if (!supabaseConfigured()) return;
-    void supabase()
-      .auth.getSession()
+    void authSession()
       .then(async ({ data }) => {
         // Public page: the item loads for everyone; the account only matters for the plan builder link.
         const user = data.session?.user;

@@ -4,7 +4,7 @@ import { AuthShell } from "@/components/vendor/AuthShell";
 
 export default function SignupPage() {
   return (
-    <AuthShell wide title="Create your vendor account" subtitle="Set up your studio in a minute. Your company name and logo appear with everything you sell.">
+    <AuthShell wide title="Create your account" subtitle="Shop and plan your home, or open a studio and sell your products.">
       <Suspense fallback={null}>
         <SignupForm />
       </Suspense>

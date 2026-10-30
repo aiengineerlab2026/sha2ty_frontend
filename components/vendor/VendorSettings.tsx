@@ -1,5 +1,6 @@
 "use client";
 
+import { authSession } from "@/lib/auth/client";
 import { useT } from "@/lib/i18n";
 import { useEffect, useState, type FormEvent } from "react";
 import { ImageUp } from "lucide-react";
@@ -23,8 +24,7 @@ export function VendorSettings() {
 
   useEffect(() => {
     if (!supabaseConfigured()) return;
-    void supabase()
-      .auth.getSession()
+    void authSession()
       .then(async ({ data }) => {
         if (!data.session) {
           window.location.href = "/vendor/login";

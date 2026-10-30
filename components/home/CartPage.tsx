@@ -1,5 +1,6 @@
 "use client";
 
+import { authSession } from "@/lib/auth/client";
 import { useT } from "@/lib/i18n";
 import { useEffect, useState } from "react";
 import Link from "next/link";
@@ -26,8 +27,7 @@ export function CartPage() {
 
   useEffect(() => {
     if (!supabaseConfigured()) return;
-    void supabase()
-      .auth.getSession()
+    void authSession()
       .then(async ({ data }) => {
         if (!data.session) return;
         const { data: profile } = await supabase().from("vendors").select("*").eq("id", data.session.user.id).maybeSingle();

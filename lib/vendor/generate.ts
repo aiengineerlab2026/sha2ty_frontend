@@ -1,13 +1,6 @@
-import { supabase } from "@/lib/supabase/client";
 import type { ModelProvider } from "./types";
 
-const API = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
-
-async function accessToken(): Promise<string> {
-  const { data, error } = await supabase().auth.getSession();
-  if (error || !data.session?.access_token) throw new Error("Sign in required.");
-  return data.session.access_token;
-}
+import { API } from "@/lib/plan/api"; // same-origin proxy: the JWT comes from the httpOnly cookie
 
 export type GenerateProgress = { percent: number; status: string };
 
@@ -20,7 +13,6 @@ export async function generateFromPhoto(
   /** What to extract (catalogue category + product title); the backend builds the Meshy / Astra prompt. */
   subject?: { category: string; title: string },
 ): Promise<string> {
-  const token = await accessToken();
   const body = new FormData();
   body.append("image", file);
   body.append("provider", provider);
@@ -37,7 +29,6 @@ export async function generateFromPhoto(
 
   const created = await fetch(`${API}/api/vendor/generate`, {
     method: "POST",
-    headers: { Authorization: `Bearer ${token}` },
     body,
   });
   stopPulse?.();
@@ -53,9 +44,7 @@ export async function generateFromPhoto(
   onProgress?.({ percent: last, status: "Queued for conversion…" });
 
   for (let i = 0; i < 180; i++) {
-    const polled = await fetch(`${API}/api/vendor/tasks/${taskId}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
+    const polled = await fetch(`${API}/api/vendor/tasks/${taskId}`);
     const task = await polled.json().catch(() => ({}));
     if (!polled.ok) throw new Error(detail(task) || "Could not check generation status.");
     const reported = Number(task.progress);
