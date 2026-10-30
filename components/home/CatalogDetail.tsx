@@ -4,14 +4,15 @@ import { authSession } from "@/lib/auth/client";
 import { useT } from "@/lib/i18n";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import Link from "next/link";
-import { ArrowLeft, LayoutGrid } from "lucide-react";
+import { ArrowLeft, Check, LayoutGrid, ShoppingCart } from "lucide-react";
+import { addToCart, type CartLine } from "@/lib/cart";
 import { Header } from "@/components/shatably/Header";
 import { safeHtml } from "@/components/plan/ModelDetails";
 import { tileLabel } from "@/lib/plan/roomMaterials";
 import { ModelViewer } from "@/components/vendor/ModelViewer";
 import { PaintSwatch } from "@/components/vendor/PaintLibrary";
 import { fetchCatalogModel } from "@/lib/plan/api";
-import { formatPrice } from "@/lib/plan/pricing";
+import { formatPrice, type PriceUnit } from "@/lib/plan/pricing";
 import type { CatalogModel } from "@/lib/plan/types";
 import { supabase, supabaseConfigured } from "@/lib/supabase/client";
 import type { Carpet, Paint, VendorProfile, WindowItem } from "@/lib/vendor/types";
@@ -107,6 +108,7 @@ function ModelView({ model, signedIn }: { model: CatalogModel; signedIn: boolean
       tag={model.company}
       price={model.price == null ? null : formatPrice(model.price, model.price_unit ?? "item")}
       title={model.title}
+      cart={line("model", model.id, model.title, model.price, model.price_unit ?? "item", model.width_m && model.depth_m ? model.width_m * model.depth_m : null)}
       facts={dims ? [["Width", `${dims.width.toFixed(2)} m`], ["Height", `${dims.height.toFixed(2)} m`], ["Depth", `${dims.depth.toFixed(2)} m`]] : [["Size", t("Not set")]]}
     >
       {description ? (
@@ -128,6 +130,7 @@ function PaintView({ paint, signedIn }: { paint: Paint; signedIn: boolean }) {
       price={paint.price == null ? null : formatPrice(Number(paint.price), paint.price_unit ?? "m2")}
       tag={floor ? t("Floor finish") : paint.kind === "color" ? t("Wall paint") : t("Wall texture")}
       title={paint.name}
+      cart={line(floor ? "floor" : "wall", paint.id, paint.name, paint.price, paint.price_unit ?? "m2", null)}
       facts={[
         ["For", floor ? t("Floors") : t("Walls")],
         ["Type", paint.kind === "color" ? t("Colour") : t("Texture")],
@@ -149,6 +152,7 @@ function CarpetView({ carpet, signedIn }: { carpet: Carpet; signedIn: boolean })
       tag={t("Carpet")}
       price={carpet.price == null ? null : formatPrice(Number(carpet.price), carpet.price_unit ?? "item")}
       title={carpet.name}
+      cart={line("carpet", carpet.id, carpet.name, carpet.price, carpet.price_unit ?? "item", Number(carpet.width_m) * Number(carpet.length_m))}
       facts={[
         ["Width", `${Number(carpet.width_m).toFixed(2)} m`],
         ["Length", `${Number(carpet.length_m).toFixed(2)} m`],
@@ -169,6 +173,7 @@ function WindowView({ win, signedIn }: { win: WindowItem; signedIn: boolean }) {
       tag={t("Window")}
       price={win.price == null ? null : formatPrice(Number(win.price), win.price_unit ?? "item")}
       title={win.name}
+      cart={line("window", win.id, win.name, win.price, win.price_unit ?? "item", Number(win.width_m) * Number(win.height_m))}
       facts={[
         ["Width", `${Number(win.width_m).toFixed(2)} m`],
         ["Height", `${Number(win.height_m).toFixed(2)} m`],
@@ -207,6 +212,7 @@ function Layout({
   title,
   price,
   facts,
+  cart,
   children,
 }: {
   /** Kept for callers; the plan builder link is the same for guests and members. */
@@ -217,6 +223,8 @@ function Layout({
   /** Formatted price, or null for "Price on request". */
   price: string | null;
   facts: [string, string][];
+  /** The line "Add to cart" adds (guests are sent to log in by addToCart). */
+  cart: CartLine;
   children: ReactNode;
 }) {
   const t = useT();
@@ -238,14 +246,42 @@ function Layout({
           ))}
         </dl>
         {children}
-        {/* Anyone can design; saving the plan asks guests to log in. */}
-        <Link
-          href="/plan"
-          className="inline-flex h-11 items-center gap-2 rounded-xl bg-brand-amber px-5 text-sm font-semibold text-brand-navy shadow-sm hover:bg-[#e8952a]"
-        >
-          <LayoutGrid className="size-4" aria-hidden /> {t("Use it in the plan builder")}
-        </Link>
+        <div className="flex flex-wrap gap-3">
+          <AddToCart line={cart} />
+          {/* Anyone can design; saving the plan asks guests to log in. */}
+          <Link
+            href="/plan"
+            className="inline-flex h-11 items-center gap-2 rounded-xl border border-slate-200 bg-white px-5 text-sm font-semibold text-brand-navy shadow-sm transition-colors hover:bg-slate-50"
+          >
+            <LayoutGrid className="size-4" aria-hidden /> {t("Use it in the plan builder")}
+          </Link>
+        </div>
       </div>
     </div>
   );
+}
+
+function AddToCart({ line }: { line: CartLine }) {
+  const t = useT();
+  const [added, setAdded] = useState(false);
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        void addToCart([line]).then(() => {
+          setAdded(true);
+          setTimeout(() => setAdded(false), 1500);
+        });
+      }}
+      className="inline-flex h-11 items-center gap-2 rounded-xl bg-brand-amber px-5 text-sm font-semibold text-brand-navy shadow-sm transition hover:-translate-y-px hover:bg-[#e8952a] hover:shadow-md"
+    >
+      {added ? <Check className="size-4" aria-hidden /> : <ShoppingCart className="size-4" aria-hidden />}
+      {added ? t("Added to cart") : t("Add to cart")}
+    </button>
+  );
+}
+
+/** One cart line; area-priced items start at their own size in m² (the cart can change it). */
+function line(kind: CartLine["kind"], refId: string, name: string, price: number | null | undefined, unit: PriceUnit, area: number | null): CartLine {
+  return { key: `${kind}:${refId}`, kind, refId, name, unit, price: price == null ? null : Number(price), quantity: unit === "m2" && area ? area : 1 };
 }
