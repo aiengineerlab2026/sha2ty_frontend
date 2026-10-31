@@ -214,6 +214,10 @@ export interface PlanGeometry {
   /** Vendor doors fitted into door openings. */
   placed_doors?: PlacedDoor[];
   floors?: Vec2[][];
+  /** Furniture the vision model found, as simple boxes: position [x, z] and size [w, d, h] in metres. */
+  fixtures?: { id: string; type: string; position: Vec2; size: [number, number, number]; rotation_deg: number }[];
+  /** "vision" when the layout came from the vision model (refined by OpenCV), else "opencv". */
+  geometry_source?: "vision" | "opencv";
   meters_per_pixel?: number | null;
   // Pixel-space plan (present on image imports) — see CorrectionState.
   image_size?: { width: number; height: number };

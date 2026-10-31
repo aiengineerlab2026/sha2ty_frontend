@@ -59,6 +59,7 @@ export function FloorPlanViewer({
   onPickRug,
   sun = true,
   dimensionLines = false,
+  roomSizes = false,
   walkRoomId = null,
   onPickRoom,
   windowDraft = null,
@@ -100,6 +101,8 @@ export function FloorPlanViewer({
   sun?: boolean;
   /** Perimeter dimension lines in the 2D view. */
   dimensionLines?: boolean;
+  /** Room name + size labels floating in the 3D views (sizes are approximate when the scale was estimated). */
+  roomSizes?: boolean;
   /** Zone / room the walk starts in (its entrance door); default: the dining room. */
   walkRoomId?: string | null;
   /** Room picking (before walking): rooms highlight on hover and a click calls this with the room id. */
@@ -530,6 +533,8 @@ export function FloorPlanViewer({
           <WindowDecal win={{ ...windowDraft, wall_id: windowHover.wall.id, side: windowHover.side, along: windowHover.along, y: windowHover.y }} wall={windowHover.wall} ghost invalid={Boolean(windowHover.problem)} />
         )}
         {is2d && <PlanAnnotations2D geometry={geometry} sides={wallSidesById} showDimensions={dimensionLines} />}
+        <Fixtures fixtures={geometry.fixtures} />
+        {roomSizes && !is2d && <RoomSizeLabels geometry={geometry} height={geometry.height} />}
         {items.map((item) => (
           <FurnitureDraggable
             key={item.instanceId}
@@ -747,7 +752,7 @@ function CameraRig({ view, width, depth, height, onCamera }: { view: CameraView;
   }, [camera, onCamera]);
   useLayoutEffect(() => {
     if (view === "2d" || view === "walk") return; // PlanCamera / WalkControls own the camera
-    const next = cameraForView(view, width, depth, height);
+    const next = cameraForView(view, width, depth, height, "fov" in camera ? (camera as { fov: number }).fov : 50);
     camera.position.set(...next.position);
     camera.lookAt(...next.target);
     camera.updateProjectionMatrix();
@@ -1238,5 +1243,45 @@ function Measurement({ a, b }: { a?: PlacedItem; b?: PlacedItem }) {
         </div>
       </Html>
     </group>
+  );
+}
+
+/** Furniture the vision model found in the drawing: plain grey boxes, never walls, never pickable. */
+function Fixtures({ fixtures }: { fixtures?: PlanGeometry["fixtures"] }) {
+  if (!fixtures?.length) return null;
+  return (
+    <group>
+      {fixtures.map((f) => (
+        <mesh key={f.id} position={[f.position[0], f.size[2] / 2, f.position[1]]} rotation={[0, -((f.rotation_deg || 0) * Math.PI) / 180, 0]} raycast={() => null} castShadow receiveShadow>
+          <boxGeometry args={[f.size[0], f.size[2], f.size[1]]} />
+          <meshStandardMaterial color="#c9c4ba" roughness={0.9} />
+        </mesh>
+      ))}
+    </group>
+  );
+}
+
+/** Room name and size above each room's floor; "≈" marks sizes from an estimated scale. */
+function RoomSizeLabels({ geometry, height }: { geometry: PlanGeometry; height: number }) {
+  const approx = geometry.scale?.estimated ? "≈ " : "";
+  const areas = geometry.zones?.length ? geometry.zones : geometry.rooms;
+  return (
+    <>
+      {areas.map((a) => {
+        const xs = a.polygon.map((p) => p[0]);
+        const zs = a.polygon.map((p) => p[1]);
+        const at = ("label_point" in a && a.label_point) || [(Math.min(...xs) + Math.max(...xs)) / 2, (Math.min(...zs) + Math.max(...zs)) / 2];
+        const w = Math.max(...xs) - Math.min(...xs);
+        const l = Math.max(...zs) - Math.min(...zs);
+        return (
+          <Html key={a.id} position={[at[0], height + 0.3, at[1]]} center zIndexRange={[8, 0]} style={{ pointerEvents: "none" }}>
+            <div className="whitespace-nowrap rounded-md bg-white/90 px-2 py-1 text-center text-[11px] leading-tight text-slate-700 shadow-sm ring-1 ring-slate-200">
+              <div className="font-semibold text-brand-navy">{a.name}</div>
+              <div className="tabular-nums">{approx}{w.toFixed(1)} × {l.toFixed(1)} m</div>
+            </div>
+          </Html>
+        );
+      })}
+    </>
   );
 }

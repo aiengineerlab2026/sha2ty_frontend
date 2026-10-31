@@ -40,3 +40,15 @@ test("walk can start in a chosen room: at its door, facing in", () => {
   assert.ok(Math.abs(position[0] - 1.5) < 1e-9 && Math.abs(position[1] - 0.6) < 1e-9, `${position}`);
   assert.ok(Math.abs(Math.abs(yaw) - Math.PI) < 1e-9, `${yaw}`); // facing +Z, into the living room
 });
+
+import { cameraForView } from "../coordinateSystem";
+
+test("3D camera frames the whole apartment: a bigger plan puts the camera further away", () => {
+  const dist = (w: number, d: number) => {
+    const { position: p, target: t } = cameraForView("perspective", w, d, 2.7, 50);
+    return Math.hypot(p[0] - t[0], p[1] - t[1], p[2] - t[2]);
+  };
+  const radius = Math.hypot(10, 6, 2.7) / 2;
+  assert.ok(dist(10, 6) >= radius / Math.sin((25 * Math.PI) / 180)); // sphere fits the 50° view
+  assert.ok(dist(20, 12) > 1.9 * dist(10, 6));
+});

@@ -79,6 +79,8 @@ export function PlanLayout() {
   const [allowInvalid, setAllowInvalid] = useState(false);
   const [draft, setDraft] = useState<PlanGeometry | null>(null);
   const [scaleNote, setScaleNote] = useState(false); // the upload's scale was estimated, not printed
+  const [unreadable, setUnreadable] = useState<PlanGeometry | null>(null); // upload that failed validation
+  const [showRoomSizes, setShowRoomSizes] = useState(false);
   const [buildErrors, setBuildErrors] = useState<string[]>([]);
   const [placing, setPlacing] = useState<CatalogModel | null>(null);
   // Catalogue item whose details card is open; "Show in my apartment" starts placing it.
@@ -677,7 +679,16 @@ export function PlanLayout() {
         <main className="min-h-0 flex-1 overflow-auto bg-[#f7f6f3]">
           {(error || opening) && (
             <div className="mx-auto w-full max-w-[1400px] px-4 pt-6 sm:px-6">
-              {error && <p className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p>}
+              {error && (
+                <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                  <p>{error}</p>
+                  {unreadable && (
+                    <button type="button" className="mt-2 font-semibold underline underline-offset-2" onClick={() => { setDraft(unreadable); setUnreadable(null); setError(null); }}>
+                      {t("Open it in the wall editor anyway")}
+                    </button>
+                  )}
+                </div>
+              )}
               {opening && (
                 <p className="flex items-center gap-2 text-sm text-slate-500">
                   <LoaderCircle className="size-4 animate-spin" aria-hidden /> {t("Reopening your plan…")}
@@ -700,16 +711,24 @@ export function PlanLayout() {
               }
             }}
             onImage={async (file, height) => {
-              setBusy(t("Reading your floor plan and its measurements…"));
+              setBusy(t("Analyzing · {p}%", { p: 0 }));
+              setError(null);
+              setUnreadable(null);
               try {
-                const room = await createRoomFromImage(file, height);
-                // The scale is always estimated, so a clean plan goes straight to 3D; the correction
-                // view opens only for wall/room problems (and stays available from the scale note).
+                const room = await createRoomFromImage(file, height, ({ stage, percent }) => setBusy(`${t(stage)} · ${percent}%`));
+                // Fully automatic: a readable plan opens in 3D straight away. One that fails validation is
+                // reported (never shown as a finished apartment); the wall editor is offered, not required.
                 if (room.validation?.ok) {
                   setGeometry(room);
-                  setView("2d");
-                } else setDraft(room);
-                setScaleNote(Boolean(room.scale?.estimated));
+                  setView("perspective"); // the finished apartment, framed whole
+                  setScaleNote(Boolean(room.scale?.estimated));
+                } else {
+                  setUnreadable(room);
+                  const offline = room.warnings.find((w) => w.startsWith("The vision model was unavailable"));
+                  setError(
+                    [offline && t(offline), t("This floor plan could not be read reliably: {errors}", { errors: (room.validation?.errors ?? []).join(" ") })].filter(Boolean).join(" "),
+                  );
+                }
                 setBusy(null);
               } catch (caught) {
                 setError(caught instanceof Error ? caught.message : String(caught));
@@ -860,6 +879,7 @@ export function PlanLayout() {
           <main className="relative min-w-0 flex-1 overflow-hidden">
             <div className="absolute inset-0">
               <FloorPlanViewer
+                roomSizes={showRoomSizes}
                 geometry={geometry}
                 items={items}
                 selectedId={selectedId}
@@ -1001,10 +1021,29 @@ export function PlanLayout() {
               {error && (
                 <p className="pointer-events-auto max-w-xl rounded-lg border border-red-200 bg-red-50/95 px-3 py-2 text-sm text-red-700 shadow-sm backdrop-blur">{error}</p>
               )}
+              {geometry.source === "image" && (
+                <div className="pointer-events-auto flex items-center gap-2">
+                  <button
+                    type="button"
+                    aria-pressed={showRoomSizes}
+                    onClick={() => setShowRoomSizes((v) => !v)}
+                    className={`rounded-lg border px-2.5 py-1 text-xs font-medium shadow-sm backdrop-blur transition-colors ${showRoomSizes ? "border-brand-navy bg-brand-navy text-white" : "border-slate-200 bg-white/90 text-slate-700 hover:bg-white"}`}
+                  >
+                    {t("Room sizes")}
+                  </button>
+                  {geometry.preview_image && (
+                    <details className="group relative">
+                      <summary className="cursor-pointer list-none rounded-lg border border-slate-200 bg-white/90 px-2.5 py-1 text-xs font-medium text-slate-700 shadow-sm backdrop-blur hover:bg-white">{t("Original plan")}</summary>
+                      {/* eslint-disable-next-line @next/next/no-img-element -- a data URL from the upload */}
+                      <img src={geometry.preview_image} alt={t("Original plan")} className="absolute start-0 top-9 z-20 w-80 max-w-[80vw] rounded-lg border border-slate-200 bg-white shadow-lg" />
+                    </details>
+                  )}
+                </div>
+              )}
               {scaleNote && (
                 <div role="status" className="pointer-events-auto flex max-w-xl items-center gap-3 rounded-lg border border-sky-200 bg-sky-50/95 px-3 py-2 text-sm text-sky-800 shadow-sm backdrop-blur">
                   <span>{t("Dimensions automatically estimated from your floor plan. Measurements are approximate.")}</span>
-                  {geometry.walls_px && items.length === 0 && (
+                  {geometry.walls_px && items.length === 0 && geometry.geometry_source !== "vision" && (
                     <button
                       type="button"
                       className="shrink-0 font-semibold underline underline-offset-2 hover:text-sky-950"
