@@ -723,7 +723,7 @@ export function PlanLayout() {
                 // reported (never shown as a finished apartment); the wall editor is offered, not required.
                 if (room.validation?.ok) {
                   setGeometry(room);
-                  setView("perspective"); // the finished apartment, framed whole
+                  setView("iso"); // the finished apartment, elevated and framed whole, looking into the rooms
                   setScaleNote(Boolean(room.scale?.estimated));
                 } else {
                   setUnreadable(room);

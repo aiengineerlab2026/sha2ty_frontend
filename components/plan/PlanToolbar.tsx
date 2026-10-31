@@ -11,7 +11,7 @@ const VIEWS: { view: CameraView; label: string; icon: ReactNode }[] = [
   { view: "iso", label: "Isometric", icon: <Axis3d /> },
   { view: "front", label: "Front", icon: <span className="text-xs font-semibold">F</span> },
   { view: "side", label: "Side", icon: <span className="text-xs font-semibold">S</span> },
-  { view: "top", label: "3D", icon: <span className="text-xs font-semibold">3D</span> },
+  { view: "top", label: "Top", icon: <span className="text-xs font-semibold">T</span> },
   { view: "2d", label: "2D", icon: <span className="text-xs font-semibold">2D</span> },
   { view: "walk", label: "Walk through", icon: <Footprints /> },
 ];

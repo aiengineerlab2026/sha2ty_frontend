@@ -837,4 +837,5 @@ export const AR: Record<string, string> = {
   "Hide walls": "إخفاء الجدران",
   "Read from the plan's dimensions": "مقروءة من مقاسات المخطط",
   "Estimated from the drawing's scale": "مقدّرة من مقياس الرسم",
+  Top: "علوي",
 };
