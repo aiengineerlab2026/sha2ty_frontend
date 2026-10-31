@@ -391,7 +391,7 @@ export function FloorPlanViewer({
       {/* flat = no tone mapping: paints and floor finishes show their real swatch colour. */}
       <Canvas
         flat
-        camera={{ position: [...cam.position], fov: view === "top" ? 50 : 45 }}
+        camera={{ position: [...cam.position], fov: 45 }}
         onPointerMissed={() => {
           if (!placing && !painting && !rugDraft && !windowDraft && !onPickRoom) {
             onSelect(null);
