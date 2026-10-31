@@ -344,8 +344,6 @@ export const AR: Record<string, string> = {
   "Room sizes": "مقاسات الغرف",
   "The vision model was unavailable, so this plan was read with OpenCV only.": "نموذج الرؤية غير متاح، لذلك قُرئ المخطط باستخدام OpenCV فقط.",
   "Original plan": "المخطط الأصلي",
-  "Open it in the wall editor anyway": "افتحه في محرر الجدران على أي حال",
-  "This floor plan could not be read reliably: {errors}": "تعذّرت قراءة مخطط الطابق بشكل موثوق: {errors}",
   "dimension lines": "خطوط الأبعاد",
   "room estimates": "تقديرات الغرف",
   "Reading your floor plan and its measurements…": "جارٍ قراءة مخطط الطابق ومقاساته…",
@@ -841,4 +839,6 @@ export const AR: Record<string, string> = {
   "Vision model": "نموذج الرؤية",
   "Reads floor plans and vendor product photos into details before they are turned into 3D.": "يقرأ المخططات وصور منتجات البائعين ويستخرج تفاصيلها قبل تحويلها إلى نموذج ثلاثي الأبعاد.",
   "No API key on the server": "لا يوجد مفتاح API على الخادم",
+  "Built from your plan, but some parts may not match the drawing:": "تم البناء من مخططك، لكن قد لا تطابق بعض الأجزاء الرسم:",
+  "Fix the walls": "إصلاح الجدران",
 };

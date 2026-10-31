@@ -79,7 +79,7 @@ export function PlanLayout() {
   const [allowInvalid, setAllowInvalid] = useState(false);
   const [draft, setDraft] = useState<PlanGeometry | null>(null);
   const [scaleNote, setScaleNote] = useState(false); // the upload's scale was estimated, not printed
-  const [unreadable, setUnreadable] = useState<PlanGeometry | null>(null); // upload that failed validation
+  const [problems, setProblems] = useState<string[] | null>(null); // what validation found in an uploaded plan
   const [showRoomSizes, setShowRoomSizes] = useState(false);
   const [showRoomNames, setShowRoomNames] = useState(false);
   const [hideWalls, setHideWalls] = useState(false);
@@ -684,11 +684,6 @@ export function PlanLayout() {
               {error && (
                 <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
                   <p>{error}</p>
-                  {unreadable && (
-                    <button type="button" className="mt-2 font-semibold underline underline-offset-2" onClick={() => { setDraft(unreadable); setUnreadable(null); setError(null); }}>
-                      {t("Open it in the wall editor anyway")}
-                    </button>
-                  )}
                 </div>
               )}
               {opening && (
@@ -715,22 +710,16 @@ export function PlanLayout() {
             onImage={async (file, height) => {
               setBusy(t("Analyzing · {p}%", { p: 0 }));
               setError(null);
-              setUnreadable(null);
+              setProblems(null);
               try {
                 const room = await createRoomFromImage(file, height, ({ stage, percent }) => setBusy(`${t(stage)} · ${percent}%`));
-                // Fully automatic: a readable plan opens in 3D straight away. One that fails validation is
-                // reported (never shown as a finished apartment); the wall editor is offered, not required.
-                if (room.validation?.ok) {
-                  setGeometry(room);
-                  setView("iso"); // the finished apartment, elevated and framed whole, looking into the rooms
-                  setScaleNote(Boolean(room.scale?.estimated));
-                } else {
-                  setUnreadable(room);
-                  const offline = room.warnings.find((w) => w.startsWith("The vision model was unavailable"));
-                  setError(
-                    [offline && t(offline), t("This floor plan could not be read reliably: {errors}", { errors: (room.validation?.errors ?? []).join(" ") })].filter(Boolean).join(" "),
-                  );
-                }
+                // Fully automatic: every plan opens in 3D straight away. Problems validation found are listed
+                // over the model (it may not match the drawing everywhere); fixing the walls is offered, not required.
+                setGeometry(room);
+                setView("iso"); // the apartment, elevated and framed whole, looking into the rooms
+                setScaleNote(Boolean(room.scale?.estimated));
+                const offline = room.warnings.find((w) => w.startsWith("The vision model was unavailable"));
+                setProblems(room.validation?.ok ? null : [...(offline ? [offline] : []), ...(room.validation?.errors ?? [])]);
                 setBusy(null);
               } catch (caught) {
                 setError(caught instanceof Error ? caught.message : String(caught));
@@ -1095,6 +1084,37 @@ export function PlanLayout() {
                   </div>
                 );
               })()}
+              {problems && (
+                <div role="alert" className="pointer-events-auto max-w-xl rounded-lg border border-amber-300 bg-amber-50/95 px-3 py-2 text-sm text-amber-900 shadow-sm backdrop-blur">
+                  <div className="flex items-start gap-3">
+                    <TriangleAlert className="mt-0.5 size-4 shrink-0 text-amber-600" aria-hidden />
+                    <div className="min-w-0 flex-1">
+                      <p className="font-semibold">{t("Built from your plan, but some parts may not match the drawing:")}</p>
+                      <ul className="mt-1 list-disc space-y-0.5 ps-4 text-xs">
+                        {problems.slice(0, 4).map((p) => (
+                          <li key={p}>{t(p)}</li>
+                        ))}
+                      </ul>
+                    </div>
+                    <button type="button" aria-label={t("Dismiss")} onClick={() => setProblems(null)} className="shrink-0 text-amber-600 hover:text-amber-900">
+                      <X className="size-4" />
+                    </button>
+                  </div>
+                  {geometry.walls_px && items.length === 0 && geometry.geometry_source !== "vision" && (
+                    <button
+                      type="button"
+                      className="mt-1 ps-7 text-xs font-semibold underline underline-offset-2 hover:text-amber-950"
+                      onClick={() => {
+                        setDraft(geometry);
+                        setGeometry(null);
+                        setProblems(null);
+                      }}
+                    >
+                      {t("Fix the walls")}
+                    </button>
+                  )}
+                </div>
+              )}
               {scaleNote && (
                 <div role="status" className="pointer-events-auto flex max-w-xl items-center gap-3 rounded-lg border border-sky-200 bg-sky-50/95 px-3 py-2 text-sm text-sky-800 shadow-sm backdrop-blur">
                   <span>{t("Dimensions automatically estimated from your floor plan. Measurements are approximate.")}</span>
