@@ -589,8 +589,9 @@ export const AR: Record<string, string> = {
   // Match
   Match: "طابِق",
   "View results ({n})": "عرض النتائج ({n})",
-  "Match results": "نتائج المطابقة",
-  "Match with {name}": "مطابقة مع {name}",
+  "How it looks with other items": "كيف يبدو مع قطع أخرى",
+  "See how {name} looks with other items": "شاهد كيف يبدو {name} مع قطع أخرى",
+  "See how it looks with other items": "شاهد كيف يبدو مع قطع أخرى",
   "Step {i} of {n}": "الخطوة {i} من {n}",
   "What would you like to match?": "ماذا تريد أن تطابق؟",
   "Place another piece next to this one": "ضع قطعة أخرى بجانب هذه",
