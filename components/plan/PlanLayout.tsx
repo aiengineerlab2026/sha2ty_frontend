@@ -700,7 +700,7 @@ export function PlanLayout() {
               }
             }}
             onImage={async (file, height) => {
-              setBusy(t("Reading floor plan…"));
+              setBusy(t("Reading your floor plan and its measurements…"));
               try {
                 const room = await createRoomFromImage(file, height);
                 // The scale is always estimated, so a clean plan goes straight to 3D; the correction

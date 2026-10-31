@@ -337,6 +337,8 @@ export const AR: Record<string, string> = {
   "Estimated from {refs} · approximate, confidence {p}%": "مُقدَّر من {refs} · تقريبي، الثقة {p}%",
   "printed dimensions": "المقاسات المطبوعة",
   "furniture": "الأثاث",
+  "GPT reading": "قراءة GPT",
+  "Reading your floor plan and its measurements…": "جارٍ قراءة مخطط الطابق ومقاساته…",
   "heuristic": "تقدير تقريبي",
   "Entered manually": "أُدخل يدويًا",
   "Optional: type px per foot to override the estimate.": "اختياري: اكتب عدد البكسلات لكل قدم لتجاوز التقدير.",
