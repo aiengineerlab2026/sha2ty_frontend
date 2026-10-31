@@ -4,10 +4,10 @@ import { authSession } from "@/lib/auth/client";
 import { useT } from "@/lib/i18n";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { AppWindow, Armchair, DoorOpen, ChevronUp, Footprints, LayoutGrid, FolderOpen, LoaderCircle, PaintRoller, RectangleHorizontal, TriangleAlert, X } from "lucide-react";
+import { AppWindow, Armchair, DoorOpen, ChevronUp, Download, Footprints, LayoutGrid, FolderOpen, LoaderCircle, PaintRoller, RectangleHorizontal, TriangleAlert, X } from "lucide-react";
 import { Header } from "@/components/shatably/Header";
 import { supabase, supabaseConfigured } from "@/lib/supabase/client";
-import { PlanValidationError, createRoomFromDimensions, createRoomFromImage, exportRoomGlb, listPlans, loadPlan, rebuildFromGeometry, savePlan } from "@/lib/plan/api";
+import { API, PlanValidationError, createRoomFromDimensions, createRoomFromImage, exportRoomGlb, listPlans, loadPlan, rebuildFromGeometry, savePlan } from "@/lib/plan/api";
 import { downloadBlob } from "@/lib/plan/exportPlan";
 import type { CameraView } from "@/lib/plan/coordinateSystem";
 import { clampTilt, localWarnings, nearestValidSpot, normalizeYaw, restOnSurfaces } from "@/lib/plan/placementValidation";
@@ -81,6 +81,9 @@ export function PlanLayout() {
   const [scaleNote, setScaleNote] = useState(false); // the upload's scale was estimated, not printed
   const [unreadable, setUnreadable] = useState<PlanGeometry | null>(null); // upload that failed validation
   const [showRoomSizes, setShowRoomSizes] = useState(false);
+  const [showRoomNames, setShowRoomNames] = useState(false);
+  const [hideWalls, setHideWalls] = useState(false);
+  const [roomId, setRoomId] = useState<string | null>(null);
   const [buildErrors, setBuildErrors] = useState<string[]>([]);
   const [placing, setPlacing] = useState<CatalogModel | null>(null);
   // Catalogue item whose details card is open; "Show in my apartment" starts placing it.
@@ -880,6 +883,10 @@ export function PlanLayout() {
             <div className="absolute inset-0">
               <FloorPlanViewer
                 roomSizes={showRoomSizes}
+                roomNames={showRoomNames}
+                hideWalls={hideWalls}
+                selectedRoomId={roomId}
+                onSelectRoom={geometry.source === "image" ? setRoomId : undefined}
                 geometry={geometry}
                 items={items}
                 selectedId={selectedId}
@@ -1023,14 +1030,36 @@ export function PlanLayout() {
               )}
               {geometry.source === "image" && (
                 <div className="pointer-events-auto flex items-center gap-2">
-                  <button
-                    type="button"
-                    aria-pressed={showRoomSizes}
-                    onClick={() => setShowRoomSizes((v) => !v)}
-                    className={`rounded-lg border px-2.5 py-1 text-xs font-medium shadow-sm backdrop-blur transition-colors ${showRoomSizes ? "border-brand-navy bg-brand-navy text-white" : "border-slate-200 bg-white/90 text-slate-700 hover:bg-white"}`}
-                  >
-                    {t("Room sizes")}
-                  </button>
+                  {(
+                    [
+                      ["Room names", showRoomNames, setShowRoomNames],
+                      ["Room sizes", showRoomSizes, setShowRoomSizes],
+                      ["Hide walls", hideWalls, setHideWalls],
+                    ] as const
+                  ).map(([label, on, set]) => (
+                    <button
+                      key={label}
+                      type="button"
+                      aria-pressed={on}
+                      onClick={() => set((v) => !v)}
+                      className={`rounded-lg border px-2.5 py-1 text-xs font-medium shadow-sm backdrop-blur transition-colors ${on ? "border-brand-navy bg-brand-navy text-white" : "border-slate-200 bg-white/90 text-slate-700 hover:bg-white"}`}
+                    >
+                      {t(label)}
+                    </button>
+                  ))}
+                  {(["glb_url", "dxf_url"] as const).map((key) =>
+                    geometry[key] ? (
+                      <a
+                        key={key}
+                        href={`${API}${geometry[key]}`}
+                        download
+                        className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white/90 px-2.5 py-1 text-xs font-medium text-slate-700 shadow-sm backdrop-blur hover:bg-white"
+                      >
+                        <Download className="size-3.5" aria-hidden />
+                        {key === "glb_url" ? "GLB" : "DXF"}
+                      </a>
+                    ) : null,
+                  )}
                   {geometry.preview_image && (
                     <details className="group relative">
                       <summary className="cursor-pointer list-none rounded-lg border border-slate-200 bg-white/90 px-2.5 py-1 text-xs font-medium text-slate-700 shadow-sm backdrop-blur hover:bg-white">{t("Original plan")}</summary>
@@ -1040,6 +1069,36 @@ export function PlanLayout() {
                   )}
                 </div>
               )}
+              {(() => {
+                const room = roomId ? (geometry.zones?.length ? geometry.zones : geometry.rooms).find((a) => a.id === roomId) : null;
+                if (!room) return null;
+                const xs = room.polygon.map((p) => p[0]);
+                const zs = room.polygon.map((p) => p[1]);
+                const w = room.dimensions?.width || Math.max(...xs) - Math.min(...xs);
+                const l = room.dimensions?.length || Math.max(...zs) - Math.min(...zs);
+                const area = "area_m2" in room && room.area_m2 ? room.area_m2 : w * l;
+                const printed = "dimension_source" in room && room.dimension_source === "printed";
+                const approx = printed ? "" : "≈ ";
+                return (
+                  <div className="pointer-events-auto w-56 rounded-lg border border-amber-200 bg-white/95 px-3 py-2 text-sm text-slate-700 shadow-sm backdrop-blur">
+                    <div className="mb-1 flex items-center justify-between gap-2">
+                      <span className="font-semibold text-brand-navy">{room.name}</span>
+                      <button type="button" aria-label={t("Dismiss")} onClick={() => setRoomId(null)} className="text-slate-400 hover:text-slate-700">
+                        <X className="size-4" />
+                      </button>
+                    </div>
+                    <dl className="grid grid-cols-2 gap-x-2 tabular-nums">
+                      <dt>{t("Width")}</dt>
+                      <dd>{approx}{w.toFixed(2)} m</dd>
+                      <dt>{t("Length")}</dt>
+                      <dd>{approx}{l.toFixed(2)} m</dd>
+                      <dt>{t("Area")}</dt>
+                      <dd>{approx}{area.toFixed(2)} m²</dd>
+                    </dl>
+                    <p className="mt-1 text-xs text-slate-500">{t(printed ? "Read from the plan's dimensions" : "Estimated from the drawing's scale")}</p>
+                  </div>
+                );
+              })()}
               {scaleNote && (
                 <div role="status" className="pointer-events-auto flex max-w-xl items-center gap-3 rounded-lg border border-sky-200 bg-sky-50/95 px-3 py-2 text-sm text-sky-800 shadow-sm backdrop-blur">
                   <span>{t("Dimensions automatically estimated from your floor plan. Measurements are approximate.")}</span>

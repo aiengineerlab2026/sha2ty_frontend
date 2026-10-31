@@ -82,7 +82,7 @@ export async function createRoomFromImage(file: File, height: number, onProgress
   data.append("debug", "true");
   let response: Response;
   try {
-    response = await fetch(`${API}/api/plans/from-image`, {
+    response = await fetch(`${API}/api/plans/convert-to-3d`, {
       method: "POST",
       body: data,
     });

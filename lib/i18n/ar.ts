@@ -832,4 +832,9 @@ export const AR: Record<string, string> = {
   "Fits this doorway ({size}). Click to fit it": "يناسب هذه الفتحة ({size}). اضغط لتركيبه",
   "This plan has no doorways to fit a door into.": "لا توجد فتحات أبواب في هذا المخطط لتركيب باب.",
   "Click a doorway to fit {name} ({w} × {h} m)": "اضغط على فتحة باب لتركيب {name} ({w} × {h} م)",
+  Side: "جانبي",
+  "Room names": "أسماء الغرف",
+  "Hide walls": "إخفاء الجدران",
+  "Read from the plan's dimensions": "مقروءة من مقاسات المخطط",
+  "Estimated from the drawing's scale": "مقدّرة من مقياس الرسم",
 };

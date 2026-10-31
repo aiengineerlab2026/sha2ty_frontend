@@ -60,6 +60,10 @@ export function FloorPlanViewer({
   sun = true,
   dimensionLines = false,
   roomSizes = false,
+  roomNames = false,
+  hideWalls = false,
+  selectedRoomId = null,
+  onSelectRoom,
   walkRoomId = null,
   onPickRoom,
   windowDraft = null,
@@ -103,6 +107,13 @@ export function FloorPlanViewer({
   dimensionLines?: boolean;
   /** Room name + size labels floating in the 3D views (sizes are approximate when the scale was estimated). */
   roomSizes?: boolean;
+  /** Room name labels floating in the 3D views. */
+  roomNames?: boolean;
+  /** Hide every wall (floors, doors' thresholds and furniture stay): the layout seen from any angle. */
+  hideWalls?: boolean;
+  /** Clicked room (zone id): highlighted; a click on a floor calls onSelectRoom, outside a room clears it. */
+  selectedRoomId?: string | null;
+  onSelectRoom?: (areaId: string | null) => void;
   /** Zone / room the walk starts in (its entrance door); default: the dining room. */
   walkRoomId?: string | null;
   /** Room picking (before walking): rooms highlight on hover and a click calls this with the room id. */
@@ -385,7 +396,10 @@ export function FloorPlanViewer({
         flat
         camera={{ position: [...cam.position], fov: view === "top" ? 50 : 45 }}
         onPointerMissed={() => {
-          if (!placing && !painting && !rugDraft && !windowDraft && !onPickRoom) onSelect(null);
+          if (!placing && !painting && !rugDraft && !windowDraft && !onPickRoom) {
+            onSelect(null);
+            onSelectRoom?.(null);
+          }
         }}
       >
         {/* Soft misty blue-grey: calm next to the beige floors, easier on the eyes than near-black. */}
@@ -434,14 +448,26 @@ export function FloorPlanViewer({
             kind={area.kind}
             paint={geometry.floor_paints?.[area.id]}
             selectable={Boolean(onPickRoom)}
-            onPaint={onPickRoom ? () => onPickRoom(area.id) : paintFloors && onPaintFloor ? () => onPaintFloor(area.id) : undefined}
+            selected={selectedRoomId === area.id}
+            onPaint={
+              onPickRoom
+                ? () => onPickRoom(area.id)
+                : paintFloors && onPaintFloor
+                  ? () => onPaintFloor(area.id)
+                  : onSelectRoom && !walking && !panning && !placing && !painting && !rugDraft && !windowDraft && !doorDraft && !carrying
+                    ? () => {
+                        onSelect(null);
+                        onSelectRoom(area.id);
+                      }
+                    : undefined
+            }
           />
         ))}
         {(geometry.floors ?? []).map((strip, index) => (
           <Floor key={`door-floor-${index}`} polygon={strip} kind="hall" />
         ))}
         {/* 2D is a plan cut at ~1.2 m: lintels and sills would cover door and window openings. */}
-        {geometry.walls.filter((wall) => !is2d || ((wall.elevation ?? 0) === 0 && wall.height >= 1.5)).map((wall) => (
+        {geometry.walls.filter((wall) => !hideWalls && (!is2d || ((wall.elevation ?? 0) === 0 && wall.height >= 1.5))).map((wall) => (
           <WallMesh
             key={wall.id}
             wall={wall}
@@ -534,7 +560,7 @@ export function FloorPlanViewer({
         )}
         {is2d && <PlanAnnotations2D geometry={geometry} sides={wallSidesById} showDimensions={dimensionLines} />}
         <Fixtures fixtures={geometry.fixtures} />
-        {roomSizes && !is2d && <RoomSizeLabels geometry={geometry} height={geometry.height} />}
+        {(roomSizes || roomNames) && !is2d && <RoomSizeLabels geometry={geometry} names={roomNames} sizes={roomSizes} />}
         {items.map((item) => (
           <FurnitureDraggable
             key={item.instanceId}
@@ -772,6 +798,7 @@ function Floor({
   paint,
   onPaint,
   selectable = false,
+  selected = false,
 }: {
   polygon: [number, number][];
   kind: string;
@@ -779,9 +806,11 @@ function Floor({
   onPaint?: () => void;
   /** Room picking: glow amber under the cursor. */
   selectable?: boolean;
+  /** The clicked room: glows amber until another is picked. */
+  selected?: boolean;
 }) {
   const [hovered, setHovered] = useState(false);
-  const glow = selectable && hovered;
+  const glow = (selectable && hovered) || selected;
   const texture = usePaintTexture(paint?.texture_url);
   // Shape UVs are in metres, so repeat = 1 / tile size keeps the vendor's real tile size.
   const map = useMemo(() => {
@@ -1262,7 +1291,7 @@ function Fixtures({ fixtures }: { fixtures?: PlanGeometry["fixtures"] }) {
 }
 
 /** Room name and size above each room's floor; "≈" marks sizes from an estimated scale. */
-function RoomSizeLabels({ geometry, height }: { geometry: PlanGeometry; height: number }) {
+function RoomSizeLabels({ geometry, names, sizes }: { geometry: PlanGeometry; names: boolean; sizes: boolean }) {
   const approx = geometry.scale?.estimated ? "≈ " : "";
   const areas = geometry.zones?.length ? geometry.zones : geometry.rooms;
   return (
@@ -1271,13 +1300,13 @@ function RoomSizeLabels({ geometry, height }: { geometry: PlanGeometry; height: 
         const xs = a.polygon.map((p) => p[0]);
         const zs = a.polygon.map((p) => p[1]);
         const at = ("label_point" in a && a.label_point) || [(Math.min(...xs) + Math.max(...xs)) / 2, (Math.min(...zs) + Math.max(...zs)) / 2];
-        const w = Math.max(...xs) - Math.min(...xs);
-        const l = Math.max(...zs) - Math.min(...zs);
+        const w = a.dimensions?.width || Math.max(...xs) - Math.min(...xs);
+        const l = a.dimensions?.length || Math.max(...zs) - Math.min(...zs);
         return (
-          <Html key={a.id} position={[at[0], height + 0.3, at[1]]} center zIndexRange={[8, 0]} style={{ pointerEvents: "none" }}>
+          <Html key={a.id} position={[at[0], 0.05, at[1]]} center zIndexRange={[8, 0]} style={{ pointerEvents: "none" }}>
             <div className="whitespace-nowrap rounded-md bg-white/90 px-2 py-1 text-center text-[11px] leading-tight text-slate-700 shadow-sm ring-1 ring-slate-200">
-              <div className="font-semibold text-brand-navy">{a.name}</div>
-              <div className="tabular-nums">{approx}{w.toFixed(1)} × {l.toFixed(1)} m</div>
+              {names && <div className="font-semibold text-brand-navy">{a.name}</div>}
+              {sizes && <div className="tabular-nums">{approx}{w.toFixed(1)} × {l.toFixed(1)} m</div>}
             </div>
           </Html>
         );

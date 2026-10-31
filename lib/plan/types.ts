@@ -112,6 +112,10 @@ export interface PlanZone {
   polygon: Vec2[];
   label_point?: Vec2;
   dimensions?: { width: number; length: number; printed?: [number, number] };
+  area_m2?: number;
+  /** printed = read off the plan (OCR); measured = drawn size × the estimated scale. */
+  dimension_source?: "printed" | "measured";
+  confidence?: number | null;
 }
 
 export interface PlanRoom {
@@ -218,6 +222,9 @@ export interface PlanGeometry {
   fixtures?: { id: string; type: string; position: Vec2; size: [number, number, number]; rotation_deg: number }[];
   /** "vision" when the layout came from the vision model (refined by OpenCV), else "opencv". */
   geometry_source?: "vision" | "opencv";
+  /** Downloads written by POST /api/plans/convert-to-3d (backend paths, served through the proxy). */
+  glb_url?: string;
+  dxf_url?: string;
   meters_per_pixel?: number | null;
   // Pixel-space plan (present on image imports) — see CorrectionState.
   image_size?: { width: number; height: number };

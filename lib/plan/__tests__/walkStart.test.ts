@@ -52,3 +52,12 @@ test("3D camera frames the whole apartment: a bigger plan puts the camera furthe
   assert.ok(dist(10, 6) >= radius / Math.sin((25 * Math.PI) / 180)); // sphere fits the 50° view
   assert.ok(dist(20, 12) > 1.9 * dist(10, 6));
 });
+
+test("front and side views look at the plan centre from the south and the east", () => {
+  const front = cameraForView("front", 10, 6, 2.8);
+  const side = cameraForView("side", 10, 6, 2.8);
+  assert.equal(front.position[0], front.target[0]); // straight on, no sideways offset
+  assert.ok(front.position[2] > 6); // south of the plan (+z)
+  assert.equal(side.position[2], side.target[2]);
+  assert.ok(side.position[0] > 10); // east of the plan (+x)
+});
