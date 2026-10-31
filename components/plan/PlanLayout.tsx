@@ -78,6 +78,7 @@ export function PlanLayout() {
   const [error, setError] = useState<string | null>(null);
   const [allowInvalid, setAllowInvalid] = useState(false);
   const [draft, setDraft] = useState<PlanGeometry | null>(null);
+  const [scaleNote, setScaleNote] = useState(false); // the upload's scale was estimated, not printed
   const [buildErrors, setBuildErrors] = useState<string[]>([]);
   const [placing, setPlacing] = useState<CatalogModel | null>(null);
   // Catalogue item whose details card is open; "Show in my apartment" starts placing it.
@@ -658,7 +659,7 @@ export function PlanLayout() {
               setBusy(t("Building 3D…"));
               setBuildErrors([]);
               try {
-                const rebuilt = await rebuildFromGeometry(state, draft.height ?? 3);
+                const rebuilt = await rebuildFromGeometry(state, draft.height ?? 2.7);
                 setGeometry({ ...rebuilt, preview_image: draft.preview_image, debug_images: draft.debug_images });
                 setView("2d"); // a freshly converted plan opens in 2D
                 setDraft(null);
@@ -702,7 +703,13 @@ export function PlanLayout() {
               setBusy(t("Reading floor plan…"));
               try {
                 const room = await createRoomFromImage(file, height);
-                setDraft(room);
+                // The scale is always estimated, so a clean plan goes straight to 3D; the correction
+                // view opens only for wall/room problems (and stays available from the scale note).
+                if (room.validation?.ok) {
+                  setGeometry(room);
+                  setView("2d");
+                } else setDraft(room);
+                setScaleNote(Boolean(room.scale?.estimated));
                 setBusy(null);
               } catch (caught) {
                 setError(caught instanceof Error ? caught.message : String(caught));
@@ -993,6 +1000,27 @@ export function PlanLayout() {
               />
               {error && (
                 <p className="pointer-events-auto max-w-xl rounded-lg border border-red-200 bg-red-50/95 px-3 py-2 text-sm text-red-700 shadow-sm backdrop-blur">{error}</p>
+              )}
+              {scaleNote && (
+                <div role="status" className="pointer-events-auto flex max-w-xl items-center gap-3 rounded-lg border border-sky-200 bg-sky-50/95 px-3 py-2 text-sm text-sky-800 shadow-sm backdrop-blur">
+                  <span>{t("Dimensions automatically estimated from your floor plan. Measurements are approximate.")}</span>
+                  {geometry.walls_px && items.length === 0 && (
+                    <button
+                      type="button"
+                      className="shrink-0 font-semibold underline underline-offset-2 hover:text-sky-950"
+                      onClick={() => {
+                        setDraft(geometry);
+                        setGeometry(null);
+                        setScaleNote(false);
+                      }}
+                    >
+                      {t("Adjust")}
+                    </button>
+                  )}
+                  <button type="button" aria-label={t("Dismiss")} onClick={() => setScaleNote(false)} className="shrink-0 text-sky-600 hover:text-sky-900">
+                    <X className="size-4" />
+                  </button>
+                </div>
               )}
               {showDebug && geometry.debug_images && (
                 <div className="pointer-events-auto max-h-[40%] w-full max-w-4xl overflow-auto rounded-xl border border-white/60 bg-white/80 shadow-lg backdrop-blur-md">

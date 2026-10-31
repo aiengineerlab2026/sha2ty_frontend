@@ -80,6 +80,8 @@ export interface PlanScale {
   confidence: number;
   uniform: boolean;
   confirmed: boolean;
+  /** True when the scale came from doors / furniture / a heuristic rather than printed dimensions. */
+  estimated?: boolean;
   source: string;
   warnings: string[];
   candidates: { zone_id: string; name: string; printed: string; mpp_x: number; mpp_y: number; inlier?: boolean }[];
@@ -96,6 +98,8 @@ export interface CorrectionState {
   drawing_unit?: string | null;
   meters_per_pixel?: number | null;
   scale_confirmed?: boolean;
+  /** Furniture scale references measured on upload (backend scale_estimator). */
+  scale_refs?: unknown[];
   height?: number;
   wall_thickness?: number;
 }
@@ -220,6 +224,7 @@ export interface PlanGeometry {
   zone_lines?: { start: Vec2; end: Vec2 }[];
   straight_lines?: string;
   drawing_unit?: string | null;
+  scale_refs?: unknown[];
   rooms_px?: RoomPx[];
   zones_px?: ZonePx[];
   footprint_px?: Vec2[];
