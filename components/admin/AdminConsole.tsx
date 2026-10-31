@@ -62,7 +62,7 @@ export function AdminRequests() {
   const locale = useLocale();
   const router = useRouter();
   const [vendors, setVendors] = useState<VendorProfile[] | null>(null);
-  const [tab, setTab] = useState<Status | "all">("pending");
+  const [tab, setTab] = useState<Status | "all">("all");
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState<string | null>(null);
 
@@ -123,7 +123,7 @@ export function AdminRequests() {
       </header>
       <main className="mx-auto max-w-6xl px-4 py-8">
         <h1 className="text-2xl font-bold text-brand-navy">{t("Vendor requests")}</h1>
-        <p className="mt-1 text-sm text-slate-500">{t("New studios can sell only after you approve them.")}</p>
+        <p className="mt-1 text-sm text-slate-500">{t("New studios sell right away; suspend or reject any of them here.")}</p>
 
         <div role="tablist" className="mt-6 flex flex-wrap gap-2">
           {TABS.map((s) => (

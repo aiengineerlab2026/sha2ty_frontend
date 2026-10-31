@@ -86,7 +86,7 @@ export function SignupForm() {
   const router = useRouter();
   const params = useSearchParams();
   const nextPath = params.get("next");
-  // Customers shop and plan; vendors sell and wait for an admin's approval. ?as=vendor preselects.
+  // Customers shop and plan; vendors sell straight away. ?as=vendor preselects.
   const [kind, setKind] = useState<"customer" | "vendor">(params.get("as") === "vendor" ? "vendor" : "customer");
   const vendor = kind === "vendor";
   const [coords, setCoords] = useState<Picked | null>(null);
@@ -156,7 +156,7 @@ export function SignupForm() {
       router.push(safeNext(nextPath, "/"));
       return;
     }
-    // The backend created the vendor row (pending approval); only the logo is added here.
+    // The backend created the vendor row (approved); only the logo is added here.
     if (logo) {
       try {
         const logoUrl = await uploadPublicFile(user.id, logo, "logo");
@@ -169,7 +169,7 @@ export function SignupForm() {
       }
     }
     setBusy(false);
-    router.push("/vendor"); // shows "awaiting approval" until the admin approves
+    router.push("/vendor");
   };
 
   // Re-check a field once it has been flagged, so the error clears as soon as it is fixed.
@@ -187,7 +187,7 @@ export function SignupForm() {
           >
             <input type="radio" name="kind" value={option} checked={kind === option} onChange={() => setKind(option)} className="sr-only" />
             <span className="text-sm font-semibold text-brand-navy">{option === "customer" ? t("Customer") : t("Vendor")}</span>
-            <span className="text-xs">{option === "customer" ? t("Plan and furnish your home") : t("Sell your products (needs approval)")}</span>
+            <span className="text-xs">{option === "customer" ? t("Plan and furnish your home") : t("Sell your products")}</span>
           </label>
         ))}
       </fieldset>

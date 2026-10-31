@@ -3,7 +3,7 @@ import { AuthShell } from "@/components/vendor/AuthShell";
 
 export default function AdminLoginPage() {
   return (
-    <AuthShell title="Admin sign in" subtitle="Review and approve new vendor studios.">
+    <AuthShell title="Admin sign in" subtitle="Manage vendor studios.">
       <AdminLoginForm />
     </AuthShell>
   );
