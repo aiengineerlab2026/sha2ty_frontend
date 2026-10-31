@@ -838,4 +838,7 @@ export const AR: Record<string, string> = {
   "Paste image": "لصق صورة",
   "The browser blocked reading the clipboard. Press ⌘V / Ctrl+V instead.": "منع المتصفح قراءة الحافظة. اضغط ⌘V / Ctrl+V بدلاً من ذلك.",
   "Drop your plan on the preview, choose a file there, or paste a copied image (⌘V / Ctrl+V).": "أفلت المخطط على المعاينة، أو اختر ملفاً هناك، أو الصق صورة منسوخة (⌘V / Ctrl+V).",
+  "Vision model": "نموذج الرؤية",
+  "Reads floor plans and vendor product photos into details before they are turned into 3D.": "يقرأ المخططات وصور منتجات البائعين ويستخرج تفاصيلها قبل تحويلها إلى نموذج ثلاثي الأبعاد.",
+  "No API key on the server": "لا يوجد مفتاح API على الخادم",
 };

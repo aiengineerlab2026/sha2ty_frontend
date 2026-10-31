@@ -2,7 +2,7 @@
 
 import { useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
-import { Check, Clock, LoaderCircle, Lock, LogOut, Mail, MapPin, UserRound, X } from "lucide-react";
+import { Check, Clock, Eye, LoaderCircle, Lock, LogOut, Mail, MapPin, UserRound, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Logo } from "@/components/shatably/Logo";
 import { LanguageSwitch } from "@/components/shatably/Header";
@@ -122,7 +122,8 @@ export function AdminRequests() {
         </div>
       </header>
       <main className="mx-auto max-w-6xl px-4 py-8">
-        <h1 className="text-2xl font-bold text-brand-navy">{t("Vendor requests")}</h1>
+        <VisionModelSetting call={call} />
+        <h1 className="mt-10 text-2xl font-bold text-brand-navy">{t("Vendor requests")}</h1>
         <p className="mt-1 text-sm text-slate-500">{t("New studios sell right away; suspend or reject any of them here.")}</p>
 
         <div role="tablist" className="mt-6 flex flex-wrap gap-2">
@@ -219,5 +220,76 @@ export function AdminRequests() {
         </ul>
       </main>
     </div>
+  );
+}
+
+type VisionOption = { id: string; label: string; configured: boolean };
+
+/** Which vision model reads floor plans and vendor product photos before 3D (saved on the server). */
+function VisionModelSetting({ call }: { call: (path: string, init?: RequestInit) => Promise<{ model?: string; options?: VisionOption[] } | null> }) {
+  const t = useT();
+  const [model, setModel] = useState<string | null>(null);
+  const [options, setOptions] = useState<VisionOption[]>([]);
+  const [saving, setSaving] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    call("/vision")
+      .then((body) => {
+        if (!body) return;
+        setModel(body.model ?? null);
+        setOptions(body.options ?? []);
+      })
+      .catch((caught: Error) => setError(caught.message));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const choose = async (id: string) => {
+    if (id === model || saving) return;
+    setSaving(id);
+    setError(null);
+    try {
+      const body = await call("/vision", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model: id }) });
+      if (body?.model) setModel(body.model);
+    } catch (caught) {
+      setError((caught as Error).message);
+    } finally {
+      setSaving(null);
+    }
+  };
+
+  return (
+    <section className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
+      <div className="flex items-center gap-2">
+        <Eye className="size-5 text-brand-navy" aria-hidden />
+        <h2 className="text-lg font-semibold text-brand-navy">{t("Vision model")}</h2>
+      </div>
+      <p className="mt-1 text-sm text-slate-500">{t("Reads floor plans and vendor product photos into details before they are turned into 3D.")}</p>
+      {!model && !error && <LoaderCircle className="mt-4 size-5 animate-spin text-slate-400" aria-label={t("Loading…")} />}
+      <div role="radiogroup" aria-label={t("Vision model")} className="mt-4 grid gap-3 sm:grid-cols-2">
+        {options.map((o) => {
+          const on = o.id === model;
+          return (
+            <button
+              key={o.id}
+              type="button"
+              role="radio"
+              aria-checked={on}
+              disabled={!o.configured || Boolean(saving)}
+              onClick={() => void choose(o.id)}
+              className={`flex items-center justify-between gap-3 rounded-xl border px-4 py-3 text-start transition disabled:cursor-not-allowed disabled:opacity-60 ${on ? "border-brand-amber bg-amber-50/60 ring-2 ring-brand-amber/30" : "border-slate-200 hover:border-slate-300"}`}
+            >
+              <span>
+                <span className="block font-semibold text-brand-navy">{o.label}</span>
+                <span className="block text-xs text-slate-500" dir="ltr">{o.id}</span>
+                {!o.configured && <span className="mt-1 block text-xs text-red-600">{t("No API key on the server")}</span>}
+              </span>
+              {saving === o.id ? <LoaderCircle className="size-4 animate-spin text-slate-400" aria-hidden /> : on ? <Check className="size-5 text-brand-amber" aria-hidden /> : null}
+            </button>
+          );
+        })}
+      </div>
+      {error && <p className="mt-3 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">{t(error)}</p>}
+    </section>
   );
 }
