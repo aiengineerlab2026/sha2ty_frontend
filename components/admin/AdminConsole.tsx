@@ -266,7 +266,7 @@ function VisionModelSetting({ call }: { call: (path: string, init?: RequestInit)
       </div>
       <p className="mt-1 text-sm text-slate-500">{t("Reads floor plans and vendor product photos into details before they are turned into 3D.")}</p>
       {!model && !error && <LoaderCircle className="mt-4 size-5 animate-spin text-slate-400" aria-label={t("Loading…")} />}
-      <div role="radiogroup" aria-label={t("Vision model")} className="mt-4 grid gap-3 sm:grid-cols-2">
+      <div role="radiogroup" aria-label={t("Vision model")} className="mt-4 grid gap-3 sm:grid-cols-3">
         {options.map((o) => {
           const on = o.id === model;
           return (
