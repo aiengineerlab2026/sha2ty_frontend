@@ -1,5 +1,6 @@
 import type { ModelProvider } from "./types";
 
+import { publish } from "@/lib/events";
 import { API } from "@/lib/plan/api"; // same-origin proxy: the JWT comes from the httpOnly cookie
 
 export type GenerateProgress = { percent: number; status: string };
@@ -33,7 +34,11 @@ export async function generateFromPhoto(
   });
   stopPulse?.();
   const json = await created.json().catch(() => ({}));
-  if (!created.ok) throw new Error(detail(json) || `Generate failed (${created.status}).`);
+  if (!created.ok) {
+    publish("generation.finished", { provider, ok: false });
+    throw new Error(detail(json) || `Generate failed (${created.status}).`);
+  }
+  if (typeof json.remaining === "number") publish("generation.started", { provider, remaining: json.remaining });
   if (json.glb_url) {
     onProgress?.({ percent: 100, status: "Conversion complete" });
     return json.glb_url as string;
