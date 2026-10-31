@@ -83,7 +83,7 @@ function ModelView({ model, signedIn }: { model: CatalogModel; signedIn: boolean
   const photos = useMemo(() => [...new Set([model.thumbnail, ...(model.variants ?? [])].filter((u): u is string => Boolean(u)))], [model]);
   const [shown, setShown] = useState<"3d" | number>(photos.length || !model.glb_url ? 0 : "3d");
   const description = useMemo(() => safeHtml(model.description ?? ""), [model.description]);
-  const dims = model.width_m && model.height_m && model.depth_m ? { width: model.width_m, height: model.height_m, depth: model.depth_m } : null;
+  const dims = model.width_m && model.height_m ? { width: model.width_m, height: model.height_m, ...(model.depth_m ? { depth: model.depth_m } : {}) } : null;
 
   return (
     <Layout
@@ -109,7 +109,7 @@ function ModelView({ model, signedIn }: { model: CatalogModel; signedIn: boolean
       price={model.price == null ? null : formatPrice(model.price, model.price_unit ?? "item")}
       title={model.title}
       cart={line("model", model.id, model.title, model.price, model.price_unit ?? "item", model.width_m && model.depth_m ? model.width_m * model.depth_m : null)}
-      facts={dims ? [["Width", `${dims.width.toFixed(2)} m`], ["Height", `${dims.height.toFixed(2)} m`], ["Depth", `${dims.depth.toFixed(2)} m`]] : [["Size", t("Not set")]]}
+      facts={dims ? [["Width", `${dims.width.toFixed(2)} m`], ["Height", `${dims.height.toFixed(2)} m`], ...(dims.depth ? [["Depth", `${dims.depth.toFixed(2)} m`] as [string, string]] : [])] : [["Size", t("Not set")]]}
     >
       {description ? (
         <div className="text-sm leading-relaxed text-slate-600 [&_h3]:mb-1 [&_h3]:mt-3 [&_h3]:text-base [&_h3]:font-semibold [&_h3]:text-brand-navy [&_li]:ms-5 [&_ol]:list-decimal [&_ul]:list-disc" dangerouslySetInnerHTML={{ __html: description }} />

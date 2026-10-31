@@ -22,11 +22,11 @@ import type { PriceUnit, VendorProfile } from "@/lib/vendor/types";
 type Cutout = { id: string; name: string; width_m: number; image_url: string; price: number | null; price_unit: PriceUnit } & Record<string, unknown>;
 
 export interface CutoutKind {
-  table: "carpets" | "windows" | "doors";
+  table: "carpets" | "windows";
   /** Second dimension column and its label: carpets have a length, windows a height. */
   second: "length_m" | "height_m";
   secondLabel: string;
-  noun: string;
+  noun: "carpet" | "window";
   title: string;
   subtitle: string;
   photoLabel: string;
@@ -58,17 +58,9 @@ export const WINDOW_KIND: CutoutKind = {
   defaults: ["1.2", "1.4"],
 };
 
-export const DOOR_KIND: CutoutKind = {
-  table: "doors",
-  second: "height_m",
-  secondLabel: "Height",
-  noun: "door",
-  title: "Doors",
-  subtitle: "Upload a front-on photo of the door and its real width and height in metres. Only the door is kept; shoppers fit it into a doorway in the plan editor, which checks that the size fits.",
-  photoLabel: "Door photo",
-  namePlaceholder: "e.g. Oak panel door",
-  defaults: ["0.9", "2.1"],
-};
+export function WindowLibrary() {
+  return <CutoutLibrary kind={WINDOW_KIND} />;
+}
 
 /** Vendor's image items: the photo is cut out (background removed, straightened to the real size) and saved. */
 export function CutoutLibrary({ kind }: { kind: CutoutKind }) {
@@ -78,7 +70,7 @@ export function CutoutLibrary({ kind }: { kind: CutoutKind }) {
   const [editing, setEditing] = useState<Cutout | null>(null);
   // Variant images for a new item, uploaded once it is saved (an existing item edits its variants live).
   const [pendingVariants, setPendingVariants] = useState<File[]>([]);
-  const variantKind = kind.table === "carpets" ? "carpet" : kind.table === "doors" ? "door" : "window";
+  const variantKind = kind.table === "carpets" ? "carpet" : "window";
   const form = useRef<HTMLFormElement>(null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -102,7 +94,7 @@ export function CutoutLibrary({ kind }: { kind: CutoutKind }) {
     const timer = setTimeout(() => {
       setExtracting(true);
       setExtractError(null);
-      extractCarpet(file, w, l)
+      extractCarpet(file, w, l, kind.noun)
         .then((blob) => live && setExtracted({ blob, url: URL.createObjectURL(blob), key: `${file.name}:${file.size}:${file.lastModified}:${width}:${length}` }))
         .catch((caught) => live && setExtractError(caught instanceof Error ? caught.message : String(caught)))
         .finally(() => live && setExtracting(false));
@@ -264,7 +256,7 @@ export function CutoutLibrary({ kind }: { kind: CutoutKind }) {
               </div>
               <div className="space-y-1 text-xs">
                 <p className="flex items-center gap-1.5 font-semibold text-brand-navy">
-                  <Sparkles className="size-3.5 text-brand-amber" aria-hidden /> {t(kind.noun === "carpet" ? "Carpet only" : kind.noun === "door" ? "Door only" : "Window only")}
+                  <Sparkles className="size-3.5 text-brand-amber" aria-hidden /> {t(kind.noun === "carpet" ? "Carpet only" : "Window only")}
                 </p>
                 <p className="text-slate-500">
                   {extracting
@@ -283,7 +275,7 @@ export function CutoutLibrary({ kind }: { kind: CutoutKind }) {
             <VariantsEditor kind={variantKind} itemId={editing?.id} vendorId={vendor?.id} pending={pendingVariants} onPending={setPendingVariants} />
           </div>
           <Button type="submit" disabled={saving || !vendor || (Boolean(file) && !ready)} className="self-end">
-            {saving ? t("Saving…") : editing ? t("Save changes") : t(kind.noun === "carpet" ? "Add carpet" : kind.noun === "door" ? "Add door" : "Add window")}
+            {saving ? t("Saving…") : editing ? t("Save changes") : t(kind.noun === "carpet" ? "Add carpet" : "Add window")}
           </Button>
         </form>
 
@@ -319,7 +311,7 @@ export function CutoutLibrary({ kind }: { kind: CutoutKind }) {
             </li>
           ))}
         </ul>
-        {carpets.length === 0 && !error && <p className="mt-6 text-sm text-slate-500">{t(kind.noun === "carpet" ? "No carpets yet." : kind.noun === "door" ? "No doors yet." : "No windows yet.")}</p>}
+        {carpets.length === 0 && !error && <p className="mt-6 text-sm text-slate-500">{t(kind.noun === "carpet" ? "No carpets yet." : "No windows yet.")}</p>}
       </main>
     </div>
   );

@@ -54,7 +54,7 @@ export function MatchButton({ model }: { model: CatalogModel }) {
             setOpen(true);
           }}
           className="inline-flex h-10 items-center gap-2 rounded-xl bg-brand-navy px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-navy-hover">
-          <Wand2 className="size-4 text-brand-amber" aria-hidden /> {t("Match")}
+          <Wand2 className="size-4 text-brand-amber" aria-hidden /> {t("See how it looks with other items")}
         </button>
         {results && (
           <button type="button" onClick={() => setResultsOpen(true)} className="inline-flex h-10 items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:text-brand-navy">
@@ -77,7 +77,7 @@ export function MatchButton({ model }: { model: CatalogModel }) {
       />
       {results && resultsOpen && (
         <MatchResults
-          title={t("Match results")}
+          title={t("How it looks with other items")}
           variations={results.variations}
           warnings={results.warnings}
           index={index}
@@ -113,7 +113,7 @@ function MatchWizard({ open, onOpenChange, model, onDone }: { open: boolean; onO
   const [picked, setPicked] = useState<Pick | null>(null);
   const picks = usePicks(model.id);
 
-  const missing = { w: !model.width_m, d: !model.depth_m, h: !model.height_m };
+  const missing = { w: !model.width_m, d: false, h: !model.height_m }; // depth is optional (the width stands in)
   const steps = stepsFor(type, picked ? { modelSizeMissing: missing.w || missing.d || missing.h } : undefined);
   const current = steps[step];
   const num = (v: string) => Number(v.replace(",", "."));
@@ -185,7 +185,7 @@ function MatchWizard({ open, onOpenChange, model, onDone }: { open: boolean; onO
     >
       <DialogContent className="flex max-h-[min(92dvh,52rem)] flex-col gap-0 overflow-hidden p-0 sm:max-w-2xl">
         <div className="border-b border-slate-100 px-5 pb-3 pt-5">
-          <DialogTitle className="text-lg font-semibold text-brand-navy">{t("Match with {name}", { name: model.title })}</DialogTitle>
+          <DialogTitle className="text-lg font-semibold text-brand-navy">{t("See how {name} looks with other items", { name: model.title })}</DialogTitle>
           <DialogDescription className="mt-0.5 text-xs text-slate-500">{t("Step {i} of {n}", { i: step + 1, n: steps.length })}</DialogDescription>
           <div className="mt-3 flex gap-1" aria-hidden>
             {steps.map((s, i) => (

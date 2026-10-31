@@ -2,14 +2,12 @@
 
 import { useT } from "@/lib/i18n";
 import { useEffect, type ReactNode } from "react";
-import { Axis3d, Box, Bug, Check, CloudAlert, Download, Footprints, Grid3x3, LoaderCircle, Plus, Hand, Redo2, Ruler, RulerDimensionLine, Save, Sun, Undo2 } from "lucide-react";
+import { Bug, Check, CloudAlert, Download, Footprints, Grid3x3, LoaderCircle, Plus, Hand, Redo2, Ruler, RulerDimensionLine, Save, Undo2 } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { CameraView } from "@/lib/plan/coordinateSystem";
 
 const VIEWS: { view: CameraView; label: string; icon: ReactNode }[] = [
-  { view: "perspective", label: "Perspective", icon: <Box /> },
-  { view: "iso", label: "Isometric", icon: <Axis3d /> },
-  { view: "top", label: "3D", icon: <span className="text-xs font-semibold">3D</span> },
+  { view: "iso", label: "3D", icon: <span className="text-xs font-semibold">3D</span> },
   { view: "2d", label: "2D", icon: <span className="text-xs font-semibold">2D</span> },
   { view: "walk", label: "Walk through", icon: <Footprints /> },
 ];
@@ -134,9 +132,7 @@ export function ViewportToolbar({
   view,
   showGrid,
   showDebug,
-  sun,
   dimensions,
-  onToggleSun,
   onToggleDimensions,
   measuring = false,
   onToggleMeasure,
@@ -153,9 +149,7 @@ export function ViewportToolbar({
   view: CameraView;
   showGrid: boolean;
   showDebug?: boolean;
-  sun: boolean;
   dimensions: boolean;
-  onToggleSun: () => void;
   onToggleDimensions: () => void;
   measuring?: boolean;
   panning?: boolean;
@@ -187,13 +181,9 @@ export function ViewportToolbar({
       <ToolButton label={showGrid ? t("Hide grid") : t("Show grid")} active={showGrid} onClick={onToggleGrid}>
         <Grid3x3 />
       </ToolButton>
-      {view === "2d" ? (
+      {view === "2d" && (
         <ToolButton label={dimensions ? t("Hide dimensions") : t("Show dimensions")} active={dimensions} onClick={onToggleDimensions}>
           <Ruler />
-        </ToolButton>
-      ) : (
-        <ToolButton label={sun ? t("Sun shadows off") : t("Sun shadows on")} active={sun} onClick={onToggleSun}>
-          <Sun />
         </ToolButton>
       )}
       {onTogglePan && (

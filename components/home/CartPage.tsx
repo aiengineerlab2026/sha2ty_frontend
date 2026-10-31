@@ -35,8 +35,7 @@ export function CartPage() {
     setPlacing(true);
     setOrderError(null);
     try {
-      await placeOrder(lines);
-      clearCart();
+      await placeOrder(lines); // the cart clears itself on "order.placed"
       router.push("/orders");
     } catch (caught) {
       setOrderError((caught as Error).message);

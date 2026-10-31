@@ -1,3 +1,4 @@
+import { splitLines } from "@/lib/match/match";
 import type { CompanyGroup, CorrectionState, PlanGeometry, SavedPlan } from "./types";
 
 /** The FastAPI backend, through the same-origin proxy that adds the user's JWT from the httpOnly
@@ -70,23 +71,43 @@ export function createRoomFromDimensions(body: { width: number; depth: number; h
   });
 }
 
-export async function createRoomFromImage(file: File, height: number) {
+export type PlanProgress = { stage: string; percent: number };
+
+/** Upload → the backend streams {"stage", "progress"} lines (Analyzing → Extracting rooms → Estimating
+ * dimensions → Generating 3D), then {"success": true, "plan": …}. Bad uploads come back as plain JSON. */
+export async function createRoomFromImage(file: File, height: number, onProgress?: (progress: PlanProgress) => void) {
   const data = new FormData();
   data.append("image", file);
   data.append("height", String(height));
   data.append("debug", "true");
   let response: Response;
   try {
-    response = await fetch(`${API}/api/plans/from-image`, {
+    response = await fetch(`${API}/api/plans/convert-to-3d`, {
       method: "POST",
       body: data,
     });
   } catch {
     throw new Error("Cannot reach the API. Is the backend running on port 8000?");
   }
-  const json = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(typeof json.detail === "string" ? json.detail : "Could not read the floor plan.");
-  return json as PlanGeometry;
+  if (!response.ok || !response.body) {
+    const json = await response.json().catch(() => ({}));
+    throw new Error(typeof json.detail === "string" ? json.detail : "Could not read the floor plan.");
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  for (;;) {
+    const { done, value } = await reader.read();
+    buffer += decoder.decode(value, { stream: !done });
+    const { events, rest } = splitLines(done ? `${buffer}\n` : buffer);
+    buffer = rest;
+    for (const event of events) {
+      if (typeof event.error === "string") throw new Error(event.error);
+      if (typeof event.progress === "number") onProgress?.({ stage: String(event.stage ?? ""), percent: event.progress });
+      if (event.success) return event.plan as PlanGeometry;
+    }
+    if (done) throw new Error("Could not read the floor plan.");
+  }
 }
 
 /** Re-detect rooms from edited walls (preview, never blocks). */
@@ -141,12 +162,13 @@ export async function exportRoomGlb(id: string) {
   return response.blob();
 }
 
-/** Carpet photo → PNG of only the carpet, straightened top-down at width × length (backend OpenCV). */
-export async function extractCarpet(image: Blob, widthM: number, lengthM: number): Promise<Blob> {
+/** Photo → PNG of only the item, straightened at width × length (backend OpenCV). */
+export async function extractCarpet(image: Blob, widthM: number, lengthM: number, noun: "carpet" | "door" | "window" = "carpet"): Promise<Blob> {
   const form = new FormData();
-  form.append("image", image, "carpet");
+  form.append("image", image, noun);
   form.append("width_m", String(widthM));
   form.append("length_m", String(lengthM));
+  form.append("noun", noun);
   let response: Response;
   try {
     response = await fetch(`${API}/api/vendor/carpets/extract`, { method: "POST", body: form });

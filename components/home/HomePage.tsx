@@ -34,6 +34,7 @@ import type {
   WindowItem,
 } from "@/lib/vendor/types";
 import type { CatalogKind } from "./CatalogDetail";
+import { sizeLabel } from "@/lib/plan/modelNormalization";
 
 const PAGE_TITLE: Record<CatalogKind, [string, string]> = {
   models: ["Models", "Furniture ready to place in a plan"],
@@ -215,9 +216,7 @@ export function HomePage({ only }: { only?: CatalogKind } = {}) {
                       }
                       title={m.title}
                       meta={
-                        m.width_m && m.height_m && m.depth_m
-                          ? `${m.width_m.toFixed(2)} × ${m.height_m.toFixed(2)} × ${m.depth_m.toFixed(2)} m`
-                          : t("Size not set")
+                        sizeLabel(m) ?? t("Size not set")
                       }
                     >
                       {m.thumbnail ? (

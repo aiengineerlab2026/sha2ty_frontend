@@ -2,12 +2,18 @@
 
 export const METERS = 1;
 
-export type CameraView = "perspective" | "iso" | "top" | "2d" | "walk";
+export type CameraView = "perspective" | "iso" | "2d" | "walk";
 
-export function cameraForView(view: CameraView, width: number, depth: number, height: number) {
+/** Camera for a view, fitted so the whole apartment (its bounding sphere) is in frame at this field of view. */
+export function cameraForView(view: CameraView, width: number, depth: number, height: number, fovDeg = 50) {
   const cx = width / 2;
   const cz = depth / 2;
-  if (view === "top") return { position: [cx, Math.max(width, depth) * 1.2, cz] as const, target: [cx, 0, cz] as const };
-  if (view === "iso") return { position: [cx + width, height * 2.2, cz + depth] as const, target: [cx, 0, cz] as const };
-  return { position: [cx + width * 0.6, height * 1.4, cz + depth * 0.9] as const, target: [cx, height * 0.4, cz] as const };
+  const target = view === "iso" ? ([cx, 0, cz] as const) : ([cx, height * 0.4, cz] as const);
+  // Same viewing directions as before; only the distance now follows the plan's size.
+  const dir = view === "iso" ? [width, height * 2.2, depth] : [width * 0.6, height * 1.4 - height * 0.4, depth * 0.9];
+  const len = Math.hypot(dir[0], dir[1], dir[2]) || 1;
+  const radius = Math.hypot(width, depth, height) / 2;
+  const distance = (radius / Math.sin(((fovDeg * Math.PI) / 180) / 2)) * 1.05;
+  const position = [target[0] + (dir[0] / len) * distance, target[1] + (dir[1] / len) * distance, target[2] + (dir[2] / len) * distance] as const;
+  return { position, target };
 }

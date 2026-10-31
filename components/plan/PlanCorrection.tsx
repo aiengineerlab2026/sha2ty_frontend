@@ -56,7 +56,6 @@ export function PlanCorrection({
   const [labels, setLabels] = useState<LabelPx[]>(geometry.labels ?? []);
   const [zoneLines, setZoneLines] = useState<{ start: Vec2; end: Vec2 }[]>(geometry.zone_lines ?? []);
   const [pxPerFt, setPxPerFt] = useState<string>(geometry.scale?.px_per_ft ? String(geometry.scale.px_per_ft) : "");
-  const [scaleConfirmed, setScaleConfirmed] = useState(false);
   const [result, setResult] = useState<PlanGeometry>(geometry);
   const [pending, setPending] = useState(false);
   const [requestError, setRequestError] = useState<string | null>(null);
@@ -87,13 +86,13 @@ export function PlanCorrection({
       zone_lines: zoneLines,
       straight_lines: geometry.straight_lines,
       drawing_unit: geometry.drawing_unit,
-      // Only send a scale when it differs from the detected one; otherwise the backend recalibrates.
+      scale_refs: geometry.scale_refs,
+      // Optional: only a scale the user typed (different from the estimate) is sent; otherwise the backend estimates.
       meters_per_pixel: metersPerPixel && Math.abs((metersPerPixel - (geometry.scale?.meters_per_pixel ?? 0)) / metersPerPixel) > 0.002 ? metersPerPixel : null,
-      scale_confirmed: scaleConfirmed,
       height: geometry.height,
       wall_thickness: geometry.wall_thickness,
     }),
-    [width, height, thickness, walls, openings, labels, zoneLines, geometry, metersPerPixel, scaleConfirmed],
+    [width, height, thickness, walls, openings, labels, zoneLines, geometry, metersPerPixel],
   );
 
   // Live re-detection: rooms always come from the current walls, so preview and 3D agree.
@@ -539,12 +538,10 @@ export function PlanCorrection({
                 ? t("From {n} printed room sizes · confidence {p}%", { n: scale.candidates.filter((c) => c.inlier).length, p: Math.round((scale.confidence ?? 0) * 100) })
                 : scale?.source === "user"
                   ? t("Entered manually")
-                  : t("No printed dimension matched a room")}
+                  : t("Estimated from {refs} · approximate, confidence {p}%", { refs: (scale?.source ?? "heuristic").split(" + ").map((s) => t(s)).join(" + "), p: Math.round((scale?.confidence ?? 0) * 100) })}
               {scale && !scale.uniform ? " · horizontal and vertical scales differ" : ""}
             </p>
-            <label className="mt-2 flex items-center gap-2 text-xs text-slate-600">
-              <input type="checkbox" className="accent-brand-navy" checked={scaleConfirmed} onChange={() => setScaleConfirmed((v) => !v)} /> {t("I checked the scale against a printed dimension")}
-            </label>
+            <p className="mt-1 text-[11px] text-slate-400">{t("Optional: type px per foot to override the estimate.")}</p>
           </section>
 
           <section className="space-y-2">

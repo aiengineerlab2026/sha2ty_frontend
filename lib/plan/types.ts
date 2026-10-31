@@ -80,6 +80,8 @@ export interface PlanScale {
   confidence: number;
   uniform: boolean;
   confirmed: boolean;
+  /** True when the scale came from doors / furniture / a heuristic rather than printed dimensions. */
+  estimated?: boolean;
   source: string;
   warnings: string[];
   candidates: { zone_id: string; name: string; printed: string; mpp_x: number; mpp_y: number; inlier?: boolean }[];
@@ -96,6 +98,8 @@ export interface CorrectionState {
   drawing_unit?: string | null;
   meters_per_pixel?: number | null;
   scale_confirmed?: boolean;
+  /** Furniture scale references measured on upload (backend scale_estimator). */
+  scale_refs?: unknown[];
   height?: number;
   wall_thickness?: number;
 }
@@ -108,6 +112,10 @@ export interface PlanZone {
   polygon: Vec2[];
   label_point?: Vec2;
   dimensions?: { width: number; length: number; printed?: [number, number] };
+  area_m2?: number;
+  /** printed = read off the plan (OCR); measured = drawn size × the estimated scale. */
+  dimension_source?: "printed" | "measured";
+  confidence?: number | null;
 }
 
 export interface PlanRoom {
@@ -210,6 +218,13 @@ export interface PlanGeometry {
   /** Vendor doors fitted into door openings. */
   placed_doors?: PlacedDoor[];
   floors?: Vec2[][];
+  /** Furniture the vision model found, as simple boxes: position [x, z] and size [w, d, h] in metres. */
+  fixtures?: { id: string; type: string; position: Vec2; size: [number, number, number]; rotation_deg: number }[];
+  /** "vision" when the layout came from the vision model (refined by OpenCV), else "opencv". */
+  geometry_source?: "vision" | "opencv";
+  /** Downloads written by POST /api/plans/convert-to-3d (backend paths, served through the proxy). */
+  glb_url?: string;
+  dxf_url?: string;
   meters_per_pixel?: number | null;
   // Pixel-space plan (present on image imports) — see CorrectionState.
   image_size?: { width: number; height: number };
@@ -220,6 +235,7 @@ export interface PlanGeometry {
   zone_lines?: { start: Vec2; end: Vec2 }[];
   straight_lines?: string;
   drawing_unit?: string | null;
+  scale_refs?: unknown[];
   rooms_px?: RoomPx[];
   zones_px?: ZonePx[];
   footprint_px?: Vec2[];
@@ -283,6 +299,8 @@ export interface PlacedItem {
   mount?: "floor" | "ceiling" | "wall";
   /** Legacy field from saved plans; ignored. */
   scale?: [number, number, number];
+  /** Door model: the plan doorway it is fitted into (one door per doorway; it is never carried around). */
+  opening_id?: string;
   /** Rendered size in metres (GLB proportions kept, fitted inside width_m/height_m/depth_m). */
   size?: { width: number; height: number; depth: number };
   price?: number | null;

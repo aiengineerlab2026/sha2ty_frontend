@@ -31,7 +31,7 @@ export function FurnitureObject({
   // Normalisation depends only on the source and the catalogue size — never on the item's
   // position, rotation, the room or the camera — so dragging/rotating cannot change scale.
   const { object, report } = useMemo(
-    () => normalizeModel(scene, { width: item.width_m, height: item.height_m, depth: item.depth_m }, item.modelId),
+    () => normalizeModel(scene, { width: item.width_m, height: item.height_m, ...(item.depth_m > 0 ? { depth: item.depth_m } : {}) }, item.modelId),
     [scene, item.width_m, item.height_m, item.depth_m, item.modelId],
   );
 

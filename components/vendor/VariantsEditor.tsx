@@ -5,6 +5,9 @@ import { useEffect, useState } from "react";
 import { ClipboardPaste, ImagePlus, LoaderCircle, Trash2, X } from "lucide-react";
 import { addVariants, listVariants, removeVariants, type VariantKind, type VariantRow } from "@/lib/catalog/variants";
 
+// One shared empty queue: a fresh `[]` default per render would re-run the preview effect every render.
+const NO_FILES: File[] = [];
+
 /**
  * Variant images for a catalogue item (models, paints, carpets, windows).
  * - Existing item (`itemId`): shows its variants; add (upload / paste) and remove one or all, saved at once.
@@ -15,7 +18,7 @@ export function VariantsEditor({
   kind,
   itemId,
   vendorId,
-  pending = [],
+  pending = NO_FILES,
   onPending,
 }: {
   kind: VariantKind;

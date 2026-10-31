@@ -4,25 +4,26 @@ import { authSession } from "@/lib/auth/client";
 import { useT } from "@/lib/i18n";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { AppWindow, Armchair, DoorOpen, ChevronUp, Footprints, LayoutGrid, FolderOpen, LoaderCircle, PaintRoller, RectangleHorizontal, TriangleAlert, X } from "lucide-react";
+import { AppWindow, Armchair, ChevronUp, Download, Footprints, LayoutGrid, FolderOpen, LoaderCircle, PaintRoller, RectangleHorizontal, TriangleAlert, X } from "lucide-react";
 import { Header } from "@/components/shatably/Header";
 import { supabase, supabaseConfigured } from "@/lib/supabase/client";
-import { PlanValidationError, createRoomFromDimensions, createRoomFromImage, exportRoomGlb, listPlans, loadPlan, rebuildFromGeometry, savePlan } from "@/lib/plan/api";
+import { API, PlanValidationError, createRoomFromDimensions, createRoomFromImage, exportRoomGlb, listPlans, loadPlan, rebuildFromGeometry, savePlan } from "@/lib/plan/api";
 import { downloadBlob } from "@/lib/plan/exportPlan";
 import type { CameraView } from "@/lib/plan/coordinateSystem";
-import { clampTilt, localWarnings, nearestValidSpot, normalizeYaw, restOnSurfaces } from "@/lib/plan/placementValidation";
+import { clampTilt, insideWalls, localWarnings, nearestValidSpot, normalizeYaw, restOnSurfaces } from "@/lib/plan/placementValidation";
 import { baseHeight, mountFor } from "@/lib/plan/categories";
+import { doorPose, doorways, isDoorModel, raiseLintel } from "@/lib/plan/doorFit";
 import { clearPendingPlan, stashPlan, takePendingPlan } from "@/lib/plan/pendingPlan";
 import type { CatalogModel, PlanGeometry, PlacedItem, PlacedDoor, PlacedRug, PlacedWindow, WallPaint } from "@/lib/plan/types";
 import type { VendorProfile } from "@/lib/vendor/types";
-import { FloorPlanViewer, rotationKey } from "./FloorPlanViewer";
+import { FloorPlanViewer, rotationKey, type Vec3 } from "./FloorPlanViewer";
 import { ModelSidebar } from "./ModelSidebar";
 import { ModelDetails } from "./ModelDetails";
 import { PlanEstimate } from "./PlanEstimate";
 import { CarpetPicker, PaintPicker, WindowPicker, brushFor, type Brush } from "./PaintPicker";
 import { FinishDetails, type Finish } from "./FinishDetails";
 import { finishUsage } from "@/lib/plan/pricing";
-import type { Carpet, DoorItem, WindowItem } from "@/lib/vendor/types";
+import type { Carpet, WindowItem } from "@/lib/vendor/types";
 import { PlacementWarnings } from "./PlacementWarnings";
 import { PlanActions, ViewportToolbar } from "./PlanToolbar";
 import { RoomCreationDialog } from "./RoomCreationDialog";
@@ -78,6 +79,12 @@ export function PlanLayout() {
   const [error, setError] = useState<string | null>(null);
   const [allowInvalid, setAllowInvalid] = useState(false);
   const [draft, setDraft] = useState<PlanGeometry | null>(null);
+  const [scaleNote, setScaleNote] = useState(false); // the upload's scale was estimated, not printed
+  const [problems, setProblems] = useState<string[] | null>(null); // what validation found in an uploaded plan
+  const [showRoomSizes, setShowRoomSizes] = useState(false);
+  const [showRoomNames, setShowRoomNames] = useState(false);
+  const [hideWalls, setHideWalls] = useState(false);
+  const [roomId, setRoomId] = useState<string | null>(null);
   const [buildErrors, setBuildErrors] = useState<string[]>([]);
   const [placing, setPlacing] = useState<CatalogModel | null>(null);
   // Catalogue item whose details card is open; "Show in my apartment" starts placing it.
@@ -85,15 +92,15 @@ export function PlanLayout() {
   // Paint / floor finish / carpet whose details are open; "Apply to apartment" starts using it.
   const [finish, setFinish] = useState<Finish | null>(null);
   const [showDebug, setShowDebug] = useState(false);
-  const [tab, setTab] = useState<"models" | "paints" | "carpets" | "windows" | "doors">("models");
+  const [tab, setTab] = useState<"models" | "paints" | "carpets" | "windows">("models");
   // Window being placed on a wall (new, or a placed one picked up: `restore` puts it back on Esc).
   const [windowDraft, setWindowDraft] = useState<{ win: Omit<PlacedWindow, "wall_id" | "side" | "along" | "y">; restore?: PlacedWindow } | null>(null);
   // Door being fitted: the next click on a doorway that fits puts it there (picked-up doors keep `restore`).
-  const [doorDraft, setDoorDraft] = useState<{ door: Omit<PlacedDoor, "opening_id">; restore?: PlacedDoor } | null>(null);
+  // Fitting a door into a doorway: a door model from the catalogue (`model`), or a door photo from a saved plan.
+  const [doorDraft, setDoorDraft] = useState<{ door: Omit<PlacedDoor, "opening_id">; model?: CatalogModel; restore?: PlacedDoor } | null>(null);
   const [brush, setBrush] = useState<Brush | null>(null);
   // Carpet being laid (new from the sidebar, or a placed one picked up: `restore` puts it back on Esc).
   const [rugDraft, setRugDraft] = useState<{ rug: Omit<PlacedRug, "x" | "z">; restore?: PlacedRug } | null>(null);
-  const [sun, setSun] = useState(true);
   const [dimensionLines, setDimensionLines] = useState(false);
   // Dismissing hides the current set of warnings; a new or changed warning shows the toast again.
   const [dismissed, setDismissed] = useState<string | null>(null);
@@ -114,7 +121,7 @@ export function PlanLayout() {
   // Phones: the catalogue drawer; picking anything closes it so the plan is visible again.
   const [catalogOpen, setCatalogOpen] = useState(false);
   // Ruler: null = off, else the 0–2 models picked; a third pick starts a new measurement.
-  const [measureIds, setMeasureIds] = useState<string[] | null>(null);
+  const [measurePoints, setMeasurePoints] = useState<Vec3[] | null>(null); // measuring: points clicked (0–2)
   // Pan tool: on = cancel the current action and let start-drag pan the view.
   const [panning, setPanning] = useState(false);
   const planIdRef = useRef<string | null>(null);
@@ -288,8 +295,24 @@ export function PlanLayout() {
 
   const startPlacing = (model: CatalogModel) => {
     // The catalogue size bounds the physical size. Never invent one: without it a model cannot be placed.
-    if (!catalogDimensions(model)) {
+    const dims = catalogDimensions(model);
+    if (!dims) {
       setError(t("{name} has no width/height/depth in the catalogue. Add its dimensions before placing it.", { name: model.title }));
+      return;
+    }
+    if (isDoorModel(model)) {
+      // A door only goes into a doorway: doorways light up by fit, a click fits it there.
+      cancelDoor();
+      cancelWindow();
+      cancelRug();
+      setPlacing(null);
+      setBrush(null);
+      setSelectedId(null);
+      setError(null);
+      setDoorDraft({
+        door: { id: crypto.randomUUID(), doorId: model.id, name: model.title, image_url: model.thumbnail ?? "", width: dims.width, height: dims.height, price: model.price ?? null, price_unit: model.price_unit ?? "item" },
+        model,
+      });
       return;
     }
     setError(null);
@@ -313,7 +336,7 @@ export function PlanLayout() {
       glbUrl: model.glb_url,
       width_m: width,
       height_m: height,
-      depth_m: depth,
+      depth_m: depth ?? size.depth, // no catalogue depth: the GLB's own (rendered at the catalogue width)
       size,
       category: model.category ?? "furniture",
       mount: mountFor(model.category),
@@ -360,15 +383,27 @@ export function PlanLayout() {
     setDoorDraft(null);
   };
 
-  const startDoor = (door: DoorItem) => {
-    cancelDoor();
-    cancelWindow();
-    cancelRug();
-    setPlacing(null);
-    setBrush(null);
-    setDoorDraft({
-      door: { id: crypto.randomUUID(), doorId: door.id, name: door.name, image_url: door.image_url, width: Number(door.width_m), height: Number(door.height_m), price: door.price == null ? null : Number(door.price), price_unit: door.price_unit ?? "item" },
-    });
+  /** The door model stands in the doorway's middle, its width along the wall (doorPose). */
+  const fitDoorModel = (model: CatalogModel, openingId: string) => {
+    if (!geometry) return;
+    const opening = doorways(geometry).find((o) => o.id === openingId);
+    const dims = catalogDimensions(model);
+    if (!opening || !dims) return;
+    const { x, z, yaw } = doorPose(opening);
+    // One door per doorway: a door already there (model or saved photo) is replaced.
+    const others = items.filter((i) => i.opening_id !== openingId);
+    // A door taller than the 2.1 m cut raises the wall piece above the doorway to the door's top.
+    setGeometry((g) =>
+      g ? { ...g, walls: raiseLintel(g.walls, openingId, dims.height, g.height), placed_doors: (g.placed_doors ?? []).filter((d) => d.opening_id !== openingId) } : g,
+    );
+    const next: PlacedItem = {
+      instanceId: crypto.randomUUID(), modelId: model.id, title: model.title, company: model.company, glbUrl: model.glb_url,
+      // No catalogue depth: a door leaf's 5 cm until the GLB is measured (doors skip footprint checks).
+      width_m: dims.width, height_m: dims.height, depth_m: dims.depth ?? 0.05, size: { ...dims, depth: dims.depth ?? 0.05 }, category: "door", mount: "floor",
+      price: model.price ?? null, price_unit: model.price_unit ?? "item", x, y: 0, z, rotation_y: yaw, rotation_x: 0, opening_id: openingId, warnings: [],
+    };
+    pushHistory(applyWarnings([...others, next], geometry));
+    setSelectedId(next.instanceId);
   };
 
   useEffect(() => {
@@ -390,11 +425,11 @@ export function PlanLayout() {
   }, [detail, finish, placing]);
 
   useEffect(() => {
-    if (!measureIds) return;
-    const onKey = (event: KeyboardEvent) => event.key === "Escape" && setMeasureIds(null);
+    if (!measurePoints) return;
+    const onKey = (event: KeyboardEvent) => event.key === "Escape" && setMeasurePoints(null);
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [measureIds]);
+  }, [measurePoints]);
 
   // Switching catalogue type drops whatever was being applied or placed.
   const chooseTab = (t: typeof tab) => {
@@ -500,7 +535,7 @@ export function PlanLayout() {
     setBrush(null);
     cancelRug();
     cancelWindow();
-    setMeasureIds(null);
+    setMeasurePoints(null);
     setSelectedId(null);
     setPanning(true);
   };
@@ -508,8 +543,8 @@ export function PlanLayout() {
   // Starting any action leaves the pan tool.
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    if (placing || brush || rugDraft || windowDraft || doorDraft || measureIds) setPanning(false);
-  }, [placing, brush, rugDraft, windowDraft, doorDraft, measureIds]);
+    if (placing || brush || rugDraft || windowDraft || doorDraft || measurePoints) setPanning(false);
+  }, [placing, brush, rugDraft, windowDraft, doorDraft, measurePoints]);
 
   // H toggles the pan tool (not while typing; not while walking).
   useEffect(() => {
@@ -676,7 +711,11 @@ export function PlanLayout() {
         <main className="min-h-0 flex-1 overflow-auto bg-[#f7f6f3]">
           {(error || opening) && (
             <div className="mx-auto w-full max-w-[1400px] px-4 pt-6 sm:px-6">
-              {error && <p className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p>}
+              {error && (
+                <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                  <p>{error}</p>
+                </div>
+              )}
               {opening && (
                 <p className="flex items-center gap-2 text-sm text-slate-500">
                   <LoaderCircle className="size-4 animate-spin" aria-hidden /> {t("Reopening your plan…")}
@@ -699,10 +738,18 @@ export function PlanLayout() {
               }
             }}
             onImage={async (file, height) => {
-              setBusy(t("Reading floor plan…"));
+              setBusy(t("Analyzing · {p}%", { p: 0 }));
+              setError(null);
+              setProblems(null);
               try {
-                const room = await createRoomFromImage(file, height);
-                setDraft(room);
+                const room = await createRoomFromImage(file, height, ({ stage, percent }) => setBusy(`${t(stage)} · ${percent}%`));
+                // Fully automatic: every plan opens in 3D straight away. Problems validation found are listed
+                // over the model (it may not match the drawing everywhere); fixing the walls is offered, not required.
+                setGeometry(room);
+                setView("iso"); // the apartment, elevated and framed whole, looking into the rooms
+                setScaleNote(Boolean(room.scale?.estimated));
+                const offline = room.warnings.find((w) => w.startsWith("The vision model was unavailable"));
+                setProblems(room.validation?.ok ? null : [...(offline ? [offline] : []), ...(room.validation?.errors ?? [])]);
                 setBusy(null);
               } catch (caught) {
                 setError(caught instanceof Error ? caught.message : String(caught));
@@ -731,7 +778,7 @@ export function PlanLayout() {
                 <Footprints className="size-6 text-brand-amber" aria-hidden />
                 <p className="text-sm font-semibold text-brand-navy">{t("You're walking through the plan")}</p>
                 <p className="text-xs text-slate-500">{t("Models can't be selected while walking. Switch to another view to add or move items.")}</p>
-                <button type="button" onClick={() => setView("perspective")} className="rounded-lg bg-brand-navy px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand-navy-hover">
+                <button type="button" onClick={() => setView("iso")} className="rounded-lg bg-brand-navy px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand-navy-hover">
                   {t("Leave walk mode")}
                 </button>
               </div>
@@ -753,7 +800,7 @@ export function PlanLayout() {
               aria-label={t("Catalogue")}
               className="m-3 mb-0 grid shrink-0 grid-cols-2 gap-1.5"
               onKeyDown={(event) => {
-                const order = ["models", "paints", "carpets", "windows", "doors"] as const;
+                const order = ["models", "paints", "carpets", "windows"] as const;
                 const step = event.key === "ArrowRight" || event.key === "ArrowDown" ? 1 : event.key === "ArrowLeft" || event.key === "ArrowUp" ? -1 : 0;
                 if (!step) return;
                 event.preventDefault();
@@ -768,7 +815,6 @@ export function PlanLayout() {
                   ["paints", "Paint", PaintRoller],
                   ["carpets", "Carpets", RectangleHorizontal],
                   ["windows", "Windows", AppWindow],
-                  ["doors", "Doors", DoorOpen],
                 ] as const
               ).map(([id, label, Icon]) => {
                 const on = tab === id;
@@ -827,16 +873,6 @@ export function PlanLayout() {
                   setFinish({ kind: "carpet", carpet });
                 }}
               />
-            ) : tab === "doors" ? (
-              <WindowPicker
-                doors
-                activeId={doorDraft?.door.doorId ?? null}
-                onPick={(door) => {
-                  setDetail(null);
-                  setFinish(null);
-                  startDoor(door);
-                }}
-              />
             ) : (
               <WindowPicker
                 activeId={windowDraft?.win.windowId ?? (finish?.kind === "window" ? finish.window.id : null)}
@@ -853,6 +889,12 @@ export function PlanLayout() {
           <main className="relative min-w-0 flex-1 overflow-hidden">
             <div className="absolute inset-0">
               <FloorPlanViewer
+                roomSizes={showRoomSizes}
+                roomNames={showRoomNames}
+                hideWalls={hideWalls}
+                selectedRoomId={view === "2d" ? roomId : null}
+                // Rooms are picked in 2D only (where the card replaces the room names); 3D clicks never select a room.
+                onSelectRoom={geometry.source === "image" && view === "2d" ? setRoomId : undefined}
                 geometry={geometry}
                 items={items}
                 selectedId={selectedId}
@@ -868,7 +910,8 @@ export function PlanLayout() {
                 rugDraft={rugDraft?.rug ?? null}
                 doorDraft={doorDraft?.door ?? null}
                 onPlaceDoor={(placed) => {
-                  setGeometry((g) => (g ? { ...g, placed_doors: [...(g.placed_doors ?? []).filter((d) => d.opening_id !== placed.opening_id), placed] } : g));
+                  if (doorDraft?.model) fitDoorModel(doorDraft.model, placed.opening_id);
+                  else setGeometry((g) => (g ? { ...g, placed_doors: [...(g.placed_doors ?? []).filter((d) => d.opening_id !== placed.opening_id), placed] } : g));
                   setDoorDraft(null);
                 }}
                 onPickDoor={(placed) => {
@@ -899,12 +942,11 @@ export function PlanLayout() {
                   const { x: _x, z: _z, ...rest } = rug;
                   setRugDraft({ rug: rest, restore: rug });
                 }}
-                sun={sun}
                 dimensionLines={dimensionLines}
                 walkRoomId={walkRoomId}
-                measureIds={view === "walk" ? null : measureIds}
+                measurePoints={view === "walk" ? null : measurePoints}
                 panning={panning && view !== "walk"}
-                onMeasurePick={(id) => setMeasureIds((m) => (!m ? m : m.length >= 2 ? [id] : m[0] === id ? m : [...m, id]))}
+                onMeasurePoint={(p) => setMeasurePoints((m) => (!m ? m : m.length >= 2 ? [p] : [...m, p]))}
                 onPickRoom={
                   walkPicker
                     ? (id) => {
@@ -916,7 +958,19 @@ export function PlanLayout() {
                 }
                 onRotate={(id, rotation) => {
                   if (!geometry) return;
-                  setItems((list) => applyWarnings(list.map((item) => (item.instanceId === id ? { ...item, ...rotation } : item)), geometry));
+                  setItems((list) =>
+                    applyWarnings(
+                      list.map((item) => {
+                        if (item.instanceId !== id) return item;
+                        const turned = { ...item, ...rotation };
+                        // Turning next to a wall must not push it through: nudge to the nearest spot inside.
+                        if (insideWalls(turned, geometry)) return turned;
+                        const spot = nearestValidSpot(turned, geometry, []);
+                        return spot ? { ...turned, ...spot } : turned;
+                      }),
+                      geometry,
+                    ),
+                  );
                 }}
                 onMove={(id, x, z) => {
                   if (!geometry) return;
@@ -947,18 +1001,16 @@ export function PlanLayout() {
                 view={view}
                 showGrid={showGrid}
                 showDebug={showDebug}
-                sun={sun}
                 dimensions={dimensionLines}
-                onToggleSun={() => setSun((v) => !v)}
                 onToggleDimensions={() => setDimensionLines((v) => !v)}
-                measuring={measureIds !== null}
+                measuring={measurePoints !== null}
                 panning={panning}
                 onTogglePan={view === "walk" ? undefined : togglePan}
                 onToggleMeasure={
                   view === "walk"
                     ? undefined
                     : () => {
-                        setMeasureIds((m) => (m ? null : []));
+                        setMeasurePoints((m) => (m ? null : []));
                         setPlacing(null);
                         setBrush(null);
                         cancelRug();
@@ -970,7 +1022,7 @@ export function PlanLayout() {
                 canRedo={future.length > 0}
                 onView={(next) => {
                   if (next === "walk") {
-                    setMeasureIds(null);
+                    setMeasurePoints(null);
                     setPanning(false);
                     setDetail(null); // nothing can be selected or placed while walking
                     setFinish(null);
@@ -993,6 +1045,130 @@ export function PlanLayout() {
               />
               {error && (
                 <p className="pointer-events-auto max-w-xl rounded-lg border border-red-200 bg-red-50/95 px-3 py-2 text-sm text-red-700 shadow-sm backdrop-blur">{error}</p>
+              )}
+              {geometry.source === "image" && (
+                <div className="pointer-events-auto flex items-center gap-2">
+                  {(
+                    [
+                      ["Room names", showRoomNames, setShowRoomNames],
+                      ["Room sizes", showRoomSizes, setShowRoomSizes],
+                      ["Hide walls", hideWalls, setHideWalls],
+                    ] as const
+                  ).map(([label, on, set]) => (
+                    <button
+                      key={label}
+                      type="button"
+                      aria-pressed={on}
+                      onClick={() => set((v) => !v)}
+                      className={`rounded-lg border px-2.5 py-1 text-xs font-medium shadow-sm backdrop-blur transition-colors ${on ? "border-brand-navy bg-brand-navy text-white" : "border-slate-200 bg-white/90 text-slate-700 hover:bg-white"}`}
+                    >
+                      {t(label)}
+                    </button>
+                  ))}
+                  {(["glb_url", "dxf_url"] as const).map((key) =>
+                    geometry[key] ? (
+                      <a
+                        key={key}
+                        href={`${API}${geometry[key]}`}
+                        download
+                        className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white/90 px-2.5 py-1 text-xs font-medium text-slate-700 shadow-sm backdrop-blur hover:bg-white"
+                      >
+                        <Download className="size-3.5" aria-hidden />
+                        {key === "glb_url" ? "GLB" : "DXF"}
+                      </a>
+                    ) : null,
+                  )}
+                  {geometry.preview_image && (
+                    <details className="group relative">
+                      <summary className="cursor-pointer list-none rounded-lg border border-slate-200 bg-white/90 px-2.5 py-1 text-xs font-medium text-slate-700 shadow-sm backdrop-blur hover:bg-white">{t("Original plan")}</summary>
+                      {/* eslint-disable-next-line @next/next/no-img-element -- a data URL from the upload */}
+                      <img src={geometry.preview_image} alt={t("Original plan")} className="absolute start-0 top-9 z-20 w-80 max-w-[80vw] rounded-lg border border-slate-200 bg-white shadow-lg" />
+                    </details>
+                  )}
+                </div>
+              )}
+              {(() => {
+                const room = roomId && view === "2d" ? (geometry.zones?.length ? geometry.zones : geometry.rooms).find((a) => a.id === roomId) : null;
+                if (!room) return null;
+                const xs = room.polygon.map((p) => p[0]);
+                const zs = room.polygon.map((p) => p[1]);
+                const w = room.dimensions?.width || Math.max(...xs) - Math.min(...xs);
+                const l = room.dimensions?.length || Math.max(...zs) - Math.min(...zs);
+                const area = "area_m2" in room && room.area_m2 ? room.area_m2 : w * l;
+                const printed = "dimension_source" in room && room.dimension_source === "printed";
+                const approx = printed ? "" : "≈ ";
+                return (
+                  // Pinned to the viewport's right edge (below the dev toggle), clear of the model in the middle.
+                  <div className="pointer-events-auto absolute end-3 top-10 w-56 rounded-lg border border-amber-200 bg-white/95 px-3 py-2 text-sm text-slate-700 shadow-sm backdrop-blur max-md:top-24">
+                    <div className="mb-1 flex items-center justify-between gap-2">
+                      <span className="font-semibold text-brand-navy">{room.name}</span>
+                      <button type="button" aria-label={t("Dismiss")} onClick={() => setRoomId(null)} className="text-slate-400 hover:text-slate-700">
+                        <X className="size-4" />
+                      </button>
+                    </div>
+                    <dl className="grid grid-cols-2 gap-x-2 tabular-nums">
+                      <dt>{t("Width")}</dt>
+                      <dd>{approx}{w.toFixed(2)} m</dd>
+                      <dt>{t("Length")}</dt>
+                      <dd>{approx}{l.toFixed(2)} m</dd>
+                      <dt>{t("Area")}</dt>
+                      <dd>{approx}{area.toFixed(2)} m²</dd>
+                    </dl>
+                    <p className="mt-1 text-xs text-slate-500">{t(printed ? "Read from the plan's dimensions" : "Estimated from the drawing's scale")}</p>
+                  </div>
+                );
+              })()}
+              {problems && (
+                <div role="alert" className="pointer-events-auto max-w-xl rounded-lg border border-amber-300 bg-amber-50/95 px-3 py-2 text-sm text-amber-900 shadow-sm backdrop-blur">
+                  <div className="flex items-start gap-3">
+                    <TriangleAlert className="mt-0.5 size-4 shrink-0 text-amber-600" aria-hidden />
+                    <div className="min-w-0 flex-1">
+                      <p className="font-semibold">{t("Built from your plan, but some parts may not match the drawing:")}</p>
+                      <ul className="mt-1 list-disc space-y-0.5 ps-4 text-xs">
+                        {problems.slice(0, 4).map((p) => (
+                          <li key={p}>{t(p)}</li>
+                        ))}
+                      </ul>
+                    </div>
+                    <button type="button" aria-label={t("Dismiss")} onClick={() => setProblems(null)} className="shrink-0 text-amber-600 hover:text-amber-900">
+                      <X className="size-4" />
+                    </button>
+                  </div>
+                  {geometry.walls_px && items.length === 0 && geometry.geometry_source !== "vision" && (
+                    <button
+                      type="button"
+                      className="mt-1 ps-7 text-xs font-semibold underline underline-offset-2 hover:text-amber-950"
+                      onClick={() => {
+                        setDraft(geometry);
+                        setGeometry(null);
+                        setProblems(null);
+                      }}
+                    >
+                      {t("Fix the walls")}
+                    </button>
+                  )}
+                </div>
+              )}
+              {scaleNote && (
+                <div role="status" className="pointer-events-auto flex max-w-xl items-center gap-3 rounded-lg border border-sky-200 bg-sky-50/95 px-3 py-2 text-sm text-sky-800 shadow-sm backdrop-blur">
+                  <span>{t("Dimensions automatically estimated from your floor plan. Measurements are approximate.")}</span>
+                  {geometry.walls_px && items.length === 0 && geometry.geometry_source !== "vision" && (
+                    <button
+                      type="button"
+                      className="shrink-0 font-semibold underline underline-offset-2 hover:text-sky-950"
+                      onClick={() => {
+                        setDraft(geometry);
+                        setGeometry(null);
+                        setScaleNote(false);
+                      }}
+                    >
+                      {t("Adjust")}
+                    </button>
+                  )}
+                  <button type="button" aria-label={t("Dismiss")} onClick={() => setScaleNote(false)} className="shrink-0 text-sky-600 hover:text-sky-900">
+                    <X className="size-4" />
+                  </button>
+                </div>
               )}
               {showDebug && geometry.debug_images && (
                 <div className="pointer-events-auto max-h-[40%] w-full max-w-4xl overflow-auto rounded-xl border border-white/60 bg-white/80 shadow-lg backdrop-blur-md">
@@ -1065,7 +1241,7 @@ export function PlanLayout() {
             </button>
             {/* Hidden while walking: the walk key guide uses the bottom of the view. */}
             {/* Hidden while a key guide or hint owns the bottom of the view (walking, placing, measuring…). */}
-            {view !== "walk" && !measureIds && !placing && !rugDraft && !windowDraft && !doorDraft && !brush && <PlanEstimate geometry={geometry} items={items} />}
+            {view !== "walk" && !measurePoints && !placing && !rugDraft && !windowDraft && !doorDraft && !brush && <PlanEstimate geometry={geometry} items={items} />}
             {walkPicker && (
               <WalkRoomBanner
                 onCancel={() => {

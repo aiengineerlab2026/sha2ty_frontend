@@ -4,7 +4,7 @@ import { setLocale, useLocale, useT } from "@/lib/i18n";
 import { useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Check, ChevronDown, LayoutGrid, LogOut, Map as MapIcon, Menu, PackageCheck, Plus, Settings } from "lucide-react";
+import { Check, ChevronDown, LayoutGrid, LogOut, Menu, PackageCheck, PencilRuler, Plus, Settings, ShoppingBag } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { getUser, logout, onAuthChange, type AuthUser } from "@/lib/auth/client";
 import type { VendorProfile } from "@/lib/vendor/types";
@@ -19,7 +19,6 @@ const STUDIO_NAV: NavItem[] = [
   { href: "/vendor/paints", label: "Paints" },
   { href: "/vendor/carpets", label: "Carpets" },
   { href: "/vendor/windows", label: "Windows" },
-  { href: "/vendor/doors", label: "Doors" },
   { href: "/plan", label: "Plan" },
 ];
 
@@ -166,6 +165,9 @@ function Avatar({ vendor, size = "size-8" }: { vendor: VendorProfile; size?: str
   );
 }
 
+/** One row of the account menu: roomy, rounded, a soft tint on hover / keyboard focus. */
+const MENU_ITEM = "cursor-pointer gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-slate-700 focus:bg-slate-100 focus:text-slate-900";
+
 /** Account cluster: avatar + name opens a menu with the studio's pages, settings and log out. */
 function ProfileMenu({ vendor, onSignOut }: { vendor: VendorProfile; onSignOut: () => void }) {
   const t = useT();
@@ -182,39 +184,45 @@ function ProfileMenu({ vendor, onSignOut }: { vendor: VendorProfile; onSignOut: 
           <ChevronDown className="size-3.5 text-slate-400" aria-hidden />
         </button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" sideOffset={8} className="w-60 p-1.5">
-        <DropdownMenuLabel className="flex items-center gap-3 px-2 py-2 font-normal">
-          <Avatar vendor={vendor} size="size-9" />
-          <span className="min-w-0">
-            <span className="block truncate text-sm font-semibold text-brand-navy">{vendor.name}</span>
-            {vendor.location && <span className="block truncate text-xs text-slate-500">{vendor.location}</span>}
+      <DropdownMenuContent align="end" sideOffset={8} className="w-72 overflow-hidden rounded-xl border border-slate-200/80 bg-white p-0 shadow-xl ring-0">
+        {/* Who is signed in: avatar, studio name, then the account email (or the location) muted. */}
+        <DropdownMenuLabel className="flex items-center gap-3 px-4 py-3.5 font-normal">
+          <Avatar vendor={vendor} size="size-10" />
+          <span className="min-w-0 flex-1 text-start">
+            <span className="block truncate text-sm font-semibold leading-5 text-slate-900">{vendor.name}</span>
+            {(vendor.email || vendor.location) && (
+              <span className="block truncate text-xs leading-4 text-slate-500">
+                {/* An LTR email keeps its own order inside an RTL line. */}
+                <bdi>{vendor.email || vendor.location}</bdi>
+              </span>
+            )}
           </span>
         </DropdownMenuLabel>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem asChild>
-          <Link href="/vendor" className="cursor-pointer gap-2">
-            <LayoutGrid className="size-4" aria-hidden /> {t("My models")}
-          </Link>
-        </DropdownMenuItem>
-        <DropdownMenuItem asChild>
-          <Link href="/orders" className="cursor-pointer gap-2">
-            <PackageCheck className="size-4" aria-hidden /> {t("Bought items")}
-          </Link>
-        </DropdownMenuItem>
-        <DropdownMenuItem asChild>
-          <Link href="/plan" className="cursor-pointer gap-2">
-            <MapIcon className="size-4" aria-hidden /> {t("Plan builder")}
-          </Link>
-        </DropdownMenuItem>
-        <DropdownMenuItem asChild>
-          <Link href="/vendor/settings" className="cursor-pointer gap-2">
-            <Settings className="size-4" aria-hidden /> {t("Settings")}
-          </Link>
-        </DropdownMenuItem>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem onSelect={onSignOut} className="cursor-pointer gap-2 text-red-600 focus:bg-red-50 focus:text-red-700">
-          <LogOut className="size-4" aria-hidden /> {t("Log out")}
-        </DropdownMenuItem>
+        <DropdownMenuSeparator className="m-0 bg-slate-100" />
+        <div className="p-1.5">
+          {(
+            [
+              ["/vendor", "My models", LayoutGrid],
+              ["/orders", "Bought items", ShoppingBag],
+              ["/plan", "Plan builder", PencilRuler],
+              ["/vendor/settings", "Settings", Settings],
+            ] as const
+          ).map(([href, label, Icon]) => (
+            <DropdownMenuItem key={href} asChild className={MENU_ITEM}>
+              <Link href={href}>
+                <Icon className="size-4 shrink-0 text-slate-500" strokeWidth={1.75} aria-hidden />
+                {t(label)}
+              </Link>
+            </DropdownMenuItem>
+          ))}
+        </div>
+        <DropdownMenuSeparator className="m-0 bg-slate-100" />
+        <div className="p-1.5">
+          <DropdownMenuItem onSelect={onSignOut} className={`${MENU_ITEM} text-red-600 focus:bg-red-50 focus:text-red-700`}>
+            <LogOut className="size-4 shrink-0" strokeWidth={1.75} aria-hidden />
+            {t("Log out")}
+          </DropdownMenuItem>
+        </div>
       </DropdownMenuContent>
     </DropdownMenu>
   );

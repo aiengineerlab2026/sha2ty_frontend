@@ -4,21 +4,21 @@ import { useT } from "@/lib/i18n";
 import { Suspense, useEffect, useMemo, useState } from "react";
 import { Canvas } from "@react-three/fiber";
 import { Bounds, Environment, Grid, OrbitControls, useGLTF } from "@react-three/drei";
-import { normalizeModel, type Dimensions, type NormalizationReport } from "@/lib/plan/modelNormalization";
+import { normalizeModel, type CatalogSize, type NormalizationReport } from "@/lib/plan/modelNormalization";
 
 /** Same normalisation as the floor-plan editor: identical world-space size in both viewers. */
-function LoadedModel({ url, dimensions, onReport }: { url: string; dimensions: Dimensions | null; onReport: (r: NormalizationReport) => void }) {
+function LoadedModel({ url, dimensions, onReport }: { url: string; dimensions: CatalogSize | null; onReport: (r: NormalizationReport) => void }) {
   const { scene } = useGLTF(url);
   const w = dimensions?.width;
   const h = dimensions?.height;
   const d = dimensions?.depth;
   // Keyed on the numbers, not the object identity, so re-renders never re-clone the model.
-  const { object, report } = useMemo(() => normalizeModel(scene, w && h && d ? { width: w, height: h, depth: d } : null, url), [scene, w, h, d, url]);
+  const { object, report } = useMemo(() => normalizeModel(scene, w && h ? { width: w, height: h, ...(d ? { depth: d } : {}) } : null, url), [scene, w, h, d, url]);
   useEffect(() => onReport(report), [onReport, report]);
   return <primitive object={object} />;
 }
 
-export function ModelViewer({ url, dimensions = null }: { url: string; dimensions?: Dimensions | null }) {
+export function ModelViewer({ url, dimensions = null }: { url: string; dimensions?: CatalogSize | null }) {
   const t = useT();
   const [report, setReport] = useState<NormalizationReport | null>(null);
   const size = report?.finalSize;
@@ -44,7 +44,7 @@ export function ModelViewer({ url, dimensions = null }: { url: string; dimension
       <div className="absolute bottom-3 start-3 max-w-[90%] space-y-1 text-[11px]">
         <p className="rounded-lg border border-white/70 bg-white/85 px-2.5 py-1 text-slate-700 shadow-sm backdrop-blur">
           {size
-            ? `${dimensions ? t(t("Scaled to the catalogue width")) : t("No catalogue size yet: authored size")} · ${size.width.toFixed(2)} × ${size.height.toFixed(2)} × ${size.depth.toFixed(2)} m (W × H × D)`
+            ? `${dimensions ? t("Scaled to the catalogue size") : t("No catalogue size yet: authored size")} · ${size.width.toFixed(2)} × ${size.height.toFixed(2)} × ${size.depth.toFixed(2)} m (W × H × D)`
             : t("Loading…")}
         </p>
         {report?.warnings.map((w) => (

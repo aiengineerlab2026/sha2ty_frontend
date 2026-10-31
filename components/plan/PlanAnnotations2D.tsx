@@ -118,7 +118,6 @@ export function PlanAnnotations2D({
       {labels.map((l) => (
         <Html key={`label-${l.id}`} position={[l.at[0], Y, l.at[1]]} center zIndexRange={[6, 0]} style={{ pointerEvents: "none" }}>
           <div className="whitespace-nowrap text-center leading-tight">
-            <p className="text-[12px] font-semibold tracking-tight text-brand-navy">{l.name}</p>
             <p className="text-[10px] tabular-nums text-slate-500">
               {l.area.toFixed(1)} m²{l.dims ? ` · ${l.dims}` : ""}
             </p>

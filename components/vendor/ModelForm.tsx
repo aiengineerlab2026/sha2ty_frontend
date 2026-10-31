@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
 import { supabase, supabaseConfigured } from "@/lib/supabase/client";
+import { on } from "@/lib/events";
 import { fetchGenerationQuota, generateFromPhoto } from "@/lib/vendor/generate";
 import { uploadPublicFile } from "@/lib/vendor/storage";
 import type { ModelProvider, ModelSource, VendorProfile } from "@/lib/vendor/types";
@@ -48,6 +49,15 @@ export function ModelForm() {
   const [progressPercent, setProgressPercent] = useState(0);
   const [quota, setQuota] = useState<Record<ModelProvider, number> | null>(null);
   const refreshQuota = () => void fetchGenerationQuota().then(setQuota);
+  useEffect(() => {
+    const offStarted = on("generation.started", ({ provider, remaining }) => setQuota((q) => q && { ...q, [provider]: remaining }));
+    const offFinished = on("generation.finished", ({ ok }) => !ok && refreshQuota()); // a failed call is refunded
+    return () => {
+      offStarted();
+      offFinished();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     if (!supabaseConfigured()) return;
@@ -159,7 +169,6 @@ export function ModelForm() {
       }
       setError(message);
     } finally {
-      if (source === "photo") refreshQuota();
       setBusy(false);
     }
   };

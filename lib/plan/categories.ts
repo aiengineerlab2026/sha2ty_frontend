@@ -1,11 +1,12 @@
 /** Catalogue model categories. Ceiling lights hang from the ceiling, wall art hangs on a wall at eye
  * level; everything else stands on the floor. */
-export type ModelCategory = "furniture" | "table" | "wardrobe" | "tv" | "lighting" | "ceiling_light" | "air_conditioner" | "wall_art";
+export type ModelCategory = "furniture" | "table" | "wardrobe" | "door" | "tv" | "lighting" | "ceiling_light" | "air_conditioner" | "wall_art";
 
 export const CATEGORIES: { id: ModelCategory; label: string; hint: string }[] = [
   { id: "furniture", label: "Furniture", hint: "Sofas, beds, chairs, storage" },
   { id: "table", label: "Tables", hint: "Dining, coffee and side tables, desks" },
   { id: "wardrobe", label: "Wardrobes", hint: "Wardrobes and closets" },
+  { id: "door", label: "Doors", hint: "Interior and entrance doors, fitted into a doorway of the plan" },
   { id: "tv", label: "TV & AV", hint: "TVs, screens, sound systems" },
   { id: "lighting", label: "Lights", hint: "Floor and table lamps" },
   { id: "ceiling_light", label: "Ceiling lights", hint: "Pendants and chandeliers, hung from the ceiling" },

@@ -2,6 +2,7 @@
 
 import { useSyncExternalStore } from "react";
 import { getUser, onAuthChange, type AuthUser } from "@/lib/auth/client";
+import { on } from "@/lib/events";
 import { supabase, supabaseConfigured } from "@/lib/supabase/client";
 import type { PriceUnit } from "./plan/pricing";
 
@@ -102,6 +103,7 @@ function init() {
   OLD_KEYS.forEach((key) => storeLocal(key, []));
   ready = getUser().then(switchTo);
   onAuthChange((user) => void switchTo(user));
+  on("order.placed", clearCart); // bought: the cart starts over
 }
 
 function write(next: CartLine[]) {

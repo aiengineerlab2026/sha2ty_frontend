@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Box3, BoxGeometry, Group, Mesh, Object3D, Vector3 } from "three";
-import { measure, normalizeModel, worldBox, type Dimensions } from "../modelNormalization";
+import { catalogDimensions, measure, normalizeModel, sizeLabel, worldBox, type Dimensions } from "../modelNormalization";
 import { clearSpan, footprintCorners, localWarnings } from "../placementValidation";
 import type { PlacedItem, PlanGeometry } from "../types";
 
@@ -52,7 +52,7 @@ function roomGeometry(width: number, depth: number): PlanGeometry {
 
 const PROPORTIONAL = () => box(1, 1 / 3, 0.5); // same 3 : 1 : 1.5 proportions as the catalogue
 
-test("a model with catalogue proportions becomes exactly 3 × 1 × 1.5 m with one uniform scale", () => {
+test("a model with catalogue proportions becomes exactly 3 × 1 × 1.5 m (the same factor on every axis)", () => {
   const { object, report } = normalizeModel(PROPORTIONAL(), SOFA);
   close(measure(object), SOFA);
   close(report.finalSize, SOFA);
@@ -60,21 +60,27 @@ test("a model with catalogue proportions becomes exactly 3 × 1 × 1.5 m with on
   assert.equal(report.warnings.length, 0);
 });
 
-test("width drives one uniform scale: a 1 m cube becomes a 3 m cube, warned on height and depth", () => {
+test("the catalogue size is exact on every axis: a 1 m cube becomes 3 × 1 × 1.5 m, and the stretch is reported", () => {
   const { object, report } = normalizeModel(box(1, 1, 1), SOFA);
-  close(measure(object), { width: 3, height: 3, depth: 3 }); // exactly 3 m wide, still a cube
-  assert.ok(report.scale.every((f) => f === report.scale[0]));
-  assert.ok(report.warnings.some((w) => w.includes("3.00 m high")));
-  assert.ok(report.warnings.some((w) => w.includes("3.00 m deep")));
+  close(measure(object), SOFA);
+  assert.ok(report.heightError < 1e-6 && report.depthError < 1e-6);
+  assert.ok(report.warnings.some((w) => w.includes("stretched")));
 });
 
-test("height/depth within 10% of the database give no warning; beyond 10% they do", () => {
-  const within = normalizeModel(box(1, 0.36, 0.52), SOFA).report; // → 3 × 1.08 × 1.56: 8% / 4% off
+test("a small difference in shape is stretched silently; a large one is reported", () => {
+  const within = normalizeModel(box(1, 0.36, 0.52), SOFA).report; // 8% / 4% off: within the 25% tolerance
   assert.equal(within.warnings.length, 0);
-  close(within.finalSize, { width: 3, height: 1.08, depth: 1.56 }, 1e-6);
-  const beyond = normalizeModel(box(1, 0.4, 0.5), SOFA).report; // → 3 × 1.2 × 1.5: 20% off in height
+  close(within.finalSize, SOFA, 1e-6);
+  const beyond = normalizeModel(box(1, 0.6, 0.5), SOFA).report; // 80% off in height
+  close(beyond.finalSize, SOFA, 1e-6);
   assert.equal(beyond.warnings.length, 1);
-  assert.ok(Math.abs(beyond.heightError - 0.2) < 1e-6 && beyond.depthError < 1e-6);
+});
+
+test("a door whose GLB is squat still stands at its catalogue height (0.72 × 2.38 m, no depth)", () => {
+  const { object } = normalizeModel(box(1, 2.06, 0.08), { width: 0.72, height: 2.38 }); // GLB 1 : 2.06 → would be 1.48 m tall
+  const size = measure(object);
+  assert.ok(Math.abs(size.width - 0.72) < 1e-6 && Math.abs(size.height - 2.38) < 1e-6, JSON.stringify(size));
+  assert.ok(size.depth > 0.05 && size.depth < 0.1); // the GLB's own depth, scaled with the door
 });
 
 test("nested GLB-style transforms are included (cm root, rotated and offset children)", () => {
@@ -98,14 +104,10 @@ test("nested GLB-style transforms are included (cm root, rotated and offset chil
   assert.ok(Math.abs(b.getCenter(new Vector3()).x) < EPS && Math.abs(b.getCenter(new Vector3()).z) < EPS, "centred on X/Z");
 });
 
-test("the real sofa GLB proportions (1.9 × 0.45 × 1.0) render 3 m wide without distortion", () => {
+test("the real sofa GLB (1.9 × 0.45 × 1.0) renders at the catalogue's 3 × 1 × 1.5 m", () => {
   const { object, report } = normalizeModel(box(1.903, 0.452, 0.999), SOFA);
-  const size = measure(object);
-  const k = 3 / 1.903;
-  close(size, { width: 3, height: 0.452 * k, depth: 0.999 * k }, 1e-6);
-  assert.ok(Math.abs(size.height / size.width - 0.452 / 1.903) < 1e-6, "shape preserved");
-  assert.ok(report.warnings.some((w) => w.includes("high"))); // 0.71 m vs 1.00 m
-  assert.ok(!report.warnings.some((w) => w.includes("deep"))); // 1.57 m vs 1.50 m is within 10%
+  close(measure(object), SOFA, 1e-6);
+  assert.ok(report.warnings.some((w) => w.includes("stretched"))); // 1.0 m catalogue height vs the GLB's 0.71 m at 3 m wide
 });
 
 test("Z-up CAD export is turned Y-up before measuring", () => {
@@ -346,15 +348,31 @@ test("an L-shaped cupboard has an L footprint and snaps into a room corner along
   assert.equal(cornerSnap({ shape: "l_left", width: 3, depth: 2, arm: 0.6 }, { ...room, source: "image", wall_thickness: 0.2 }, { x: 2.5, z: 2 }), null); // mid-room: no snap
 });
 
-test("measuring two models: clear gap between footprints and centre distance", async () => {
-  const { measureBetween } = await import("../placementValidation");
-  const a = sofaItem({ instanceId: "a", width_m: 2, depth_m: 1, x: 1, z: 1 }); // x ∈ [0, 2]
-  const b = sofaItem({ instanceId: "b", width_m: 1, depth_m: 1, x: 3.5, z: 1 }); // x ∈ [3, 4]
-  const m = measureBetween(a, b);
-  assert.ok(Math.abs(m.gap - 1) < EPS, `${m.gap}`);
-  assert.ok(Math.abs(m.centres - 2.5) < EPS);
-  assert.ok(Math.abs(m.from.x - 2) < EPS && Math.abs(m.to.x - 3) < EPS);
-  assert.equal(measureBetween(a, { ...b, x: 2.2 }).gap, 0); // overlapping
-  const diag = measureBetween(a, { ...b, x: 3.5, z: 3.5 }); // corner to corner: (2,1.5) → (3,3)
-  assert.ok(Math.abs(diag.gap - Math.hypot(1, 1.5)) < EPS, `${diag.gap}`);
+test("depth is optional: the model is sized by width and keeps the GLB's own depth", () => {
+  const model = { width_m: 2, height_m: 0.8, depth_m: null };
+  assert.deepEqual(catalogDimensions(model), { width: 2, height: 0.8 });
+  assert.equal(sizeLabel(model), "2.00 × 0.80 m");
+  assert.equal(sizeLabel({ ...model, depth_m: 0.9 }), "2.00 × 0.80 × 0.90 m");
+  const { report } = normalizeModel(box(4, 1.6, 1.8), catalogDimensions(model));
+  assert.ok(Math.abs(report.finalSize.width - 2) < 1e-6 && Math.abs(report.finalSize.depth - 0.9) < 1e-6); // GLB proportion
+  assert.equal(report.depthError, 0);
+  assert.ok(!report.warnings.some((w) => w.includes("deep")));
+  // An L-shaped corner unit still needs its arm depth.
+  assert.equal(catalogDimensions({ width_m: 2, height_m: 0.8, depth_m: null, shape: "l_left", length2_m: 1.6 }), null);
+});
+
+test("furniture slides along a wall instead of going through it", async () => {
+  const { insideWalls, slideInsideWalls } = await import("../placementValidation");
+  const room = roomGeometry(4, 3); // 4 × 3 m room
+  const sofa = sofaItem({ instanceId: "s", width_m: 2, depth_m: 1, x: 2, z: 1.5 });
+  assert.ok(insideWalls(sofa, room));
+  // Dragged 3 m to the right (through the east wall at x = 4): stops with its side on the wall.
+  const east = slideInsideWalls(sofa, { x: 5, z: 1.5 }, room);
+  assert.ok(Math.abs(east.x - 3) < 0.01 && Math.abs(east.z - 1.5) < 1e-9, JSON.stringify(east));
+  // Dragged diagonally into the corner: it slides along both walls into it.
+  const corner = slideInsideWalls(sofa, { x: 6, z: 6 }, room);
+  assert.ok(Math.abs(corner.x - 3) < 0.01 && Math.abs(corner.z - 2.5) < 0.01, JSON.stringify(corner));
+  assert.ok(insideWalls({ ...sofa, ...corner }, room));
+  // Inside the room it simply follows the cursor.
+  assert.deepEqual(slideInsideWalls(sofa, { x: 2.5, z: 1.2 }, room), { x: 2.5, z: 1.2 });
 });
