@@ -735,7 +735,6 @@ export const AR: Record<string, string> = {
   "Enter a number.": "أدخل رقمًا.",
   "Between {lo} and {hi} m.": "بين {lo} و{hi} م.",
   "Upload a PNG or JPG floor plan.": "ارفع مخططًا بصيغة PNG أو JPG.",
-  "Drop your plan on the preview, or choose a file there.": "أفلت مخططك على المعاينة، أو اختر ملفًا من هناك.",
   "PNG or JPG. Scale is read from printed sizes on the drawing when possible; you can check everything before the 3D is built.": "PNG أو JPG. يُقرأ المقياس من المقاسات المطبوعة على الرسم عند الإمكان؛ ويمكنك مراجعة كل شيء قبل بناء النموذج ثلاثي الأبعاد.",
   "Create My Room": "أنشئ غرفتي",
   "Generate 3D Floor Plan": "إنشاء المخطط ثلاثي الأبعاد",
@@ -836,4 +835,7 @@ export const AR: Record<string, string> = {
   "Read from the plan's dimensions": "مقروءة من مقاسات المخطط",
   "Estimated from the drawing's scale": "مقدّرة من مقياس الرسم",
   Top: "علوي",
+  "Paste image": "لصق صورة",
+  "The browser blocked reading the clipboard. Press ⌘V / Ctrl+V instead.": "منع المتصفح قراءة الحافظة. اضغط ⌘V / Ctrl+V بدلاً من ذلك.",
+  "Drop your plan on the preview, choose a file there, or paste a copied image (⌘V / Ctrl+V).": "أفلت المخطط على المعاينة، أو اختر ملفاً هناك، أو الصق صورة منسوخة (⌘V / Ctrl+V).",
 };

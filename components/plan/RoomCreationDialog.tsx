@@ -1,8 +1,8 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { ArrowRight, Box, Footprints, FileImage, Sofa, ImagePlus, LoaderCircle, RefreshCw, Trash2, Upload } from "lucide-react";
+import { useEffect, useState, type ReactNode } from "react";
+import { ArrowRight, Box, ClipboardPaste, Footprints, FileImage, Sofa, ImagePlus, LoaderCircle, RefreshCw, Trash2, Upload } from "lucide-react";
 import { useT } from "@/lib/i18n";
 
 // Three.js only runs in the browser; the preview loads after the form.
@@ -57,6 +57,42 @@ export function RoomCreationDialog({
     setFileError(null);
     setFile(next);
   };
+  // A copied image (screenshot, image from a web page) is the plan: ⌘V / Ctrl+V anywhere on the page,
+  // or the Paste button (Clipboard API, asks the browser for permission).
+  const pasted = (blob: Blob) => {
+    setMode("plan");
+    take(new File([blob], `pasted-plan.${blob.type === "image/jpeg" ? "jpg" : "png"}`, { type: blob.type }));
+  };
+  useEffect(() => {
+    const onPaste = (event: ClipboardEvent) => {
+      const image = Array.from(event.clipboardData?.files ?? []).find((f) => f.type.startsWith("image/"));
+      if (!image) return; // text pasted into the size fields stays text
+      event.preventDefault();
+      pasted(image);
+    };
+    window.addEventListener("paste", onPaste);
+    return () => window.removeEventListener("paste", onPaste);
+  });
+  const pasteFromClipboard = async () => {
+    try {
+      for (const item of await navigator.clipboard.read()) {
+        const type = item.types.find((ty) => ty.startsWith("image/"));
+        if (type) return pasted(await item.getType(type));
+      }
+      setFileError(t("No image on the clipboard. Copy an image first."));
+    } catch {
+      setFileError(t("The browser blocked reading the clipboard. Press ⌘V / Ctrl+V instead."));
+    }
+  };
+  const pasteButton = (
+    <button
+      type="button"
+      onClick={() => void pasteFromClipboard()}
+      className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 text-xs font-medium text-slate-600 shadow-sm hover:text-brand-navy"
+    >
+      <ClipboardPaste className="size-3.5" aria-hidden /> {t("Paste image")}
+    </button>
+  );
 
   const submit = () => {
     if (busy) return;
@@ -110,12 +146,16 @@ export function RoomCreationDialog({
                     <RefreshCw className="size-3.5" aria-hidden /> {t("Replace")}
                     <input type="file" accept={ACCEPT.join(",")} className="sr-only" onChange={(e) => take(e.target.files?.[0])} />
                   </label>
+                  {pasteButton}
                   <button type="button" onClick={() => setFile(null)} aria-label={t("Remove")} className="flex size-9 items-center justify-center rounded-lg text-slate-400 hover:bg-white hover:text-red-600">
                     <Trash2 className="size-4" />
                   </button>
                 </div>
               ) : (
-                <p className="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-3 text-sm text-slate-500">{t("Drop your plan on the preview, or choose a file there.")}</p>
+                <div className="flex items-center gap-3 rounded-xl border border-dashed border-slate-300 bg-slate-50 py-2 pe-2 ps-4">
+                  <p className="min-w-0 flex-1 text-sm text-slate-500">{t("Drop your plan on the preview, choose a file there, or paste a copied image (⌘V / Ctrl+V).")}</p>
+                  {pasteButton}
+                </div>
               )}
               {fileError && <p className="text-xs text-red-600">{fileError}</p>}
               <p className="text-xs leading-relaxed text-slate-500">{t("PNG or JPG. Scale is read from printed sizes on the drawing when possible; you can check everything before the 3D is built.")}</p>
@@ -245,8 +285,13 @@ function MetreField({ label, value, onChange, error, hint }: { label: string; va
 function PlanDrop({ file, onFile, busy }: { file: File | null; onFile: (f: File | undefined) => void; busy?: string | null }) {
   const t = useT();
   const [over, setOver] = useState(false);
-  const preview = useMemo(() => (file ? URL.createObjectURL(file) : null), [file]);
-  useEffect(() => () => void (preview && URL.revokeObjectURL(preview)), [preview]);
+  // Created in the effect, not useMemo: a memoised URL is revoked by the dev double-run of effects.
+  const [preview, setPreview] = useState<string | null>(null);
+  useEffect(() => {
+    const url = file ? URL.createObjectURL(file) : null;
+    setPreview(url); // eslint-disable-line react-hooks/set-state-in-effect -- mirrors an external resource
+    return () => void (url && URL.revokeObjectURL(url));
+  }, [file]);
   return (
     <label
       onDragOver={(e) => {
