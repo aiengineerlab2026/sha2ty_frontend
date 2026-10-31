@@ -1065,7 +1065,8 @@ export function PlanLayout() {
                 const printed = "dimension_source" in room && room.dimension_source === "printed";
                 const approx = printed ? "" : "≈ ";
                 return (
-                  <div className="pointer-events-auto w-56 rounded-lg border border-amber-200 bg-white/95 px-3 py-2 text-sm text-slate-700 shadow-sm backdrop-blur">
+                  // Pinned to the viewport's right edge (below the dev toggle), clear of the model in the middle.
+                  <div className="pointer-events-auto absolute end-3 top-10 w-56 rounded-lg border border-amber-200 bg-white/95 px-3 py-2 text-sm text-slate-700 shadow-sm backdrop-blur max-md:top-24">
                     <div className="mb-1 flex items-center justify-between gap-2">
                       <span className="font-semibold text-brand-navy">{room.name}</span>
                       <button type="button" aria-label={t("Dismiss")} onClick={() => setRoomId(null)} className="text-slate-400 hover:text-slate-700">

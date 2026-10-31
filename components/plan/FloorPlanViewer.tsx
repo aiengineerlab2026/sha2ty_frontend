@@ -276,6 +276,7 @@ export function FloorPlanViewer({
 
   const pick = (item: PlacedItem) => {
     if (walking || onPickRoom || panning) return; // walking / choosing a room / panning: nothing is picked up or selected
+    if (rugDraft || windowDraft || doorDraft || painting) return; // placing something else: no other selection
     if (measureIds && onMeasurePick) {
       onMeasurePick(item.instanceId); // measuring: models are measure points, not picked up
       return;
@@ -564,7 +565,8 @@ export function FloorPlanViewer({
             selected={selectedId === item.instanceId || Boolean(measureIds?.includes(item.instanceId))}
             showDimensions={showDimensions}
             onPick={() => pick(item)}
-            interactive={!walking && !onPickRoom && !panning}
+            // While a model, carpet, window or door is being placed, other objects ignore clicks.
+            interactive={!walking && !onPickRoom && !panning && !placing && !rugDraft && !windowDraft && !doorDraft && !painting && (!carrying || carrying.id === item.instanceId)}
             onNormalized={(report) => onItemNormalized(item.instanceId, report)}
           />
         ))}
