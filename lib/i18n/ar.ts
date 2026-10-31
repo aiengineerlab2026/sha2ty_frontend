@@ -232,8 +232,6 @@ export const AR: Record<string, string> = {
   "Walk through": "تجوّل",
   "Show grid": "إظهار الشبكة",
   "Hide grid": "إخفاء الشبكة",
-  "Sun shadows on": "تشغيل ظلال الشمس",
-  "Sun shadows off": "إيقاف ظلال الشمس",
   "Show dimensions": "إظهار المقاسات",
   "Hide dimensions": "إخفاء المقاسات",
   "Show detection images": "إظهار صور الكشف",

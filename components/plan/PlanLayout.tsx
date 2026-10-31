@@ -99,7 +99,6 @@ export function PlanLayout() {
   const [brush, setBrush] = useState<Brush | null>(null);
   // Carpet being laid (new from the sidebar, or a placed one picked up: `restore` puts it back on Esc).
   const [rugDraft, setRugDraft] = useState<{ rug: Omit<PlacedRug, "x" | "z">; restore?: PlacedRug } | null>(null);
-  const [sun, setSun] = useState(true);
   const [dimensionLines, setDimensionLines] = useState(false);
   // Dismissing hides the current set of warnings; a new or changed warning shows the toast again.
   const [dismissed, setDismissed] = useState<string | null>(null);
@@ -933,7 +932,6 @@ export function PlanLayout() {
                   const { x: _x, z: _z, ...rest } = rug;
                   setRugDraft({ rug: rest, restore: rug });
                 }}
-                sun={sun}
                 dimensionLines={dimensionLines}
                 walkRoomId={walkRoomId}
                 measureIds={view === "walk" ? null : measureIds}
@@ -981,9 +979,7 @@ export function PlanLayout() {
                 view={view}
                 showGrid={showGrid}
                 showDebug={showDebug}
-                sun={sun}
                 dimensions={dimensionLines}
-                onToggleSun={() => setSun((v) => !v)}
                 onToggleDimensions={() => setDimensionLines((v) => !v)}
                 measuring={measureIds !== null}
                 panning={panning}

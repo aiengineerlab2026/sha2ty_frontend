@@ -57,7 +57,6 @@ export function FloorPlanViewer({
   rugDraft = null,
   onPlaceRug,
   onPickRug,
-  sun = true,
   dimensionLines = false,
   roomSizes = false,
   roomNames = false,
@@ -101,8 +100,6 @@ export function FloorPlanViewer({
   onPlaceRug?: (x: number, z: number) => void;
   /** Click on a laid carpet: pick it up to move it. */
   onPickRug?: (rug: PlacedRug) => void;
-  /** Sun shadows (3D views only: 2D is always flat and shadow-free). */
-  sun?: boolean;
   /** Perimeter dimension lines in the 2D view. */
   dimensionLines?: boolean;
   /** Room name + size labels floating in the 3D views (sizes are approximate when the scale was estimated). */
@@ -392,7 +389,6 @@ export function FloorPlanViewer({
     >
       {/* flat = no tone mapping: paints and floor finishes show their real swatch colour. */}
       <Canvas
-        shadows
         flat
         camera={{ position: [...cam.position], fov: view === "top" ? 50 : 45 }}
         onPointerMissed={() => {
@@ -408,7 +404,7 @@ export function FloorPlanViewer({
             (~0.75–0.93 of its true colour), so two same-colour walls still read as a corner, while
             the floor stays at ~1.0. three's physical lights divide by π (Lambert), hence the π. */}
         <ambientLight intensity={0.72 * Math.PI} />
-        <directionalLight position={[10, 10, 3]} intensity={0.3 * Math.PI} castShadow={sun && !is2d} />
+        <directionalLight position={[10, 10, 3]} intensity={0.3 * Math.PI} />
         <directionalLight position={[-3, 8, -10]} intensity={0.15 * Math.PI} />
         {/* Soft ambient occlusion: darkens inside corners and wall / floor / ceiling junctions. */}
         {!is2d && (
