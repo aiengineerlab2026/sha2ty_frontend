@@ -35,7 +35,7 @@ export function RoomCreationDialog({
 }) {
   const t = useT();
   const [mode, setMode] = useState<Mode>("room");
-  const [values, setValues] = useState({ width: "4.0", depth: "5.0", height: "2.8", thickness: "0.15" });
+  const [values, setValues] = useState({ width: "4.0", depth: "5.0", height: "3.0", thickness: "0.15" });
   const [file, setFile] = useState<File | null>(null);
   const [fileError, setFileError] = useState<string | null>(null);
 

@@ -663,7 +663,7 @@ export function PlanLayout() {
               setBusy(t("Building 3D…"));
               setBuildErrors([]);
               try {
-                const rebuilt = await rebuildFromGeometry(state, draft.height ?? 2.7);
+                const rebuilt = await rebuildFromGeometry(state, draft.height ?? 3);
                 setGeometry({ ...rebuilt, preview_image: draft.preview_image, debug_images: draft.debug_images });
                 setView("2d"); // a freshly converted plan opens in 2D
                 setDraft(null);

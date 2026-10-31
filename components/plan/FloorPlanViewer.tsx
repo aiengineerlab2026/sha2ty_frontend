@@ -134,7 +134,7 @@ export function FloorPlanViewer({
   const t = useT();
   const width = geometry.extents?.width ?? span(geometry, 0);
   const depth = geometry.extents?.depth ?? span(geometry, 1);
-  const height = geometry.height ?? 2.8;
+  const height = geometry.height ?? 3;
   const cam = cameraForView(view, width, depth, height);
   const wrap = useRef<HTMLDivElement>(null);
   // Finishes follow the functional zone (open-plan living/dining/kitchen differ), else the room.
