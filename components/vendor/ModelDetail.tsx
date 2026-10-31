@@ -163,7 +163,16 @@ export function ModelDetail({ id }: { id: string }) {
             {t("No 3D model: it is listed with its photos only and can't be placed in the plan builder.")}
           </p>
         )}
-        {model?.glb_url && <ModelViewer url={model.glb_url} dimensions={catalogDimensions(model)} />}
+        {/* The preview follows the fields as they are typed (the saved size until they form a valid one). */}
+        {model?.glb_url && (
+          <ModelViewer
+            url={model.glb_url}
+            dimensions={
+              catalogDimensions({ width_m: numberOrNull(width), height_m: numberOrNull(height), depth_m: numberOrNull(depth), shape, length2_m: numberOrNull(length2) }) ??
+              catalogDimensions(model)
+            }
+          />
+        )}
         {model?.glb_url && <p className="text-xs text-slate-500">{t("Drag to orbit, scroll to zoom, end-drag to pan.")}</p>}
       </main>
     </div>

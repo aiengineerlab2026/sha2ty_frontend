@@ -22,6 +22,7 @@ export function Dimensions({
   /** Field labels; L-shaped units call width "Length on wall A" and depth "Arm depth". */
   labels?: [string, string, string];
 }) {
+  // All three are required: the model is shown at exactly this size in plans (modelNormalization).
   return (
     <div className="grid grid-cols-3 gap-3">
       <Dim label={labels[0]} value={width} onChange={onWidth} />
@@ -37,7 +38,7 @@ function Dim({ label, value, onChange }: { label: string; value: string; onChang
   return (
     <div className="space-y-1.5">
       <Label htmlFor={id}>{t(label)}</Label>
-      <Input id={id} type="number" min="0" step="0.01" value={value} onChange={(event) => onChange(event.target.value)} />
+      <Input id={id} type="number" min="0.01" step="0.01" value={value} onChange={(event) => onChange(event.target.value)} required />
     </div>
   );
 }

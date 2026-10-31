@@ -27,12 +27,15 @@ import {
 } from "three";
 import { catalogDimensions, normalizeModel, type Dimensions, type NormalizationReport } from "@/lib/plan/modelNormalization";
 import { doorFit, doorways, type Doorway } from "@/lib/plan/doorFit";
-import { clampTilt, cornerSnap, fitWindowOnWall, measureBetween, localWarnings, normalizeYaw, rugWarnings, surfaceHeight, tilted } from "@/lib/plan/placementValidation";
+import { clampTilt, cornerSnap, fitWindowOnWall, localWarnings, slideInsideWalls, normalizeYaw, rugWarnings, surfaceHeight, tilted } from "@/lib/plan/placementValidation";
 import { cameraForView, type CameraView } from "@/lib/plan/coordinateSystem";
 import { FACADE, finishFor, tileSize, wallSides, wallTexture } from "@/lib/plan/roomMaterials";
 import { WalkControls } from "./WalkControls";
 import { baseHeight, mountFor, type Mount } from "@/lib/plan/categories";
 import { walkStart } from "@/lib/plan/walkStart";
+
+/** World point in metres: x, y (up), z. */
+export type Vec3 = [number, number, number];
 import type { CatalogModel, PlanGeometry, PlacedDoor, PlacedItem, PlacedRug, PlacedWindow, WallPaint } from "@/lib/plan/types";
 import { FurnitureObject } from "./FurnitureObject";
 import { PlanAnnotations2D } from "./PlanAnnotations2D";
@@ -71,8 +74,8 @@ export function FloorPlanViewer({
   doorDraft = null,
   onPlaceDoor,
   onPickDoor,
-  measureIds = null,
-  onMeasurePick,
+  measurePoints = null,
+  onMeasurePoint,
   panning = false,
 }: {
   geometry: PlanGeometry;
@@ -126,8 +129,9 @@ export function FloorPlanViewer({
   /** Click on a fitted door: pick it up to move or delete it. */
   onPickDoor?: (placed: PlacedDoor) => void;
   /** Measuring: the items picked so far (0–2); clicking a model adds it instead of picking it up. */
-  measureIds?: string[] | null;
-  onMeasurePick?: (id: string) => void;
+  /** Measuring: the points clicked so far (0–2), world metres; any surface in the model can be clicked. */
+  measurePoints?: Vec3[] | null;
+  onMeasurePoint?: (point: Vec3) => void;
   /** Pan tool: start-drag pans the view; nothing in the scene reacts to clicks. */
   panning?: boolean;
 }) {
@@ -180,7 +184,8 @@ export function FloorPlanViewer({
     if (fit.status === "too_big")
       return fit.wide < 0
         ? t("Doesn't fit: {name} is {n} cm wider than this doorway ({size})", { name: doorDraft.name, n: -fit.wide, size })
-        : t("Doesn't fit: {name} is {n} cm taller than this doorway ({size})", { name: doorDraft.name, n: -fit.tall, size });
+        : t("Doesn't fit: {name} is {n} cm taller than the room allows ({size})", { name: doorDraft.name, n: fit.over, size });
+    if (fit.raised) return t("Fits this doorway ({size}); the wall above is raised to {h} m. Click to fit it", { size, h: doorDraft.height.toFixed(2) });
     if (fit.status === "gap") return t("Fits with a gap: the doorway ({size}) is {w} cm wider and {h} cm taller", { size, w: fit.wide, h: fit.tall });
     return t("Fits this doorway ({size}). Click to fit it", { size });
   };
@@ -218,11 +223,11 @@ export function FloorPlanViewer({
     return cornerSnap({ shape: placingL, width: size.width, depth: size.depth, arm }, geometry, { x, z });
   };
 
-  const checkPreview = (x: number, z: number, rotation = previewRotation) => {
-    if (!placing) return null;
+  /** The model being placed as an item at (x, z), or null until its GLB size is known. */
+  const previewItem = (x: number, z: number, rotation = previewRotation): PlacedItem | null => {
     const size = previewSize.current;
-    if (!size) return t("Loading model…");
-    const candidate: PlacedItem = {
+    if (!placing || !size) return null;
+    return {
       instanceId: "__preview__",
       modelId: placing.id,
       title: placing.title,
@@ -243,6 +248,12 @@ export function FloorPlanViewer({
       arm_m: placingArm ?? undefined,
       warnings: [],
     };
+  };
+
+  const checkPreview = (x: number, z: number, rotation = previewRotation) => {
+    if (!placing) return null;
+    const candidate = previewItem(x, z, rotation);
+    if (!candidate) return t("Loading model…");
     return localWarnings(candidate, geometry, items)[0] ?? null;
   };
 
@@ -277,10 +288,7 @@ export function FloorPlanViewer({
   const pick = (item: PlacedItem) => {
     if (walking || onPickRoom || panning) return; // walking / choosing a room / panning: nothing is picked up or selected
     if (rugDraft || windowDraft || doorDraft || painting) return; // placing something else: no other selection
-    if (measureIds && onMeasurePick) {
-      onMeasurePick(item.instanceId); // measuring: models are measure points, not picked up
-      return;
-    }
+    if (measurePoints) return; // measuring: a click is a measure point (MeasureClicks), nothing is picked up
     if (placing) return; // clicks during placement place the new model, they do not pick others up
     if (carrying) {
       setCarrying(null); // the click landed on the carried item itself: drop it here
@@ -289,6 +297,7 @@ export function FloorPlanViewer({
     }
     justPicked.current = true; // this same click must not also count as the drop
     onSelect(item.instanceId);
+    if (item.category === "door") return; // a fitted door stays in its doorway: fit it elsewhere from the catalogue
     setCarrying({ id: item.instanceId, origin: [item.x, item.z] });
   };
 
@@ -331,9 +340,13 @@ export function FloorPlanViewer({
             setPreviewProblem(checkPreview(snap.x, snap.z, snap.rotation));
             return;
           }
-          preview.current = hit ? { x: hit.x, z: hit.z } : null;
-          previewSurface.current = hit && placing.category === "tv" ? surfaceHeight({ instanceId: "__preview__", x: hit.x, z: hit.z }, items) : 0;
-          setPreviewProblem(hit ? checkPreview(hit.x, hit.z) : t("Point at the floor."));
+          // The preview never crosses a wall: past one, it slides along it from where it last stood.
+          const last = preview.current ?? hit;
+          const from = last && previewItem(last.x, last.z);
+          const at = hit && from ? slideInsideWalls(from, hit, geometry) : hit;
+          preview.current = at ? { x: at.x, z: at.z } : null;
+          previewSurface.current = at && placing.category === "tv" ? surfaceHeight({ instanceId: "__preview__", x: at.x, z: at.z }, items) : 0;
+          setPreviewProblem(at ? checkPreview(at.x, at.z) : t("Point at the floor."));
           return;
         }
         if (!carrying || walking) return; // nothing follows the cursor while walking
@@ -349,7 +362,12 @@ export function FloorPlanViewer({
             return;
           }
         }
-        if (hit) onMove(carrying.id, clamp(hit.x, 0, width), clamp(hit.z, 0, depth));
+        if (hit) {
+          // A carried model slides along the walls; it never leaves the rooms.
+          const target = { x: clamp(hit.x, 0, width), z: clamp(hit.z, 0, depth) };
+          const at = carried ? slideInsideWalls(carried, target, geometry) : target;
+          onMove(carrying.id, at.x, at.z);
+        }
       }}
       onPointerDown={(event) => {
         pressAt.current = { x: event.clientX, y: event.clientY };
@@ -376,7 +394,8 @@ export function FloorPlanViewer({
           const size = previewSize.current;
           if (!hit || !size) return;
           const snap = snapToCorner(hit.x, hit.z);
-          const at = snap ?? { x: hit.x, z: hit.z, rotation: previewRotation };
+          const inside = preview.current ?? hit; // where the preview stopped at the walls
+          const at = snap ?? { x: inside.x, z: inside.z, rotation: previewRotation };
           const problem = checkPreview(at.x, at.z, at.rotation);
           setPreviewProblem(problem);
           if (!problem) onPlace(placing, at.x, at.z, at.rotation, size, previewTilt);
@@ -451,7 +470,7 @@ export function FloorPlanViewer({
                 ? () => onPickRoom(area.id)
                 : paintFloors && onPaintFloor
                   ? () => onPaintFloor(area.id)
-                  : onSelectRoom && !walking && !panning && !placing && !painting && !rugDraft && !windowDraft && !doorDraft && !carrying
+                  : onSelectRoom && !walking && !panning && !placing && !painting && !rugDraft && !windowDraft && !doorDraft && !carrying && !measurePoints
                     ? () => {
                         onSelect(null);
                         onSelectRoom(area.id);
@@ -489,7 +508,7 @@ export function FloorPlanViewer({
             key={rug.id}
             rug={rug}
             onClick={
-              onPickRug && !walking && !onPickRoom && !panning && !placing && !painting && !rugDraft && !carrying
+              onPickRug && !measurePoints && !walking && !onPickRoom && !panning && !placing && !painting && !rugDraft && !carrying
                 ? () => {
                     justPicked.current = true; // this click picks it up; the next one lays it
                     onPickRug(rug);
@@ -507,7 +526,7 @@ export function FloorPlanViewer({
               win={win}
               wall={wall}
               onClick={
-                onPickWindow && !walking && !onPickRoom && !panning && !placing && !painting && !rugDraft && !windowDraft && !carrying
+                onPickWindow && !measurePoints && !walking && !onPickRoom && !panning && !placing && !painting && !rugDraft && !windowDraft && !carrying
                   ? () => {
                       justPicked.current = true;
                       onPickWindow(win);
@@ -525,7 +544,7 @@ export function FloorPlanViewer({
               door={door}
               opening={opening}
               onClick={
-                onPickDoor && !walking && !onPickRoom && !panning && !placing && !painting && !rugDraft && !windowDraft && !doorDraft && !carrying
+                onPickDoor && !measurePoints && !walking && !onPickRoom && !panning && !placing && !painting && !rugDraft && !windowDraft && !doorDraft && !carrying
                   ? () => {
                       justPicked.current = true;
                       onPickDoor(door);
@@ -551,7 +570,8 @@ export function FloorPlanViewer({
               />
             );
           })}
-        {measureIds?.length === 2 && <Measurement a={items.find((i) => i.instanceId === measureIds[0])} b={items.find((i) => i.instanceId === measureIds[1])} />}
+        {measurePoints && <Measurement points={measurePoints} />}
+        {measurePoints && onMeasurePoint && <MeasureClicks onPoint={onMeasurePoint} />}
         {windowDraft && windowHover && (
           <WindowDecal win={{ ...windowDraft, wall_id: windowHover.wall.id, side: windowHover.side, along: windowHover.along, y: windowHover.y }} wall={windowHover.wall} ghost invalid={Boolean(windowHover.problem)} />
         )}
@@ -562,7 +582,7 @@ export function FloorPlanViewer({
           <FurnitureDraggable
             key={item.instanceId}
             item={item}
-            selected={selectedId === item.instanceId || Boolean(measureIds?.includes(item.instanceId))}
+            selected={selectedId === item.instanceId}
             showDimensions={showDimensions}
             onPick={() => pick(item)}
             // While a model, carpet, window or door is being placed, other objects ignore clicks.
@@ -591,9 +611,9 @@ export function FloorPlanViewer({
       </Canvas>
       {placing && <PlacementGuide action={t("Click the floor to place {name}", { name: placing.title })} problem={previewProblem} />}
       {rugDraft && <PlacementGuide action={t("Click the floor to lay {name}", { name: rugDraft.name })} problem={previewProblem} />}
-      {measureIds && (
+      {measurePoints && (
         <p className="pointer-events-none absolute bottom-3 left-1/2 max-w-[90%] -translate-x-1/2 rounded bg-black/75 px-3 py-1 text-center text-xs text-white">
-          {measureIds.length === 0 ? t("Click a model to measure from") : measureIds.length === 1 ? t("Click a second model") : t("Click another model to measure again")} · Esc to stop measuring
+          {measurePoints.length === 0 ? t("Click any point to measure from") : measurePoints.length === 1 ? t("Click a second point") : t("Click a point to start a new measurement")} · {t("Esc to stop measuring")}
         </p>
       )}
       {doorDraft && (
@@ -1238,39 +1258,62 @@ function WalkGuide() {
   );
 }
 
-/** Measurement between two models: an amber line between their nearest points with end ticks and a label. */
-function Measurement({ a, b }: { a?: PlacedItem; b?: PlacedItem }) {
+/** Measurement between two clicked points anywhere in the model: an amber line, end dots and the distance. */
+function Measurement({ points }: { points: Vec3[] }) {
   const t = useT();
-  if (!a || !b) return null;
-  const m = measureBetween(a, b);
-  const y = 0.04; // on the floor: reads in 2D and 3D
-  const from: [number, number, number] = [m.from.x, y, m.from.z];
-  const to: [number, number, number] = [m.to.x, y, m.to.z];
-  const dx = m.to.x - m.from.x;
-  const dz = m.to.z - m.from.z;
-  const len = Math.hypot(dx, dz) || 1;
-  const n = { x: (-dz / len) * 0.12, z: (dx / len) * 0.12 };
-  const tick = (p: { x: number; z: number }): [number, number, number][] => [
-    [p.x + n.x, y, p.z + n.z],
-    [p.x - n.x, y, p.z - n.z],
-  ];
+  if (!points.length) return null;
+  const [a, b] = points;
+  const dist = b ? Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]) : 0;
+  const rise = b ? Math.abs(b[1] - a[1]) : 0;
+  const flat = b ? Math.hypot(b[0] - a[0], b[2] - a[2]) : 0;
   return (
     <group>
-      {m.gap > 0 && (
+      {points.map((p, i) => (
+        <mesh key={i} position={p} raycast={() => null} renderOrder={10}>
+          <sphereGeometry args={[0.04, 16, 16]} />
+          <meshBasicMaterial color="#f2a33a" depthTest={false} />
+        </mesh>
+      ))}
+      {b && (
         <>
-          <Line points={[from, to]} color="#f2a33a" lineWidth={3} dashed dashSize={0.12} gapSize={0.06} />
-          <Line points={tick(m.from)} color="#f2a33a" lineWidth={3} />
-          <Line points={tick(m.to)} color="#f2a33a" lineWidth={3} />
+          <Line points={[a, b]} color="#f2a33a" lineWidth={3} dashed dashSize={0.12} gapSize={0.06} depthTest={false} renderOrder={10} raycast={() => null} />
+          <Html position={[(a[0] + b[0]) / 2, (a[1] + b[1]) / 2 + 0.15, (a[2] + b[2]) / 2]} center zIndexRange={[8, 0]} style={{ pointerEvents: "none" }}>
+            <div className="whitespace-nowrap rounded-lg bg-brand-navy px-2.5 py-1.5 text-center text-white shadow-lg">
+              <p className="text-sm font-semibold tabular-nums">{t("{d} m", { d: dist.toFixed(2) })}</p>
+              {rise > 0.05 && flat > 0.05 && (
+                <p className="text-[10px] tabular-nums text-slate-300">{t("{h} m across · {v} m up", { h: flat.toFixed(2), v: rise.toFixed(2) })}</p>
+              )}
+            </div>
+          </Html>
         </>
       )}
-      <Html position={[(m.from.x + m.to.x) / 2, 0.3, (m.from.z + m.to.z) / 2]} center zIndexRange={[8, 0]} style={{ pointerEvents: "none" }}>
-        <div className="whitespace-nowrap rounded-lg bg-brand-navy px-2.5 py-1.5 text-center text-white shadow-lg">
-          <p className="text-sm font-semibold tabular-nums">{m.gap > 0 ? t("{d} m apart", { d: m.gap.toFixed(2) }) : t("Touching")}</p>
-          <p className="text-[10px] tabular-nums text-slate-300">{m.centres.toFixed(2)} m centre to centre</p>
-        </div>
-      </Html>
     </group>
   );
+}
+
+/** While measuring, a click (not a drag) takes the exact point it hits on any surface: floor, wall, frame, furniture. */
+function MeasureClicks({ onPoint }: { onPoint: (p: Vec3) => void }) {
+  const { camera, gl, scene, raycaster } = useThree();
+  useEffect(() => {
+    const el = gl.domElement;
+    let down: { x: number; y: number } | null = null;
+    const press = (e: PointerEvent) => void (down = { x: e.clientX, y: e.clientY });
+    const release = (e: PointerEvent) => {
+      if (!down || Math.hypot(e.clientX - down.x, e.clientY - down.y) > 4) return; // orbiting, not a click
+      const r = el.getBoundingClientRect();
+      raycaster.setFromCamera(new Vector2(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1), camera);
+      // Grid and helper lines are not surfaces; meshes that opt out of picking (raycast = null) return no hits.
+      const hit = raycaster.intersectObjects(scene.children, true).find((h) => (h.object as Mesh).isMesh && h.object.visible);
+      if (hit) onPoint([hit.point.x, hit.point.y, hit.point.z]);
+    };
+    el.addEventListener("pointerdown", press);
+    el.addEventListener("pointerup", release);
+    return () => {
+      el.removeEventListener("pointerdown", press);
+      el.removeEventListener("pointerup", release);
+    };
+  }, [camera, gl, scene, raycaster, onPoint]);
+  return null;
 }
 
 /** Furniture the vision model found in the drawing: plain grey boxes, never walls, never pickable. */

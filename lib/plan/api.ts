@@ -162,12 +162,13 @@ export async function exportRoomGlb(id: string) {
   return response.blob();
 }
 
-/** Carpet photo → PNG of only the carpet, straightened top-down at width × length (backend OpenCV). */
-export async function extractCarpet(image: Blob, widthM: number, lengthM: number): Promise<Blob> {
+/** Photo → PNG of only the item, straightened at width × length (backend OpenCV). */
+export async function extractCarpet(image: Blob, widthM: number, lengthM: number, noun: "carpet" | "door" | "window" = "carpet"): Promise<Blob> {
   const form = new FormData();
-  form.append("image", image, "carpet");
+  form.append("image", image, noun);
   form.append("width_m", String(widthM));
   form.append("length_m", String(lengthM));
+  form.append("noun", noun);
   let response: Response;
   try {
     response = await fetch(`${API}/api/vendor/carpets/extract`, { method: "POST", body: form });

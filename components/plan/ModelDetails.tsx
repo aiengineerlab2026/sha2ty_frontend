@@ -8,6 +8,7 @@ import { ImageCarousel } from "@/components/shatably/ImageCarousel";
 import { RatingSummary } from "@/components/shatably/Reviews";
 import { formatPrice } from "@/lib/plan/pricing";
 import type { CatalogModel } from "@/lib/plan/types";
+import { sizeLabel } from "@/lib/plan/modelNormalization";
 
 /** Docked end-hand panel for a catalogue item: photos and variants, title, description, size, "Show in my apartment". */
 export function ModelDetails({ model, onClose, onShow }: { model: CatalogModel; onClose: () => void; onShow: () => void }) {
@@ -15,7 +16,7 @@ export function ModelDetails({ model, onClose, onShow }: { model: CatalogModel; 
   const photos = useMemo(() => [...new Set([model.thumbnail, ...(model.variants ?? [])].filter((u): u is string => Boolean(u)))], [model]);
   const [added, setAdded] = useState(false);
   const description = useMemo(() => safeHtml(model.description ?? ""), [model.description]);
-  const dims = model.width_m && model.height_m && model.depth_m ? `${model.width_m.toFixed(2)} × ${model.height_m.toFixed(2)} × ${model.depth_m.toFixed(2)} m` : null;
+  const dims = sizeLabel(model);
 
   // Docked beside the plan on desktop; a bottom sheet over it on phones.
   return (

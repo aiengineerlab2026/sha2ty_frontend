@@ -2,6 +2,8 @@ import { Box3, Group, Matrix4, Object3D, Vector3 } from "three";
 
 /** Physical size in metres. X = width, Y = height, Z = depth; 1 world unit = 1 m. */
 export type Dimensions = { width: number; height: number; depth: number };
+/** Catalogue size: width and height are required, depth is optional (the GLB's own depth is used). */
+export type CatalogSize = { width: number; height: number; depth?: number };
 
 export type Orientation = "as-authored" | "z-up→y-up" | "yaw-90" | "z-up→y-up+yaw-90";
 
@@ -12,7 +14,7 @@ export interface NormalizationReport {
   /** Size after orientation normalisation, before scaling. */
   orientedSize: Dimensions;
   orientation: Orientation;
-  target: Dimensions | null;
+  target: CatalogSize | null;
   scale: [number, number, number];
   finalSize: Dimensions;
   /** max/min of the per-axis catalogue/model ratios: 1 = GLB proportions match the catalogue. */
@@ -25,8 +27,8 @@ export interface NormalizationReport {
   warnings: string[];
 }
 
-/** Height/depth may differ from the database by this fraction before the user is warned. */
-const SIZE_TOLERANCE = 0.1;
+/** Per-axis stretch (max/min factor − 1) beyond which the GLB's own shape is reported as off. */
+export const STRETCH_TOLERANCE = 0.25;
 const ORIENTATIONS: { name: Orientation; matrix: Matrix4 }[] = [
   { name: "as-authored", matrix: new Matrix4() },
   { name: "z-up→y-up", matrix: new Matrix4().makeRotationX(-Math.PI / 2) },
@@ -35,15 +37,15 @@ const ORIENTATIONS: { name: Orientation; matrix: Matrix4 }[] = [
 ];
 
 /**
- * Wrap a loaded model at its real size, Y-up, standing on Y = 0 and centred on X/Z. The model's
- * own proportions are always preserved: ONE uniform factor, `dbWidth / modelWidth`, makes the
- * width exactly the database width; height and depth follow the GLB's proportions. Database
- * height/depth are used only to warn (> 10% off), never to scale. Orientation is corrected first,
- * as its own step, so scaling never compensates for a rotated model. The result is a fresh
- * hierarchy:
+ * Wrap a loaded model at its real size, Y-up, standing on Y = 0 and centred on X/Z. The catalogue
+ * size is the truth: each axis gets its own factor so the model is exactly the database width ×
+ * height (× depth). Without a catalogue depth, depth takes the mean of the width and height factors
+ * (the GLB's depth, scaled with the rest). A GLB whose own shape is far from the catalogue is
+ * stretched to it and warned about (`distortion`). Orientation is corrected first, as its own
+ * step, so scaling never compensates for a rotated model. The result is a fresh hierarchy:
  *
  *   wrapper (identity — the caller positions/rotates this)
- *    └─ fit    (position: centring offset, scale: one uniform factor)
+ *    └─ fit    (position: centring offset, scale: one factor per axis, world-aligned)
  *        └─ orient (rotation: authored axes → X width, Y up, Z depth)
  *            └─ clone of source (its own node transforms untouched)
  *
@@ -53,7 +55,7 @@ const ORIENTATIONS: { name: Orientation; matrix: Matrix4 }[] = [
  * With `target = null` (size unknown) only orientation and placement are normalised: the model
  * keeps its authored size, read as metres per the glTF spec.
  */
-export function normalizeModel(source: Object3D, target: Dimensions | null, modelId?: string): { object: Group; report: NormalizationReport } {
+export function normalizeModel(source: Object3D, target: CatalogSize | null, modelId?: string): { object: Group; report: NormalizationReport } {
   const model = source.clone(true); // geometry/materials shared, transforms copied — source untouched
   const orient = new Group();
   orient.name = "orient";
@@ -72,12 +74,14 @@ export function normalizeModel(source: Object3D, target: Dimensions | null, mode
   assertFinite(orientedSize);
 
   const perAxis = target
-    ? [target.width / orientedSize.width, target.height / orientedSize.height, target.depth / orientedSize.depth]
+    ? [target.width / orientedSize.width, target.height / orientedSize.height, ...(target.depth ? [target.depth / orientedSize.depth] : [])]
     : [1, 1, 1];
-  // Width drives the scale; the same factor on all axes keeps the GLB's shape.
-  const scaleFactor = target ? target.width / orientedSize.width : 1;
-  const scale: [number, number, number] = [scaleFactor, scaleFactor, scaleFactor];
-  fit.scale.setScalar(scaleFactor);
+  // The catalogue size is exact: one factor per axis (depth follows width/height when not given).
+  const sx = target ? target.width / orientedSize.width : 1;
+  const sy = target ? target.height / orientedSize.height : 1;
+  const sz = target?.depth ? target.depth / orientedSize.depth : Math.sqrt(sx * sy);
+  const scale: [number, number, number] = [sx, sy, sz];
+  fit.scale.set(sx, sy, sz);
 
   // Centre on X/Z, bottom on the floor.
   const box = worldBox(wrapper);
@@ -88,12 +92,10 @@ export function normalizeModel(source: Object3D, target: Dimensions | null, mode
   const warnings: string[] = [];
   const distortion = Math.max(...perAxis) / Math.min(...perAxis);
   const heightError = target ? Math.abs(finalSize.height - target.height) / target.height : 0;
-  const depthError = target ? Math.abs(finalSize.depth - target.depth) / target.depth : 0;
-  if (target && heightError > SIZE_TOLERANCE) {
-    warnings.push(`At ${target.width.toFixed(2)} m wide the model is ${finalSize.height.toFixed(2)} m high, but the catalogue says ${target.height.toFixed(2)} m (${(heightError * 100).toFixed(0)}% off).`);
-  }
-  if (target && depthError > SIZE_TOLERANCE) {
-    warnings.push(`At ${target.width.toFixed(2)} m wide the model is ${finalSize.depth.toFixed(2)} m deep, but the catalogue says ${target.depth.toFixed(2)} m (${(depthError * 100).toFixed(0)}% off).`);
+  const depthError = target?.depth ? Math.abs(finalSize.depth - target.depth) / target.depth : 0;
+  // Exact by construction; a large stretch means the GLB and the catalogue disagree on the shape.
+  if (target && distortion > 1 + STRETCH_TOLERANCE) {
+    warnings.push(`The 3D model was stretched ${((distortion - 1) * 100).toFixed(0)}% to match the catalogue size ${[target.width, target.height, target.depth].filter(Boolean).map((v) => Number(v).toFixed(2)).join(" × ")} m: check the model or its dimensions.`);
   }
 
   let nestedTransforms = 0;
@@ -143,7 +145,7 @@ export function worldBox(object: Object3D): Box3 {
  * their long side on X. Keep the authored orientation unless a 90° re-orientation explains the
  * catalogue proportions clearly better (height is the strongest cue, then width ≥ depth).
  */
-function chooseOrientation(model: Object3D, target: Dimensions | null) {
+function chooseOrientation(model: Object3D, target: CatalogSize | null) {
   const probe = new Group();
   const inner = new Group();
   probe.add(inner);
@@ -152,12 +154,14 @@ function chooseOrientation(model: Object3D, target: Dimensions | null) {
     inner.quaternion.setFromRotationMatrix(matrix);
     const s = measure(probe);
     if (!target) return 0;
-    // Log-ratio error per axis, invariant to overall scale.
-    const k = Math.cbrt((target.width * target.height * target.depth) / Math.max(s.width * s.height * s.depth, 1e-12));
+    // Log-ratio error per axis, invariant to overall scale (depth only when the catalogue has one).
+    const k = target.depth
+      ? Math.cbrt((target.width * target.height * target.depth) / Math.max(s.width * s.height * s.depth, 1e-12))
+      : Math.sqrt((target.width * target.height) / Math.max(s.width * s.height, 1e-12));
     return (
       Math.abs(Math.log((s.width * k) / target.width)) +
       2 * Math.abs(Math.log((s.height * k) / target.height)) +
-      Math.abs(Math.log((s.depth * k) / target.depth))
+      (target.depth ? Math.abs(Math.log((s.depth * k) / target.depth)) : 0)
     );
   };
   if (!target) return ORIENTATIONS[0];
@@ -183,11 +187,17 @@ export function sameSize(a: Dimensions, b: Dimensions, tolerance = 5e-4) {
 }
 
 /** Catalogue dimensions, or null when any is missing (never invent a size). */
-export function catalogDimensions(model: { width_m: number | null; height_m: number | null; depth_m: number | null; shape?: string | null; length2_m?: number | null }): Dimensions | null {
+export function catalogDimensions(model: { width_m: number | null; height_m: number | null; depth_m: number | null; shape?: string | null; length2_m?: number | null }): CatalogSize | null {
   const { width_m, height_m, depth_m } = model;
-  if (!width_m || !height_m || !depth_m || width_m <= 0 || height_m <= 0 || depth_m <= 0) return null;
-  // L-shaped corner unit: its bounding box is wall-A length × wall-B length (depth_m is the arm depth).
+  if (!width_m || !height_m || width_m <= 0 || height_m <= 0) return null;
+  // L-shaped corner unit: its bounding box is wall-A length × wall-B length; depth_m is the arm depth (needed).
   const l = model.shape === "l_left" || model.shape === "l_right";
-  if (l && !(Number(model.length2_m) > 0)) return null;
-  return { width: Number(width_m), height: Number(height_m), depth: l ? Number(model.length2_m) : Number(depth_m) };
+  if (l) return Number(model.length2_m) > 0 && Number(depth_m) > 0 ? { width: Number(width_m), height: Number(height_m), depth: Number(model.length2_m) } : null;
+  return { width: Number(width_m), height: Number(height_m), ...(Number(depth_m) > 0 ? { depth: Number(depth_m) } : {}) };
+}
+
+/** "W × H m", with "× D" when the catalogue has a depth. */
+export function sizeLabel(model: { width_m: number | null; height_m: number | null; depth_m?: number | null }): string | null {
+  if (!model.width_m || !model.height_m) return null;
+  return [model.width_m, model.height_m, model.depth_m].filter((v): v is number => Boolean(v)).map((v) => Number(v).toFixed(2)).join(" × ") + " m";
 }

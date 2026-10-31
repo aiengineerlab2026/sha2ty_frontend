@@ -113,7 +113,7 @@ function MatchWizard({ open, onOpenChange, model, onDone }: { open: boolean; onO
   const [picked, setPicked] = useState<Pick | null>(null);
   const picks = usePicks(model.id);
 
-  const missing = { w: !model.width_m, d: !model.depth_m, h: !model.height_m };
+  const missing = { w: !model.width_m, d: false, h: !model.height_m }; // depth is optional (the width stands in)
   const steps = stepsFor(type, picked ? { modelSizeMissing: missing.w || missing.d || missing.h } : undefined);
   const current = steps[step];
   const num = (v: string) => Number(v.replace(",", "."));

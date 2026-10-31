@@ -136,6 +136,7 @@ export function clearSpan(center: Pt, dir: Pt, polygon: [number, number][]): num
 
 export function localWarnings(item: PlacedItem, geometry: PlanGeometry | null, others: PlacedItem[]): string[] {
   if (!geometry?.rooms.length) return ["Place furniture after a room exists."];
+  if (item.category === "door") return []; // stands in a doorway (outside the room outlines); its fit is checked when it is placed
   const warnings: string[] = [];
   // A tilted item's footprint centre moves along its own z: measure the room from there.
   const size = tilted(physicalSize(item), item.rotation_x);
@@ -255,6 +256,40 @@ export function nearestValidSpot(item: PlacedItem, geometry: PlanGeometry, other
   return null;
 }
 
+/** Inside the walls: in a room, its whole footprint within it, under the ceiling. Other furniture is ignored. */
+export function insideWalls(item: PlacedItem, geometry: PlanGeometry | null): boolean {
+  return localWarnings(item, geometry, []).length === 0;
+}
+
+/**
+ * Where an item heading for `to` may go without leaving the walls: `to` itself when it is inside,
+ * else the closest point to it the item can slide to from where it is now (straight, or along a wall
+ * one axis at a time). An item that is already outside goes to the nearest spot inside.
+ */
+export function slideInsideWalls(item: PlacedItem, to: { x: number; z: number }, geometry: PlanGeometry | null): { x: number; z: number } {
+  if (!geometry?.rooms.length) return to;
+  const ok = (p: { x: number; z: number }) => insideWalls({ ...item, x: p.x, z: p.z }, geometry);
+  if (ok(to)) return to;
+  const from = { x: item.x, z: item.z };
+  if (!ok(from)) return nearestValidSpot({ ...item, x: to.x, z: to.z }, geometry, []) ?? from;
+  // Furthest valid point on a -> b (a is valid): bisection, 1 mm on a 10 m move.
+  const reach = (a: { x: number; z: number }, b: { x: number; z: number }) => {
+    if (ok(b)) return b;
+    let lo = 0;
+    let hi = 1;
+    for (let i = 0; i < 14; i++) {
+      const mid = (lo + hi) / 2;
+      if (ok({ x: a.x + (b.x - a.x) * mid, z: a.z + (b.z - a.z) * mid })) lo = mid;
+      else hi = mid;
+    }
+    return { x: a.x + (b.x - a.x) * lo, z: a.z + (b.z - a.z) * lo };
+  };
+  const xFirst = reach(from, { x: to.x, z: from.z });
+  const zFirst = reach(from, { x: from.x, z: to.z });
+  const candidates = [reach(from, to), reach(xFirst, { x: xFirst.x, z: to.z }), reach(zFirst, { x: to.x, z: zFirst.z })];
+  return candidates.reduce((best, c) => (Math.hypot(c.x - to.x, c.z - to.z) < Math.hypot(best.x - to.x, best.z - to.z) ? c : best));
+}
+
 const isTv = (i: Pick<PlacedItem, "category">) => i.category === "tv";
 const isTable = (i: Pick<PlacedItem, "category">) => i.category === "table";
 const onTable = (top: PlacedItem, below: PlacedItem) => isTv(top) && isTable(below);
@@ -345,31 +380,3 @@ export function cornerSnap(
   return best && { x: best.x, z: best.z, rotation: best.rotation };
 }
 
-/**
- * Distance between two placed items: the clear gap between their footprints (0 when they touch or
- * overlap; an L counts as its two arms), the nearest points on each, and the centre-to-centre distance.
- */
-export function measureBetween(a: PlacedItem, b: PlacedItem): { gap: number; from: Pt; to: Pt; centres: number } {
-  const centres = Math.hypot(a.x - b.x, a.z - b.z);
-  if (footprintsOverlap(a, b)) return { gap: 0, from: { x: a.x, z: a.z }, to: { x: b.x, z: b.z }, centres };
-  let best = { gap: Infinity, from: { x: a.x, z: a.z }, to: { x: b.x, z: b.z } };
-  const edges = (rects: Pt[][]) => rects.flatMap((r) => r.map((p, i) => [p, r[(i + 1) % r.length]] as [Pt, Pt]));
-  const ea = edges(footprintRects(a));
-  const eb = edges(footprintRects(b));
-  const consider = (p: Pt, [s, e]: [Pt, Pt], pFromA: boolean) => {
-    const q = closestOnSegment(p, s, e);
-    const d = Math.hypot(p.x - q.x, p.z - q.z);
-    if (d < best.gap) best = { gap: d, from: pFromA ? p : q, to: pFromA ? q : p };
-  };
-  // Closest points of two convex outlines lie at a vertex of one against an edge of the other.
-  for (const [p] of ea) for (const edge of eb) consider(p, edge, true);
-  for (const [p] of eb) for (const edge of ea) consider(p, edge, false);
-  return { ...best, centres };
-}
-
-function closestOnSegment(p: Pt, a: Pt, b: Pt): Pt {
-  const dx = b.x - a.x;
-  const dz = b.z - a.z;
-  const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.z - a.z) * dz) / (dx * dx + dz * dz || 1)));
-  return { x: a.x + t * dx, z: a.z + t * dz };
-}

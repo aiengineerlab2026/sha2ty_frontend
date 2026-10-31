@@ -299,6 +299,8 @@ export interface PlacedItem {
   mount?: "floor" | "ceiling" | "wall";
   /** Legacy field from saved plans; ignored. */
   scale?: [number, number, number];
+  /** Door model: the plan doorway it is fitted into (one door per doorway; it is never carried around). */
+  opening_id?: string;
   /** Rendered size in metres (GLB proportions kept, fitted inside width_m/height_m/depth_m). */
   size?: { width: number; height: number; depth: number };
   price?: number | null;

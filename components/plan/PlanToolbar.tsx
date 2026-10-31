@@ -2,13 +2,12 @@
 
 import { useT } from "@/lib/i18n";
 import { useEffect, type ReactNode } from "react";
-import { Axis3d, Box, Bug, Check, CloudAlert, Download, Footprints, Grid3x3, LoaderCircle, Plus, Hand, Redo2, Ruler, RulerDimensionLine, Save, Undo2 } from "lucide-react";
+import { Bug, Check, CloudAlert, Download, Footprints, Grid3x3, LoaderCircle, Plus, Hand, Redo2, Ruler, RulerDimensionLine, Save, Undo2 } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { CameraView } from "@/lib/plan/coordinateSystem";
 
 const VIEWS: { view: CameraView; label: string; icon: ReactNode }[] = [
-  { view: "perspective", label: "Perspective", icon: <Box /> },
-  { view: "iso", label: "Isometric", icon: <Axis3d /> },
+  { view: "iso", label: "3D", icon: <span className="text-xs font-semibold">3D</span> },
   { view: "2d", label: "2D", icon: <span className="text-xs font-semibold">2D</span> },
   { view: "walk", label: "Walk through", icon: <Footprints /> },
 ];

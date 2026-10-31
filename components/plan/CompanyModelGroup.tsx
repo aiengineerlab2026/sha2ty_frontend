@@ -5,6 +5,7 @@ import { useState, type ReactNode } from "react";
 import { ChevronDown, Ruler } from "lucide-react";
 import type { CatalogModel, CompanyGroup } from "@/lib/plan/types";
 import { Chip, PriceTag, rowClass } from "./SidebarStatus";
+import { sizeLabel } from "@/lib/plan/modelNormalization";
 
 export function CompanyModelGroup({
   company,
@@ -67,7 +68,7 @@ export function CompanyModelGroup({
                   <PriceTag price={model.price} unit={model.price_unit ?? "item"} />
                   <span className="mt-auto">
                     <Chip icon={<Ruler className="size-2.5 text-slate-400" aria-hidden />}>
-                      {model.width_m && model.depth_m && model.height_m ? `${model.width_m.toFixed(2)} × ${model.depth_m.toFixed(2)} × ${model.height_m.toFixed(2)} m` : t("Size not set")}
+                      {sizeLabel(model) ?? t("Size not set")}
                     </Chip>
                   </span>
                 </div>
