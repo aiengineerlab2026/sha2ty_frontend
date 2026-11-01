@@ -34,7 +34,6 @@ import type {
   WindowItem,
 } from "@/lib/vendor/types";
 import type { CatalogKind } from "./CatalogDetail";
-import { AppDownload } from "./AppDownload";
 import { sizeLabel } from "@/lib/plan/modelNormalization";
 
 const PAGE_TITLE: Record<CatalogKind, [string, string]> = {
@@ -371,8 +370,6 @@ export function HomePage({ only }: { only?: CatalogKind } = {}) {
             )}
           </>
         }
-        {/* Install the mobile app (full home page only, not the per-kind catalogue pages). */}
-        {!only && <AppDownload />}
       </main>
     </div>
   );

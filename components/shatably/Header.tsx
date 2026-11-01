@@ -9,9 +9,13 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel,
 import { getUser, logout, onAuthChange, type AuthUser } from "@/lib/auth/client";
 import type { VendorProfile } from "@/lib/vendor/types";
 import { Logo, LogoMark } from "./Logo";
+import { AppDownloadDialog } from "@/components/home/AppDownload";
 import { CartMenu } from "./CartMenu";
 
 type NavItem = { href: string; label: string };
+
+/** "Get the app" opens the install popup (QR code + download link) instead of navigating. */
+const GET_APP = "#get-app";
 
 /** Vendors manage their own items in the studio. */
 const STUDIO_NAV: NavItem[] = [
@@ -20,7 +24,7 @@ const STUDIO_NAV: NavItem[] = [
   { href: "/vendor/carpets", label: "Carpets" },
   { href: "/vendor/windows", label: "Windows" },
   { href: "/plan", label: "Plan" },
-  { href: "/#get-app", label: "Get the app" },
+  { href: GET_APP, label: "Get the app" },
 ];
 
 /** Everyone else (guests, customers) browses the public catalogue. */
@@ -30,8 +34,7 @@ const CATALOG_NAV: NavItem[] = [
   { href: "/catalog/carpets", label: "Carpets" },
   { href: "/catalog/windows", label: "Windows" },
   { href: "/plan", label: "Plan" },
-  // The install card at the end of the home page (QR code + download link).
-  { href: "/#get-app", label: "Get the app" },
+  { href: GET_APP, label: "Get the app" },
 ];
 
 /** The most specific nav entry containing the path (/vendor/paints is Paints, not Models). */
@@ -48,6 +51,7 @@ export function Header({ vendor, actions }: { vendor?: VendorProfile | null; act
   const pathname = usePathname();
   const nav = vendor ? STUDIO_NAV : CATALOG_NAV;
   const current = activeHref(pathname, nav);
+  const [getApp, setGetApp] = useState(false);
   // Signed in without a vendor profile: a customer (or a vendor page still loading its profile).
   const [user, setUser] = useState<AuthUser | null>(null);
   useEffect(() => {
@@ -66,7 +70,8 @@ export function Header({ vendor, actions }: { vendor?: VendorProfile | null; act
       <div className="flex h-16 w-full items-center gap-2 px-3 sm:gap-5 sm:px-5 xl:gap-8">
         {/* With page actions (the plan editor) the links collapse into the menu until 2xl, so the
             document title and its save badge keep their room. */}
-        <MobileNav nav={nav} current={current} signedIn={Boolean(vendor)} wideOnly={Boolean(actions)} />
+        <MobileNav nav={nav} current={current} signedIn={Boolean(vendor)} wideOnly={Boolean(actions)} onGetApp={() => setGetApp(true)} />
+        <AppDownloadDialog open={getApp} onOpenChange={setGetApp} />
         <Link href={vendor ? "/vendor" : "/"} className="flex shrink-0 items-center" aria-label={t("sha2ty home")}>
           {/* Phones: the mark alone, so page actions (plan title, Save) keep their room. */}
           <span className="sm:hidden">
@@ -83,8 +88,9 @@ export function Header({ vendor, actions }: { vendor?: VendorProfile | null; act
               const active = current === item.href;
               return (
                 <li key={item.href} className="h-full">
-                  <Link
+                  <NavLink
                     href={item.href}
+                    onGetApp={() => setGetApp(true)}
                     aria-current={active ? "page" : undefined}
                     className={`group relative flex h-full items-center px-2 text-sm font-semibold transition-colors xl:px-3 ${
                       active ? "text-brand-navy" : "text-slate-500 hover:text-brand-navy"
@@ -98,7 +104,7 @@ export function Header({ vendor, actions }: { vendor?: VendorProfile | null; act
                         active ? "bg-brand-amber opacity-100" : "bg-slate-300 opacity-0 group-hover:opacity-100"
                       }`}
                     />
-                  </Link>
+                  </NavLink>
                 </li>
               );
             })}
@@ -232,7 +238,22 @@ function ProfileMenu({ vendor, onSignOut }: { vendor: VendorProfile; onSignOut: 
 }
 
 /** Below lg the nav links live in a menu, so the bar never overflows on tablets and phones. */
-function MobileNav({ nav, current, signedIn, wideOnly }: { nav: NavItem[]; current: string | null; signedIn: boolean; wideOnly: boolean }) {
+/** A header nav entry: a link, or for "Get the app" a button that opens the install popup. */
+function NavLink({ href, onGetApp, children, ...rest }: { href: string; onGetApp: () => void; className: string; children: ReactNode; "aria-current"?: "page" }) {
+  if (href === GET_APP)
+    return (
+      <button type="button" onClick={onGetApp} {...rest}>
+        {children}
+      </button>
+    );
+  return (
+    <Link href={href} {...rest}>
+      {children}
+    </Link>
+  );
+}
+
+function MobileNav({ nav, current, signedIn, wideOnly, onGetApp }: { nav: NavItem[]; current: string | null; signedIn: boolean; wideOnly: boolean; onGetApp: () => void }) {
   const t = useT();
   return (
     <DropdownMenu>
@@ -246,14 +267,20 @@ function MobileNav({ nav, current, signedIn, wideOnly }: { nav: NavItem[]; curre
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" sideOffset={8} className="w-52 p-1.5">
-        {nav.map((item) => (
+        {nav.map((item) =>
+          item.href === GET_APP ? (
+            <DropdownMenuItem key={item.href} onSelect={onGetApp} className="cursor-pointer">
+              {t(item.label)}
+            </DropdownMenuItem>
+          ) : (
           <DropdownMenuItem key={item.href} asChild>
             <Link href={item.href} aria-current={current === item.href ? "page" : undefined} className={`cursor-pointer ${current === item.href ? "font-semibold text-brand-navy" : ""}`}>
               {current === item.href && <span className="size-1.5 rounded-full bg-brand-amber" aria-hidden />}
               {t(item.label)}
             </Link>
           </DropdownMenuItem>
-        ))}
+          ),
+        )}
         {!signedIn && (
           <>
             {/* On phones the bar shows only Sign up; Log in lives here. */}
