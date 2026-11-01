@@ -102,6 +102,8 @@ export const AR: Record<string, string> = {
   "Wall art & images": "لوحات وصور حائط",
   "Optional: sizes left empty are estimated from the photo.": "اختياري: تُقدَّر المقاسات الفارغة من الصورة.",
   "Get the sha2ty app": "حمّل تطبيق sha2ty",
+  "Get the app": "حمّل التطبيق",
+  "Download the app": "تنزيل التطبيق",
   "Scan the code with your phone's camera to install the app.": "امسح الرمز بكاميرا هاتفك لتثبيت التطبيق.",
   "QR code to install the sha2ty mobile app": "رمز QR لتثبيت تطبيق sha2ty",
   Android: "أندرويد",

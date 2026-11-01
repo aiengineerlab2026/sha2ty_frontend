@@ -1,10 +1,13 @@
 "use client";
 
 import Image from "next/image";
-import { Box, Camera, Smartphone } from "lucide-react";
+import { Box, Camera, Download, Smartphone } from "lucide-react";
 import { useT } from "@/lib/i18n";
 
-/** "Get the app" card: the install QR code (public/mobile-app-qr.png) and what the app adds over the web. */
+/** The Android build the QR code opens (EAS): the same link, for a click on desktop or a tap on a phone. */
+export const APP_DOWNLOAD_URL = "https://expo.dev/accounts/alaahamed/projects/shatably/builds/2196baf9-458d-4b6f-9417-0ba4962e9827";
+
+/** "Get the app" card: the install QR code (public/mobile-app-qr.png), a download button and what the app adds. */
 export function AppDownload() {
   const t = useT();
   const perks: [typeof Box, string][] = [
@@ -13,7 +16,7 @@ export function AppDownload() {
     [Smartphone, "Vendors add models from a photo"],
   ];
   return (
-    <section aria-labelledby="get-app" className="overflow-hidden rounded-3xl border border-slate-200/80 bg-white shadow-sm">
+    <section id="get-app" aria-labelledby="get-app-title" className="scroll-mt-20 overflow-hidden rounded-3xl border border-slate-200/80 bg-white shadow-sm">
       <div className="flex flex-col items-center gap-6 p-6 sm:flex-row sm:p-8">
         <div className="shrink-0 rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
           {/* unoptimized: the original PNG, so lossy re-encoding never blurs the code's edges. */}
@@ -23,7 +26,7 @@ export function AppDownload() {
           <p className="inline-flex items-center gap-1.5 rounded-full bg-brand-amber/15 px-3 py-1 text-xs font-semibold text-brand-navy">
             <Smartphone className="size-3.5" aria-hidden /> {t("Android")}
           </p>
-          <h2 id="get-app" className="text-2xl font-semibold tracking-tight text-brand-navy">
+          <h2 id="get-app-title" className="text-2xl font-semibold tracking-tight text-brand-navy">
             {t("Get the sha2ty app")}
           </h2>
           <p className="text-sm text-slate-600">{t("Scan the code with your phone's camera to install the app.")}</p>
@@ -34,6 +37,14 @@ export function AppDownload() {
               </li>
             ))}
           </ul>
+          <a
+            href={APP_DOWNLOAD_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex h-11 items-center gap-2 rounded-xl bg-brand-amber px-5 text-sm font-semibold text-brand-navy shadow-sm transition hover:-translate-y-px hover:bg-[#e8952a] hover:shadow-md"
+          >
+            <Download className="size-4" aria-hidden /> {t("Download the app")}
+          </a>
         </div>
       </div>
     </section>

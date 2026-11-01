@@ -20,6 +20,7 @@ const STUDIO_NAV: NavItem[] = [
   { href: "/vendor/carpets", label: "Carpets" },
   { href: "/vendor/windows", label: "Windows" },
   { href: "/plan", label: "Plan" },
+  { href: "/#get-app", label: "Get the app" },
 ];
 
 /** Everyone else (guests, customers) browses the public catalogue. */
@@ -29,6 +30,8 @@ const CATALOG_NAV: NavItem[] = [
   { href: "/catalog/carpets", label: "Carpets" },
   { href: "/catalog/windows", label: "Windows" },
   { href: "/plan", label: "Plan" },
+  // The install card at the end of the home page (QR code + download link).
+  { href: "/#get-app", label: "Get the app" },
 ];
 
 /** The most specific nav entry containing the path (/vendor/paints is Paints, not Models). */
