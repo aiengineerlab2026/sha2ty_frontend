@@ -6,7 +6,7 @@ import { useT } from "@/lib/i18n";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 
 /** The Android build the QR code opens (EAS): the same link, for a click on desktop or a tap on a phone. */
-export const APP_DOWNLOAD_URL = "https://expo.dev/accounts/alaahamed/projects/shatably/builds/2196baf9-458d-4b6f-9417-0ba4962e9827";
+export const APP_DOWNLOAD_URL = "https://expo.dev/accounts/alaahamed/projects/shatably/builds/b2b223b7-cb52-4f15-b830-58b4204677cf";
 
 /** "Get the app" from the header: the same QR code and download link in a popup, on any page. */
 export function AppDownloadDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
@@ -18,7 +18,7 @@ export function AppDownloadDialog({ open, onOpenChange }: { open: boolean; onOpe
         <DialogDescription className="text-sm text-slate-600">{t("Scan the code with your phone's camera to install the app.")}</DialogDescription>
         <div className="mx-auto rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
           {/* unoptimized: the original PNG, so lossy re-encoding never blurs the code's edges. */}
-          <Image src="/mobile-app-qr.png" alt={t("QR code to install the sha2ty mobile app")} width={208} height={199} className="size-52" unoptimized />
+          <Image src="/mobile-app-qr.png" alt={t("QR code to install the sha2ty mobile app")} width={208} height={183} className="h-auto w-52" unoptimized />
         </div>
         <p className="inline-flex items-center justify-center gap-1.5 text-xs font-medium text-slate-500">
           <Smartphone className="size-3.5" aria-hidden /> {t("Android")}
