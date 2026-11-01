@@ -11,7 +11,7 @@ import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
 import { supabase, supabaseConfigured } from "@/lib/supabase/client";
 import { on } from "@/lib/events";
-import { fetchGenerationQuota, generateFromPhoto } from "@/lib/vendor/generate";
+import { fetchGenerationQuota, generateFromPhoto, type EstimatedSize } from "@/lib/vendor/generate";
 import { uploadPublicFile } from "@/lib/vendor/storage";
 import type { ModelProvider, ModelSource, VendorProfile } from "@/lib/vendor/types";
 import { Dimensions, numberOrNull } from "./Dimensions";
@@ -34,6 +34,8 @@ export function ModelForm() {
   const [price, setPrice] = useState("");
   const [priceUnit, setPriceUnit] = useState<PriceUnit>("item");
   const [category, setCategory] = useState<ModelCategory>("furniture");
+  // Furniture: what exactly it is ("corner sofa"), sent to the vision model and Meshy / Astra.
+  const [kind, setKind] = useState("");
   const [shape, setShape] = useState<ModelShape>("straight");
   const [length2, setLength2] = useState("");
   const [height, setHeight] = useState("");
@@ -109,14 +111,13 @@ export function ModelForm() {
 
       let sourceImageUrl: string | null = null;
       let glbUrl: string | null = null;
+      let estimated: EstimatedSize | null = null;
       if (photo) {
         setProgressLabel(t("Uploading photo…"));
         setProgressPercent(6);
         sourceImageUrl = await uploadPublicFile(vendor.id, photo, `${id}/photo`);
       }
-      if (source === "none") {
-        if (!photo && !variants.length) throw new Error(t("Add at least one photo."));
-      } else if (source === "upload") {
+      if (source === "upload") {
         if (!glb) throw new Error(t("Choose a GLB file."));
         setProgressLabel(t("Uploading GLB…"));
         setProgressPercent(20);
@@ -126,7 +127,7 @@ export function ModelForm() {
       } else {
         if (!photo) throw new Error(t("Choose a photo to generate from."));
         if (quota && quota[provider] <= 0) throw new Error(t("No {name} generations left on this account.", { name: provider === "astra" ? "GPT Astra" : "Meshy" }));
-        glbUrl = await generateFromPhoto(
+        ({ glbUrl, size: estimated } = await generateFromPhoto(
           photo,
           provider,
           id,
@@ -135,8 +136,8 @@ export function ModelForm() {
             setProgressLabel(status);
           },
           sourceImageUrl ?? undefined,
-          { category, title },
-        );
+          { category, title, kind: category === "furniture" ? kind.trim() : undefined },
+        ));
       }
 
       const variantUrls: { model_id: string; image_url: string; sort_order: number }[] = [];
@@ -158,6 +159,10 @@ export function ModelForm() {
           glb_url: glbUrl,
           source_image_url: sourceImageUrl,
           error: null,
+          // Sizes left empty: the vision model's estimate from the photo (the vendor can correct them later).
+          width_m: numberOrNull(width) ?? estimated?.width_m ?? null,
+          height_m: numberOrNull(height) ?? estimated?.height_m ?? null,
+          depth_m: numberOrNull(depth) ?? estimated?.depth_m ?? null,
         })
         .eq("id", id);
       if (updated.error) throw new Error(updated.error.message);
@@ -188,8 +193,15 @@ export function ModelForm() {
             <RichText value={description} onChange={setDescription} />
           </div>
           <ShapeField shape={shape} onShape={setShape} length2={length2} onLength2={setLength2} />
-          <Dimensions width={width} height={height} depth={depth} onWidth={setWidth} onHeight={setHeight} onDepth={setDepth} labels={shape === "straight" ? undefined : ["Length on wall A m", "Height m", "Arm depth m"]} />
+          <Dimensions width={width} height={height} depth={depth} onWidth={setWidth} onHeight={setHeight} onDepth={setDepth} labels={shape === "straight" ? undefined : ["Length on wall A m", "Height m", "Arm depth m"]} required={source !== "photo"} />
+          {source === "photo" && <p className="-mt-2 text-xs text-slate-500">{t("Optional: sizes left empty are estimated from the photo.")}</p>}
           <CategoryPicker value={category} onChange={setCategory} />
+          {category === "furniture" && source === "photo" && (
+            <div className="space-y-1.5">
+              <Label htmlFor="kind">{t("Furniture type")}</Label>
+              <Input id="kind" value={kind} onChange={(event) => setKind(event.target.value)} placeholder={t("e.g. corner sofa, bunk bed, armchair")} maxLength={60} required />
+            </div>
+          )}
           <PriceField price={price} unit={priceUnit} onPrice={setPrice} onUnit={setPriceUnit} />
           <fieldset className="space-y-2">
             <legend className="text-sm font-medium">{t("Source")}</legend>
@@ -200,10 +212,6 @@ export function ModelForm() {
             <label className="flex items-center gap-2 text-sm">
               <input type="radio" checked={source === "upload"} onChange={() => setSource("upload")} />
               {t("Upload an existing GLB")}
-            </label>
-            <label className="flex items-center gap-2 text-sm">
-              <input type="radio" checked={source === "none"} onChange={() => setSource("none")} />
-              {t("Photos only (no 3D model)")}
             </label>
           </fieldset>
           {source === "photo" && (
@@ -222,12 +230,6 @@ export function ModelForm() {
                 </label>
               </fieldset>
               {/* Upload, drag and drop, or paste a copied image (button or Ctrl/⌘+V). */}
-              <ImagePicker variant="dropzone" label={t("Photo")} value={photo} onChange={setPhoto} />
-            </>
-          )}
-          {source === "none" && (
-            <>
-              <p className="text-xs text-slate-500">{t("Shown in the shop with its photos. It can't be placed in the plan builder until you add a 3D model.")}</p>
               <ImagePicker variant="dropzone" label={t("Photo")} value={photo} onChange={setPhoto} />
             </>
           )}

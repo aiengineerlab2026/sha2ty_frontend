@@ -14,10 +14,13 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
-// Arabic text falls through to Cairo (see --font-sans in globals.css); Latin keeps Geist.
+// Cairo is the whole interface in Arabic (its Latin letters too, so mixed text matches); English keeps
+// Geist with Cairo for any Arabic. See the language font stacks in globals.css.
 const arabic = Cairo({
   variable: "--font-arabic",
-  subsets: ["arabic"],
+  subsets: ["arabic", "latin"],
+  weight: ["400", "500", "600", "700"],
+  display: "swap",
 });
 
 const serif = Libre_Baskerville({

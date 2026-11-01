@@ -12,6 +12,7 @@ export function Dimensions({
   onHeight,
   onDepth,
   labels = ["Width m", "Height m", "Depth m"],
+  required = true,
 }: {
   width: string;
   height: string;
@@ -21,24 +22,26 @@ export function Dimensions({
   onDepth: (value: string) => void;
   /** Field labels; L-shaped units call width "Length on wall A" and depth "Arm depth". */
   labels?: [string, string, string];
+  /** false when generating from a photo: an empty size is estimated from the photo by the vision model. */
+  required?: boolean;
 }) {
-  // All three are required: the model is shown at exactly this size in plans (modelNormalization).
+  // The model is shown at exactly this size in plans (modelNormalization).
   return (
     <div className="grid grid-cols-3 gap-3">
-      <Dim label={labels[0]} value={width} onChange={onWidth} />
-      <Dim label={labels[1]} value={height} onChange={onHeight} />
-      <Dim label={labels[2]} value={depth} onChange={onDepth} />
+      <Dim label={labels[0]} value={width} onChange={onWidth} required={required} />
+      <Dim label={labels[1]} value={height} onChange={onHeight} required={required} />
+      <Dim label={labels[2]} value={depth} onChange={onDepth} required={required} />
     </div>
   );
 }
 
-function Dim({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
+function Dim({ label, value, onChange, required }: { label: string; value: string; onChange: (value: string) => void; required: boolean }) {
   const t = useT();
   const id = label;
   return (
     <div className="space-y-1.5">
       <Label htmlFor={id}>{t(label)}</Label>
-      <Input id={id} type="number" min="0.01" step="0.01" value={value} onChange={(event) => onChange(event.target.value)} required />
+      <Input id={id} type="number" min="0.01" step="0.01" value={value} onChange={(event) => onChange(event.target.value)} required={required} />
     </div>
   );
 }

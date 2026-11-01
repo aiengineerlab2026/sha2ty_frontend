@@ -83,7 +83,7 @@ export function Header({ vendor, actions }: { vendor?: VendorProfile | null; act
                   <Link
                     href={item.href}
                     aria-current={active ? "page" : undefined}
-                    className={`group relative flex h-full items-center px-2 text-sm font-medium transition-colors xl:px-3 ${
+                    className={`group relative flex h-full items-center px-2 text-sm font-semibold transition-colors xl:px-3 ${
                       active ? "text-brand-navy" : "text-slate-500 hover:text-brand-navy"
                     }`}
                   >

@@ -19,7 +19,7 @@ export function CategoryPicker({ value, onChange }: { value: ModelCategory; onCh
               type="button"
               role="radio"
               aria-checked={on}
-              title={c.hint}
+              title={t(c.hint)}
               onClick={() => onChange(c.id)}
               className={`flex flex-col items-center gap-1.5 rounded-xl border px-2 py-3 text-center text-xs font-medium transition ${
                 on ? "border-brand-amber bg-brand-amber-soft/60 text-brand-navy ring-2 ring-brand-amber/20" : "border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50"
@@ -28,7 +28,7 @@ export function CategoryPicker({ value, onChange }: { value: ModelCategory; onCh
               <span className={`flex size-8 items-center justify-center rounded-lg ${on ? "bg-white text-brand-amber shadow-sm" : "bg-slate-100 text-slate-500"}`}>
                 <CategoryIcon category={c.id} />
               </span>
-              {c.label}
+              {t(c.label)}
             </button>
           );
         })}
