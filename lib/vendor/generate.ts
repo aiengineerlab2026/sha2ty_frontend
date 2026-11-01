@@ -23,7 +23,7 @@ export async function generateFromPhoto(
   onProgress?: (progress: GenerateProgress) => void,
   imageUrl?: string,
   /** What to extract (catalogue category, product title, furniture type); the backend builds the Meshy / Astra prompt. */
-  subject?: { category: string; title: string; kind?: string },
+  subject?: { category: string; title: string; kind?: string; lang?: "ar" | "en" },
 ): Promise<{ glbUrl: string; reading: PhotoReading | null }> {
   const body = new FormData();
   body.append("image", file);
@@ -35,6 +35,8 @@ export async function generateFromPhoto(
     body.append("category", subject.category);
     body.append("title", subject.title);
     if (subject.kind) body.append("kind", subject.kind);
+    // The generated name and description come back in the interface language.
+    if (subject.lang) body.append("lang", subject.lang);
   }
 
   onProgress?.({ percent: 4, status: "Uploading photo…" });

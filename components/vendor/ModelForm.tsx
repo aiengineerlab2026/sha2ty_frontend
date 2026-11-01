@@ -1,7 +1,7 @@
 "use client";
 
 import { authSession } from "@/lib/auth/client";
-import { useT } from "@/lib/i18n";
+import { useLocale, useT } from "@/lib/i18n";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Header } from "@/components/shatably/Header";
@@ -20,12 +20,14 @@ import { ImagePicker } from "./ImagePicker";
 import { VariantsEditor } from "./VariantsEditor";
 import { CategoryPicker } from "./CategoryPicker";
 import { ShapeField, type ModelShape } from "./ShapeField";
-import { categoryOf, type ModelCategory } from "@/lib/plan/categories";
+import { categoryLabel, categoryOf, type ModelCategory } from "@/lib/plan/categories";
 import type { PriceUnit } from "@/lib/vendor/types";
 import { RichText } from "./RichText";
+import { ModelViewer } from "./ModelViewer";
 
 export function ModelForm() {
   const t = useT();
+  const locale = useLocale();
   const router = useRouter();
   const [vendor, setVendor] = useState<VendorProfile | null>(null);
   const [title, setTitle] = useState("");
@@ -50,6 +52,8 @@ export function ModelForm() {
   const [progressLabel, setProgressLabel] = useState<string | null>(null);
   const [progressPercent, setProgressPercent] = useState(0);
   const [quota, setQuota] = useState<Record<ModelProvider, number> | null>(null);
+  /** The generated model awaiting the vendor's check (saved as a draft): its id and 3D file. */
+  const [review, setReview] = useState<{ id: string; glbUrl: string } | null>(null);
   const refreshQuota = () => void fetchGenerationQuota().then(setQuota);
   useEffect(() => {
     const offStarted = on("generation.started", ({ provider, remaining }) => setQuota((q) => q && { ...q, [provider]: remaining }));
@@ -78,12 +82,13 @@ export function ModelForm() {
 
   /**
    * The name / description the vendor left empty, from the photo's reading (the vision model reads it before
-   * Meshy or Astra convert it): its catalogue name, else what it is; the description as one plain paragraph.
+   * Meshy or Astra convert it), in the interface language: the reading's name (asked for in that language),
+   * else the furniture type the vendor typed, else the model type's name; the description as one plain paragraph.
    */
   const listingFrom = (reading: PhotoReading | null) => {
     const listing: { title?: string; description?: string } = {};
     if (!title.trim()) {
-      const named = reading?.name.trim() || capitalise(reading?.object_type.trim() ?? "") || (category === "furniture" ? capitalise(kind.trim()) : "");
+      const named = reading?.name.trim() || (category === "furniture" ? kind.trim() : "") || t(categoryLabel(category));
       if (named) listing.title = named;
     }
     if (!description.replace(/<[^>]*>|&nbsp;/g, "").trim() && reading?.description.trim()) listing.description = `<p>${escapeHtml(reading.description.trim())}</p>`;
@@ -150,7 +155,7 @@ export function ModelForm() {
             setProgressLabel(status);
           },
           sourceImageUrl ?? undefined,
-          { category, title, kind: category === "furniture" ? kind.trim() : undefined },
+          { category, title, kind: category === "furniture" ? kind.trim() : undefined, lang: locale === "ar" ? "ar" : "en" },
         ));
       }
 
@@ -166,23 +171,19 @@ export function ModelForm() {
         if (inserted.error) throw new Error(inserted.error.message);
       }
 
-      const updated = await supabase()
-        .from("models")
-        .update({
-          status: "ready",
-          glb_url: glbUrl,
-          source_image_url: sourceImageUrl,
-          error: null,
-          // Name / description left empty: the listing the vision model wrote from the photo.
-          ...listingFrom(estimated),
-          // Sizes left empty: the vision model's estimate from the photo (the vendor can correct them later).
-          width_m: numberOrNull(width) ?? estimated?.width_m ?? null,
-          height_m: numberOrNull(height) ?? estimated?.height_m ?? null,
-          depth_m: numberOrNull(depth) ?? estimated?.depth_m ?? null,
-        })
-        .eq("id", id);
-      if (updated.error) throw new Error(updated.error.message);
-      router.push("/vendor");
+      // Kept as a draft (not in the catalogue) until the vendor confirms the details below: the 3D file and
+      // photo are saved now, so leaving the page loses nothing.
+      const draft = await supabase().from("models").update({ status: "draft", glb_url: glbUrl, source_image_url: sourceImageUrl, error: null }).eq("id", id);
+      if (draft.error) throw new Error(draft.error.message);
+      // Fields left empty: what the vision model read from the photo. The vendor checks and corrects them.
+      const listing = listingFrom(estimated);
+      if (listing.title) setTitle(listing.title);
+      if (listing.description) setDescription(listing.description);
+      const m = (v: number | null | undefined) => (v == null ? "" : String(Math.round(v * 100) / 100));
+      if (!numberOrNull(width)) setWidth(m(estimated?.width_m));
+      if (!numberOrNull(height)) setHeight(m(estimated?.height_m));
+      if (!numberOrNull(depth)) setDepth(m(estimated?.depth_m));
+      setReview({ id, glbUrl: glbUrl! });
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : String(caught);
       if (createdId) {
@@ -193,6 +194,63 @@ export function ModelForm() {
       setBusy(false);
     }
   };
+
+  /** Save after the review: the confirmed name, description and sizes; the 3D model is the one generated. */
+  const saveReviewed = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!review) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const updated = await supabase()
+        .from("models")
+        .update({
+          status: "ready",
+          title: title.trim() || t("Untitled model"),
+          description,
+          width_m: numberOrNull(width),
+          height_m: numberOrNull(height),
+          depth_m: numberOrNull(depth),
+        })
+        .eq("id", review.id);
+      if (updated.error) throw new Error(updated.error.message);
+      router.push("/vendor");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (review) {
+    const [w, h, d] = [numberOrNull(width), numberOrNull(height), numberOrNull(depth)];
+    return (
+      <div className="min-h-full bg-slate-50 text-slate-900">
+        <Header vendor={vendor} />
+        <main className="mx-auto max-w-2xl px-4 py-8">
+          <h1 className="font-serif text-3xl">{t("Review the model")}</h1>
+          <p className="mt-2 text-sm text-slate-600">{t("Check the name, description and size written from the photo and correct anything, then save. The 3D model stays as generated.")}</p>
+          <form onSubmit={saveReviewed} className="mt-6 space-y-5 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+            {/* The generated model at the size in the fields below: a correction shows here at once. */}
+            <ModelViewer url={review.glbUrl} dimensions={w && h ? { width: w, height: h, ...(d ? { depth: d } : {}) } : null} />
+            <div className="space-y-1.5">
+              <Label htmlFor="review-title">{t("Name")}</Label>
+              <Input id="review-title" value={title} onChange={(event) => setTitle(event.target.value)} required />
+            </div>
+            <div className="space-y-1.5">
+              <Label>{t("Description")}</Label>
+              <RichText value={description} onChange={setDescription} />
+            </div>
+            <Dimensions width={width} height={height} depth={depth} onWidth={setWidth} onHeight={setHeight} onDepth={setDepth} labels={shape === "straight" ? undefined : ["Length on wall A m", "Height m", "Arm depth m"]} />
+            {error && <p className="text-sm text-red-700">{error}</p>}
+            <Button type="submit" disabled={busy}>
+              {busy ? t("Saving…") : t("Save model")}
+            </Button>
+          </form>
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-full bg-slate-50 text-slate-900">
@@ -274,7 +332,7 @@ export function ModelForm() {
           )}
           {error && <p className="text-sm text-red-700">{error}</p>}
           <Button type="submit" disabled={busy}>
-            {busy ? (progressLabel ?? t("Saving…")) : t("Save model")}
+            {busy ? (progressLabel ?? t("Saving…")) : t(source === "photo" ? "Generate 3D model" : "Continue")}
           </Button>
         </form>
       </main>
@@ -293,7 +351,5 @@ function TriesLeft({ n }: { n: number | undefined }) {
     </span>
   );
 }
-
-const capitalise = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
 
 const escapeHtml = (text: string) => text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
