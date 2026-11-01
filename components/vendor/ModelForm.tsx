@@ -11,7 +11,7 @@ import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
 import { supabase, supabaseConfigured } from "@/lib/supabase/client";
 import { on } from "@/lib/events";
-import { fetchGenerationQuota, generateFromPhoto, type EstimatedSize } from "@/lib/vendor/generate";
+import { fetchGenerationQuota, generateFromPhoto, type PhotoReading } from "@/lib/vendor/generate";
 import { uploadPublicFile } from "@/lib/vendor/storage";
 import type { ModelProvider, ModelSource, VendorProfile } from "@/lib/vendor/types";
 import { Dimensions, numberOrNull } from "./Dimensions";
@@ -76,6 +76,20 @@ export function ModelForm() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  /**
+   * The name / description the vendor left empty, from the photo's reading (the vision model reads it before
+   * Meshy or Astra convert it): its catalogue name, else what it is; the description as one plain paragraph.
+   */
+  const listingFrom = (reading: PhotoReading | null) => {
+    const listing: { title?: string; description?: string } = {};
+    if (!title.trim()) {
+      const named = reading?.name.trim() || capitalise(reading?.object_type.trim() ?? "") || (category === "furniture" ? capitalise(kind.trim()) : "");
+      if (named) listing.title = named;
+    }
+    if (!description.replace(/<[^>]*>|&nbsp;/g, "").trim() && reading?.description.trim()) listing.description = `<p>${escapeHtml(reading.description.trim())}</p>`;
+    return listing;
+  };
+
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!vendor) return;
@@ -111,7 +125,7 @@ export function ModelForm() {
 
       let sourceImageUrl: string | null = null;
       let glbUrl: string | null = null;
-      let estimated: EstimatedSize | null = null;
+      let estimated: PhotoReading | null = null;
       if (photo) {
         setProgressLabel(t("Uploading photo…"));
         setProgressPercent(6);
@@ -127,7 +141,7 @@ export function ModelForm() {
       } else {
         if (!photo) throw new Error(t("Choose a photo to generate from."));
         if (quota && quota[provider] <= 0) throw new Error(t("No {name} generations left on this account.", { name: provider === "astra" ? "GPT Astra" : "Meshy" }));
-        ({ glbUrl, size: estimated } = await generateFromPhoto(
+        ({ glbUrl, reading: estimated } = await generateFromPhoto(
           photo,
           provider,
           id,
@@ -159,6 +173,8 @@ export function ModelForm() {
           glb_url: glbUrl,
           source_image_url: sourceImageUrl,
           error: null,
+          // Name / description left empty: the listing the vision model wrote from the photo.
+          ...listingFrom(estimated),
           // Sizes left empty: the vision model's estimate from the photo (the vendor can correct them later).
           width_m: numberOrNull(width) ?? estimated?.width_m ?? null,
           height_m: numberOrNull(height) ?? estimated?.height_m ?? null,
@@ -186,11 +202,18 @@ export function ModelForm() {
         <form onSubmit={submit} className="mt-6 space-y-5 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
           <div className="space-y-1.5">
             <Label htmlFor="title">{t("Name")}</Label>
-            <Input id="title" value={title} onChange={(event) => setTitle(event.target.value)} required />
+            <Input
+              id="title"
+              value={title}
+              onChange={(event) => setTitle(event.target.value)}
+              required={source !== "photo"}
+              placeholder={source === "photo" ? t("Optional: named from the photo") : undefined}
+            />
           </div>
           <div className="space-y-1.5">
             <Label>{t("Description")}</Label>
             <RichText value={description} onChange={setDescription} />
+            {source === "photo" && <p className="text-xs text-slate-500">{t("Optional: written from the photo when left empty.")}</p>}
           </div>
           <ShapeField shape={shape} onShape={setShape} length2={length2} onLength2={setLength2} />
           <Dimensions width={width} height={height} depth={depth} onWidth={setWidth} onHeight={setHeight} onDepth={setDepth} labels={shape === "straight" ? undefined : ["Length on wall A m", "Height m", "Arm depth m"]} required={source !== "photo"} />
@@ -270,3 +293,7 @@ function TriesLeft({ n }: { n: number | undefined }) {
     </span>
   );
 }
+
+const capitalise = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
+
+const escapeHtml = (text: string) => text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");

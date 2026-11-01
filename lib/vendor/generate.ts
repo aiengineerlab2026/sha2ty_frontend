@@ -5,8 +5,16 @@ import { API } from "@/lib/plan/api"; // same-origin proxy: the JWT comes from t
 
 export type GenerateProgress = { percent: number; status: string };
 
-/** The vision model's size estimate from the photo (metres; null when it could not tell). */
-export type EstimatedSize = { width_m: number | null; height_m: number | null; depth_m: number | null };
+/** The vision model's reading of the photo: size estimate (metres; null when it could not tell) and a listing. */
+export type PhotoReading = {
+  width_m: number | null;
+  height_m: number | null;
+  depth_m: number | null;
+  /** What it is ("three-seat sofa"), a short catalogue name and a plain one-or-two sentence description. */
+  object_type: string;
+  name: string;
+  description: string;
+};
 
 export async function generateFromPhoto(
   file: File,
@@ -16,7 +24,7 @@ export async function generateFromPhoto(
   imageUrl?: string,
   /** What to extract (catalogue category, product title, furniture type); the backend builds the Meshy / Astra prompt. */
   subject?: { category: string; title: string; kind?: string },
-): Promise<{ glbUrl: string; size: EstimatedSize | null }> {
+): Promise<{ glbUrl: string; reading: PhotoReading | null }> {
   const body = new FormData();
   body.append("image", file);
   body.append("provider", provider);
@@ -43,11 +51,15 @@ export async function generateFromPhoto(
     throw new Error(detail(json) || `Generate failed (${created.status}).`);
   }
   if (typeof json.remaining === "number") publish("generation.started", { provider, remaining: json.remaining });
-  // The backend reads the photo before generating; its size estimate fills sizes the vendor left empty.
-  const size: EstimatedSize | null = json.details ? { width_m: json.details.width_m ?? null, height_m: json.details.height_m ?? null, depth_m: json.details.depth_m ?? null } : null;
+  // The backend reads the photo before generating (Meshy or Astra alike): its size estimate and listing fill
+  // what the vendor left empty.
+  const d = json.details;
+  const reading: PhotoReading | null = d
+    ? { width_m: d.width_m ?? null, height_m: d.height_m ?? null, depth_m: d.depth_m ?? null, object_type: d.object_type ?? "", name: d.name ?? "", description: d.description ?? "" }
+    : null;
   if (json.glb_url) {
     onProgress?.({ percent: 100, status: "Conversion complete" });
-    return { glbUrl: json.glb_url as string, size };
+    return { glbUrl: json.glb_url as string, reading };
   }
 
   const taskId = json.task_id as string;
@@ -63,7 +75,7 @@ export async function generateFromPhoto(
     onProgress?.({ percent: last, status: conversionLabel(String(task.status || ""), last) });
     if (task.status === "SUCCEEDED" && task.glb_url) {
       onProgress?.({ percent: 100, status: "Saving model to CDN…" });
-      return { glbUrl: task.glb_url as string, size };
+      return { glbUrl: task.glb_url as string, reading };
     }
     if (task.status === "FAILED" || task.status === "CANCELED") {
       throw new Error(task.error || "Generation failed.");

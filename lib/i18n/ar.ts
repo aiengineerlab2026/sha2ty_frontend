@@ -101,6 +101,8 @@ export const AR: Record<string, string> = {
   "Air conditioners": "أجهزة التكييف",
   "Wall art & images": "لوحات وصور حائط",
   "Optional: sizes left empty are estimated from the photo.": "اختياري: تُقدَّر المقاسات الفارغة من الصورة.",
+  "Optional: named from the photo": "اختياري: يُسمّى من الصورة",
+  "Optional: written from the photo when left empty.": "اختياري: يُكتب من الصورة إذا تُرك فارغًا.",
   "Get the sha2ty app": "حمّل تطبيق sha2ty",
   "Get the app": "حمّل التطبيق",
   "Download the app": "تنزيل التطبيق",
