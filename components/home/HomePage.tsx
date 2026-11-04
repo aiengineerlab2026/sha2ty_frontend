@@ -81,13 +81,15 @@ export function HomePage({ only }: { only?: CatalogKind } = {}) {
         .from(only)
         .select("*")
         .order("name")
+        // A Supabase query is only "then-able" (no .finally): finish on both outcomes.
         .then(({ data }) => {
-          if (!live) return;
-          if (only === "paints") setPaints((data ?? []) as Paint[]);
-          if (only === "carpets") setCarpets((data ?? []) as Carpet[]);
-          if (only === "windows") setWindows((data ?? []) as WindowItem[]);
-        })
-        .finally(finish);
+          if (live) {
+            if (only === "paints") setPaints((data ?? []) as Paint[]);
+            if (only === "carpets") setCarpets((data ?? []) as Carpet[]);
+            if (only === "windows") setWindows((data ?? []) as WindowItem[]);
+          }
+          finish();
+        }, finish);
     }
     return () => {
       live = false;

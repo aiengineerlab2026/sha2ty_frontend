@@ -245,7 +245,7 @@ function inspected(geometry: BufferGeometry, range: { start: number; count: numb
 /** Edge UVs in the core texture's tiles. Plies and the blockboard's strips fill the thickness once; a cross-cut
  * shows the strips side by side (22 mm, four to a tile), and the long edge shows one strip. Chips repeat at 4 cm. */
 function edgeUv(type: string, lengthAxis: 0 | 1 | 2) {
-  return ({ along, through, normalAxis, thickness }: { along: number; through: number; normalAxis: 0 | 1 | 2; thickness: number }) => {
+  return ({ along, through, normalAxis, thickness }: { along: number; through: number; normalAxis: 0 | 1 | 2; thickness: number }): [number, number] => {
     const depth = Math.max(thickness, 1e-4);
     if (type === "plywood") return [along / 0.5, through / depth];
     if (type === "blockboard") return [along / (normalAxis === lengthAxis ? 0.088 : 2), through / depth];

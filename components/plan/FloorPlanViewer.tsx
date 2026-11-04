@@ -172,6 +172,7 @@ export function FloorPlanViewer({
   useEffect(() => {
     if (!editing || !carrying) return;
     onDrop?.(carrying.id);
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- leaving edit mode drops the carried item once
     setCarrying(null);
   }, [editing, carrying, onDrop]);
 
