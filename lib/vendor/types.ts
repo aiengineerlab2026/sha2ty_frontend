@@ -1,7 +1,7 @@
 export type ModelSource = "photo" | "upload" | "none"; // none: photos only, no 3D
 /** "item" = total price per piece; "m2" = price per square metre. */
 export type PriceUnit = "item" | "m2";
-export type ModelProvider = "meshy" | "astra";
+export type ModelProvider = "meshy" | "astra" | "sol";
 export type ModelStatus = "draft" | "generating" | "ready" | "failed";
 
 export interface VendorProfile {
@@ -11,6 +11,8 @@ export interface VendorProfile {
   logo_url: string | null;
   /** Admin approval (supabase/vendor_approval.sql); missing before that migration runs. */
   status?: "pending" | "approved" | "rejected";
+  /** The platform's own catalogue vendor ("Sha2ty", platform_vendor.sql). */
+  platform?: boolean;
   full_name?: string | null;
   email?: string | null;
   lat?: number | null;
@@ -41,10 +43,21 @@ export interface CatalogModel {
   provider: ModelProvider | null;
   status: ModelStatus;
   glb_url: string | null;
+  /** Untouched generated file, kept once a customized GLB replaces glb_url. */
+  source_glb_url?: string | null;
+  components?: import("./parts").PartDocument | null;
+  material_edits?: Record<string, import("./parts").MaterialEdit> | null;
+  /** The vendor's original photo; never replaced by a render. */
   source_image_url: string | null;
+  /** Render of the saved 3D model (model_thumbnail.sql); shown in listings before the photo. */
+  thumbnail_url?: string | null;
+  /** Save counter: glb_url and thumbnail_url are written together under one version. */
+  version?: number;
   error: string | null;
   created_at: string;
   model_variants: ModelVariant[];
+  /** Woods customers can choose for this model (supabase/woods.sql); null: all the vendor works with. */
+  woods?: string[] | null;
 }
 
 export type PaintKind = "color" | "texture";

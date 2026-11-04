@@ -40,7 +40,19 @@ export function planCost(geometry: PlanGeometry, items: PlacedItem[]): { lines: 
   };
   for (const item of items) {
     const unit = item.price_unit ?? "item";
-    add({ key: `model:${item.modelId}`, kind: "model", refId: item.modelId, name: item.title, unit, price: item.price ?? null, quantity: unit === "m2" ? item.width_m * item.depth_m : 1 });
+    const footprint = (item.size?.width ?? item.width_m) * (item.size?.depth ?? item.depth_m);
+    add({ key: `model:${item.modelId}`, kind: "model", refId: item.modelId, name: item.title, unit, price: item.price ?? null, quantity: unit === "m2" ? footprint : 1 });
+    for (const mat of item.surfaceMaterials ?? []) {
+      add({
+        key: `texture:${mat.refId}`,
+        kind: "model",
+        refId: mat.refId,
+        name: mat.name,
+        unit: mat.price_unit,
+        price: mat.price,
+        quantity: mat.price_unit === "m2" ? mat.area_m2 : 1,
+      });
+    }
   }
   for (const rug of geometry.rugs ?? []) {
     const unit = rug.price_unit ?? "item";

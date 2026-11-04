@@ -1,16 +1,18 @@
 "use client";
 
+import { CARPETS_ENABLED } from "@/lib/features";
 import { setLocale, useLocale, useT } from "@/lib/i18n";
 import { useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Check, ChevronDown, LayoutGrid, LogOut, Menu, PackageCheck, PencilRuler, Plus, Settings, ShoppingBag } from "lucide-react";
+import { Check, ChevronDown, LayoutGrid, LogOut, Menu, PackageCheck, PencilRuler, Plus, Settings, Shapes, Shield, ShoppingBag } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { getUser, logout, onAuthChange, type AuthUser } from "@/lib/auth/client";
 import type { VendorProfile } from "@/lib/vendor/types";
 import { Logo, LogoMark } from "./Logo";
 import { AppDownloadDialog } from "@/components/home/AppDownload";
 import { CartMenu } from "./CartMenu";
+import { NotificationBell } from "@/components/tasks/NotificationBell";
 
 type NavItem = { href: string; label: string };
 
@@ -21,9 +23,13 @@ const GET_APP = "#get-app";
 const STUDIO_NAV: NavItem[] = [
   { href: "/vendor", label: "Models" },
   { href: "/vendor/paints", label: "Paints" },
-  { href: "/vendor/carpets", label: "Carpets" },
+  ...(CARPETS_ENABLED ? [{ href: "/vendor/carpets", label: "Carpets" }] : []),
+  { href: "/vendor/fabrics", label: "Fabrics" },
+  { href: "/vendor/woods", label: "Woods" },
+  { href: "/vendor/furniture-paints", label: "Furniture paints" },
   { href: "/vendor/windows", label: "Windows" },
   { href: "/plan", label: "Plan" },
+  { href: "/vendor/tasks", label: "Requests" },
   { href: GET_APP, label: "Get the app" },
 ];
 
@@ -31,9 +37,10 @@ const STUDIO_NAV: NavItem[] = [
 const CATALOG_NAV: NavItem[] = [
   { href: "/catalog/models", label: "Models" },
   { href: "/catalog/paints", label: "Paints" },
-  { href: "/catalog/carpets", label: "Carpets" },
+  ...(CARPETS_ENABLED ? [{ href: "/catalog/carpets", label: "Carpets" }] : []),
   { href: "/catalog/windows", label: "Windows" },
   { href: "/plan", label: "Plan" },
+  { href: "/tasks", label: "Requests" },
   { href: GET_APP, label: "Get the app" },
 ];
 
@@ -54,9 +61,16 @@ export function Header({ vendor, actions }: { vendor?: VendorProfile | null; act
   const [getApp, setGetApp] = useState(false);
   // Signed in without a vendor profile: a customer (or a vendor page still loading its profile).
   const [user, setUser] = useState<AuthUser | null>(null);
+  const [admin, setAdmin] = useState(false);
   useEffect(() => {
     void getUser().then(setUser);
     return onAuthChange(setUser);
+  }, []);
+  useEffect(() => {
+    void fetch("/api/auth/admin-me")
+      .then((res) => res.json())
+      .then((body) => setAdmin(Boolean(body?.admin)))
+      .catch(() => setAdmin(false));
   }, []);
 
   const signOut = async () => {
@@ -70,7 +84,6 @@ export function Header({ vendor, actions }: { vendor?: VendorProfile | null; act
       <div className="flex h-16 w-full items-center gap-2 px-3 sm:gap-5 sm:px-5 xl:gap-8">
         {/* With page actions (the plan editor) the links collapse into the menu until 2xl, so the
             document title and its save badge keep their room. */}
-        <MobileNav nav={nav} current={current} signedIn={Boolean(vendor)} wideOnly={Boolean(actions)} onGetApp={() => setGetApp(true)} />
         <AppDownloadDialog open={getApp} onOpenChange={setGetApp} />
         <Link href={vendor ? "/vendor" : "/"} className="flex shrink-0 items-center" aria-label={t("sha2ty home")}>
           {/* Phones: the mark alone, so page actions (plan title, Save) keep their room. */}
@@ -82,8 +95,11 @@ export function Header({ vendor, actions }: { vendor?: VendorProfile | null; act
           </span>
         </Link>
 
-        <nav className="flex h-full min-w-0 flex-1 items-center gap-4 xl:gap-6" aria-label={t("Main")}>
-          <ul className={`hidden h-full shrink-0 items-center gap-1 ${actions ? "2xl:flex" : "lg:flex"}`}>
+        {/* The links show only when the space left by the brand and the account controls fits them all (a container
+            query on this nav, so a longer studio nav or a wider account area never overlaps); otherwise the menu. */}
+        <nav className="@container flex h-full min-w-9 flex-1 items-center gap-4 xl:gap-6" aria-label={t("Main")}>
+          <MobileNav nav={nav} current={current} signedIn={Boolean(vendor)} admin={admin} wideOnly={Boolean(actions)} onGetApp={() => setGetApp(true)} />
+          <ul className={`hidden h-full shrink-0 items-center gap-1 ${actions ? "2xl:flex" : "@[62rem]:flex"}`}>
             {nav.map((item) => {
               const active = current === item.href;
               return (
@@ -113,16 +129,38 @@ export function Header({ vendor, actions }: { vendor?: VendorProfile | null; act
         </nav>
 
         <div className="flex shrink-0 items-center gap-1 text-sm sm:gap-2">
+          {admin && (
+            <Link
+              href="/admin"
+              title={t("Admin")}
+              className="inline-flex h-9 items-center gap-1.5 rounded-lg px-2.5 font-medium text-slate-600 transition-colors hover:bg-slate-50 hover:text-brand-navy"
+            >
+              <Shield className="size-4" aria-hidden />
+              <span className="sr-only sm:not-sr-only">{t("Admin")}</span>
+            </Link>
+          )}
           {vendor && (
             <Link
               href="/vendor/new"
-              className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-brand-amber px-3.5 font-semibold text-brand-navy shadow-sm shadow-brand-amber/30 transition hover:-translate-y-px hover:bg-[#e8952a] hover:shadow-md active:translate-y-0"
+              className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-brand-amber px-2.5 font-semibold text-brand-navy shadow-sm shadow-brand-amber/30 sm:px-3.5 transition hover:-translate-y-px hover:bg-[#e8952a] hover:shadow-md active:translate-y-0"
             >
               <Plus className="size-4" aria-hidden />
               <span className="hidden sm:inline">{t("Add model")}</span>
             </Link>
           )}
           <LanguageSwitch />
+          {user && <NotificationBell me={user.id} />}
+          {(vendor || user) && (
+            <Link
+              href="/designs"
+              title={t("My designs")}
+              // Phones: in the vendor's account menu instead, so the bar fits.
+              className={`${vendor ? "hidden sm:inline-flex" : "inline-flex"} h-9 items-center gap-1.5 rounded-lg px-2.5 font-medium text-slate-600 transition-colors hover:bg-slate-50 hover:text-brand-navy`}
+            >
+              <Shapes className="size-4" aria-hidden />
+              <span className="sr-only 2xl:not-sr-only">{t("My designs")}</span>
+            </Link>
+          )}
           <CartMenu />
           {vendor ? (
             <ProfileMenu vendor={vendor} onSignOut={() => void signOut()} />
@@ -134,7 +172,7 @@ export function Header({ vendor, actions }: { vendor?: VendorProfile | null; act
                 className="inline-flex h-9 items-center gap-1.5 rounded-lg px-2.5 font-medium text-slate-600 transition-colors hover:bg-slate-50 hover:text-brand-navy"
               >
                 <PackageCheck className="size-4" aria-hidden />
-                <span className="sr-only lg:not-sr-only">{t("Bought items")}</span>
+                <span className="sr-only 2xl:not-sr-only">{t("Bought items")}</span>
               </Link>
               <button
                 type="button"
@@ -189,7 +227,7 @@ function ProfileMenu({ vendor, onSignOut }: { vendor: VendorProfile; onSignOut: 
           aria-label={t("Account menu for {name}", { name: vendor.name })}
         >
           <Avatar vendor={vendor} size="size-7" />
-          <span className="hidden max-w-36 truncate font-medium text-slate-700 lg:inline">{vendor.name}</span>
+          <span className="hidden max-w-36 truncate font-medium text-slate-700 2xl:inline">{vendor.name}</span>
           <ChevronDown className="size-3.5 text-slate-400" aria-hidden />
         </button>
       </DropdownMenuTrigger>
@@ -212,6 +250,7 @@ function ProfileMenu({ vendor, onSignOut }: { vendor: VendorProfile; onSignOut: 
           {(
             [
               ["/vendor", "My models", LayoutGrid],
+              ["/designs", "My designs", Shapes],
               ["/orders", "Bought items", ShoppingBag],
               ["/plan", "Plan builder", PencilRuler],
               ["/vendor/settings", "Settings", Settings],
@@ -237,7 +276,7 @@ function ProfileMenu({ vendor, onSignOut }: { vendor: VendorProfile; onSignOut: 
   );
 }
 
-/** Below lg the nav links live in a menu, so the bar never overflows on tablets and phones. */
+/** When the links do not fit beside the brand and account controls they live in this menu, so the bar never overflows. */
 /** A header nav entry: a link, or for "Get the app" a button that opens the install popup. */
 function NavLink({ href, onGetApp, children, ...rest }: { href: string; onGetApp: () => void; className: string; children: ReactNode; "aria-current"?: "page" }) {
   if (href === GET_APP)
@@ -253,7 +292,7 @@ function NavLink({ href, onGetApp, children, ...rest }: { href: string; onGetApp
   );
 }
 
-function MobileNav({ nav, current, signedIn, wideOnly, onGetApp }: { nav: NavItem[]; current: string | null; signedIn: boolean; wideOnly: boolean; onGetApp: () => void }) {
+function MobileNav({ nav, current, signedIn, admin, wideOnly, onGetApp }: { nav: NavItem[]; current: string | null; signedIn: boolean; admin: boolean; wideOnly: boolean; onGetApp: () => void }) {
   const t = useT();
   return (
     <DropdownMenu>
@@ -261,7 +300,7 @@ function MobileNav({ nav, current, signedIn, wideOnly, onGetApp }: { nav: NavIte
         <button
           type="button"
           aria-label={t("Menu")}
-          className={`flex size-9 shrink-0 items-center justify-center rounded-lg text-slate-600 transition-colors hover:bg-slate-100 hover:text-brand-navy ${wideOnly ? "2xl:hidden" : "lg:hidden"}`}
+          className={`flex size-9 shrink-0 items-center justify-center rounded-lg text-slate-600 transition-colors hover:bg-slate-100 hover:text-brand-navy ${wideOnly ? "2xl:hidden" : "@[62rem]:hidden"}`}
         >
           <Menu className="size-5" />
         </button>
@@ -280,6 +319,16 @@ function MobileNav({ nav, current, signedIn, wideOnly, onGetApp }: { nav: NavIte
             </Link>
           </DropdownMenuItem>
           ),
+        )}
+        {admin && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem asChild>
+              <Link href="/admin" className="cursor-pointer">
+                {t("Admin")}
+              </Link>
+            </DropdownMenuItem>
+          </>
         )}
         {!signedIn && (
           <>
@@ -326,7 +375,7 @@ export function LanguageSwitch() {
           className="group inline-flex h-9 items-center gap-1.5 rounded-lg border border-transparent ps-2 pe-1.5 text-sm font-semibold text-slate-600 transition-colors hover:border-slate-200 hover:bg-slate-50 hover:text-brand-navy focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-amber/40 data-[state=open]:border-slate-200 data-[state=open]:bg-slate-50 data-[state=open]:text-brand-navy"
         >
           <FlagCircle Flag={current.Flag} />
-          <span className="tracking-wide">{current.short}</span>
+          <span className="hidden tracking-wide sm:inline">{current.short}</span>
           <ChevronDown className="size-3.5 text-slate-400 transition-transform group-data-[state=open]:rotate-180" aria-hidden />
         </button>
       </DropdownMenuTrigger>

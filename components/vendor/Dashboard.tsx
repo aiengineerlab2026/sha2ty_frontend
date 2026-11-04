@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { supabase, supabaseConfigured } from "@/lib/supabase/client";
 import type { CatalogModel, VendorProfile } from "@/lib/vendor/types";
 import { Clock, XCircle } from "lucide-react";
+import { VendorRequestsPanel } from "@/components/tasks/VendorRequestsPanel";
 
 export function Dashboard() {
   const t = useT();
@@ -96,6 +97,7 @@ export function Dashboard() {
             <Link href="/vendor/new">{t("Add model")}</Link>
           </Button>
         </div>
+        <div className="mb-6"><VendorRequestsPanel /></div>
         {error && <p className="mb-4 text-sm text-red-700">{error}</p>}
         {loading ? (
           <p className="text-sm text-slate-500">{t("Loading…")}</p>
@@ -111,10 +113,10 @@ export function Dashboard() {
             {models.map((model) => (
               <li key={model.id} className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
                 <div className="aspect-4/3 bg-slate-100">
-                  {model.model_variants[0]?.image_url || model.source_image_url ? (
+                  {model.thumbnail_url || model.model_variants[0]?.image_url || model.source_image_url ? (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img
-                      src={model.model_variants[0]?.image_url || model.source_image_url || ""}
+                      src={model.thumbnail_url || model.model_variants[0]?.image_url || model.source_image_url || ""}
                       alt=""
                       className="size-full object-cover"
                     />
@@ -171,7 +173,7 @@ function AwaitingApproval({ vendor }: { vendor: VendorProfile }) {
         <p className="mt-2 text-slate-500">
           {rejected
             ? t("Contact sha2ty support if you think this is a mistake.")
-            : t("An admin reviews every new studio. Once {name} is approved you can add models, paints and carpets here.", { name: vendor.name })}
+            : t("An admin reviews every new studio. Once {name} is approved you can add models and paints here.", { name: vendor.name })}
         </p>
         <Button asChild variant="outline" className="mt-6">
           <Link href="/">{t("Back to home")}</Link>

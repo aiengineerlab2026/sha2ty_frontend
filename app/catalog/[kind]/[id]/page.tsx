@@ -1,8 +1,9 @@
 import { Suspense } from "react";
+import { CARPETS_ENABLED } from "@/lib/features";
 import { notFound } from "next/navigation";
 import { CatalogDetail, type CatalogKind } from "@/components/home/CatalogDetail";
 
-const KINDS: CatalogKind[] = ["models", "paints", "carpets", "windows"];
+const KINDS: CatalogKind[] = (["models", "paints", "carpets", "windows"] as CatalogKind[]).filter((k) => CARPETS_ENABLED || k !== "carpets");
 
 type Params = Promise<{ kind: string; id: string }>;
 

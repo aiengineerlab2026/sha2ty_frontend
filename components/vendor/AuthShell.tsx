@@ -36,7 +36,7 @@ export function AuthShell({ title, subtitle, children, wide = false }: { title: 
           <div className="max-w-md shrink-0 space-y-5">
             <h2 className="text-[28px] font-bold leading-[1.15] tracking-tight text-white xl:text-[32px]">{t("Your catalogue, placed in real homes at real size.")}</h2>
             <ul className="space-y-3 text-[15px] text-slate-300">
-              {["Turn product photos into 3D models", "Paints, floors and carpets priced per m²", "Shoppers furnish their own floor plan"].map((point) => (
+              {["Turn product photos into 3D models", "Paints and floors priced per m²", "Shoppers furnish their own floor plan"].map((point) => (
                 <li key={point} className="flex items-center gap-2.5">
                   <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-brand-amber/15 text-brand-amber ring-1 ring-brand-amber/25">
                     <Check className="size-3" aria-hidden />

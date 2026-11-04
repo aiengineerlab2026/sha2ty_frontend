@@ -1,13 +1,16 @@
 "use client";
 
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
-import { Check, Clock, Eye, LoaderCircle, Lock, LogOut, Mail, MapPin, UserRound, X } from "lucide-react";
+import { Box, Check, Clock, Eye, LoaderCircle, Lock, LogOut, Mail, MapPin, Plus, UserRound, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Logo } from "@/components/shatably/Logo";
 import { LanguageSwitch } from "@/components/shatably/Header";
 import { AuthInput } from "@/components/vendor/AuthInput";
 import { API } from "@/lib/plan/api";
+import { AdminWoods } from "./AdminWoods";
+import { AdminModels } from "./AdminModels";
+import { AdminPaintColors } from "./AdminPaintColors";
 import { useLocale, useT } from "@/lib/i18n";
 import type { VendorProfile } from "@/lib/vendor/types";
 
@@ -103,8 +106,9 @@ export function AdminRequests() {
   };
 
   const statusOf = (v: VendorProfile): Status => v.status ?? "approved";
-  const count = (s: Status | "all") => (vendors ?? []).filter((v) => s === "all" || statusOf(v) === s).length;
-  const shown = (vendors ?? []).filter((v) => tab === "all" || statusOf(v) === tab);
+  const count = (s: Status | "all") => (vendors ?? []).filter((v) => !v.platform && (s === "all" || statusOf(v) === s)).length;
+  // The Sha2ty catalogue vendor is managed above, not approved or suspended here.
+  const shown = (vendors ?? []).filter((v) => !v.platform && (tab === "all" || statusOf(v) === tab));
   const date = new Intl.DateTimeFormat(locale === "ar" ? "ar-EG" : "en-GB", { dateStyle: "medium", timeStyle: "short" });
 
   return (
@@ -122,7 +126,12 @@ export function AdminRequests() {
         </div>
       </header>
       <main className="mx-auto max-w-6xl px-4 py-8">
-        <VisionModelSetting call={call} />
+        <PlatformCatalog call={call} />
+        <div className="mt-6"><VisionModelSetting call={call} /></div>
+        <div className="mt-6"><GeneratorSetting call={call} /></div>
+        <div className="mt-6"><AdminWoods call={call} /></div>
+        <div className="mt-6"><AdminPaintColors call={call} /></div>
+        <div className="mt-6"><AdminModels call={call} /></div>
         <h1 className="mt-10 text-2xl font-bold text-brand-navy">{t("Vendor requests")}</h1>
         <p className="mt-1 text-sm text-slate-500">{t("New studios sell right away; suspend or reject any of them here.")}</p>
 
@@ -226,7 +235,17 @@ export function AdminRequests() {
 type VisionOption = { id: string; label: string; configured: boolean };
 
 /** Which vision model reads floor plans and vendor product photos before 3D (saved on the server). */
-function VisionModelSetting({ call }: { call: (path: string, init?: RequestInit) => Promise<{ model?: string; options?: VisionOption[] } | null> }) {
+function VisionModelSetting({ call }: { call: (path: string, init?: RequestInit) => Promise<Record<string, unknown> | null> }) {
+  return <ServerChoice call={call} path="/vision" field="model" icon={<Eye className="size-5 text-brand-navy" aria-hidden />} title="Vision model" intro="Reads floor plans and vendor product photos into details before they are turned into 3D." />;
+}
+
+/** Which service turns vendors' photos into 3D models; vendors no longer choose (backend generator_setting.py). */
+function GeneratorSetting({ call }: { call: (path: string, init?: RequestInit) => Promise<Record<string, unknown> | null> }) {
+  return <ServerChoice call={call} path="/generator" field="provider" icon={<Box className="size-5 text-brand-navy" aria-hidden />} title="3D generator" intro="Turns vendors' product photos into 3D models, on the web and in the app. Vendors do not choose it." />;
+}
+
+/** One server setting picked from a few options, each usable only with its API key on the server. */
+function ServerChoice({ call, path, field, icon, title, intro }: { call: (path: string, init?: RequestInit) => Promise<Record<string, unknown> | null>; path: string; field: string; icon: ReactNode; title: string; intro: string }) {
   const t = useT();
   const [model, setModel] = useState<string | null>(null);
   const [options, setOptions] = useState<VisionOption[]>([]);
@@ -234,11 +253,11 @@ function VisionModelSetting({ call }: { call: (path: string, init?: RequestInit)
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    call("/vision")
+    call(path)
       .then((body) => {
         if (!body) return;
-        setModel(body.model ?? null);
-        setOptions(body.options ?? []);
+        setModel((body[field] as string | undefined) ?? null);
+        setOptions((body.options as VisionOption[] | undefined) ?? []);
       })
       .catch((caught: Error) => setError(caught.message));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -249,8 +268,8 @@ function VisionModelSetting({ call }: { call: (path: string, init?: RequestInit)
     setSaving(id);
     setError(null);
     try {
-      const body = await call("/vision", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model: id }) });
-      if (body?.model) setModel(body.model);
+      const body = await call(path, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ [field]: id }) });
+      if (body?.[field]) setModel(body[field] as string);
     } catch (caught) {
       setError((caught as Error).message);
     } finally {
@@ -261,12 +280,12 @@ function VisionModelSetting({ call }: { call: (path: string, init?: RequestInit)
   return (
     <section className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
       <div className="flex items-center gap-2">
-        <Eye className="size-5 text-brand-navy" aria-hidden />
-        <h2 className="text-lg font-semibold text-brand-navy">{t("Vision model")}</h2>
+        {icon}
+        <h2 className="text-lg font-semibold text-brand-navy">{t(title)}</h2>
       </div>
-      <p className="mt-1 text-sm text-slate-500">{t("Reads floor plans and vendor product photos into details before they are turned into 3D.")}</p>
+      <p className="mt-1 text-sm text-slate-500">{t(intro)}</p>
       {!model && !error && <LoaderCircle className="mt-4 size-5 animate-spin text-slate-400" aria-label={t("Loading…")} />}
-      <div role="radiogroup" aria-label={t("Vision model")} className="mt-4 grid gap-3 sm:grid-cols-3">
+      <div role="radiogroup" aria-label={t(title)} className="mt-4 grid gap-3 sm:grid-cols-3">
         {options.map((o) => {
           const on = o.id === model;
           return (
@@ -290,6 +309,60 @@ function VisionModelSetting({ call }: { call: (path: string, init?: RequestInit)
         })}
       </div>
       {error && <p className="mt-3 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">{t(error)}</p>}
+    </section>
+  );
+}
+
+/** The platform's own catalogue: models added by admins are listed by "Sha2ty" with its logo, in the same catalogue
+ * and planner as vendor products. Opening it signs this browser in as the Sha2ty vendor (vendor pages reused). */
+function PlatformCatalog({ call }: { call: (path: string, init?: RequestInit) => Promise<Record<string, unknown> | null> }) {
+  const t = useT();
+  const [info, setInfo] = useState<{ vendor: { name: string; logo_url: string | null }; models: number; ready: number } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [opening, setOpening] = useState<string | null>(null);
+
+  useEffect(() => {
+    call("/studio").then(
+      (body) => body && setInfo(body as unknown as NonNullable<typeof info>),
+      (caught: Error) => setError(caught.message),
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const enter = async (target: string) => {
+    setOpening(target);
+    setError(null);
+    const res = await fetch("/api/auth/admin-studio", { method: "POST" }).catch(() => null);
+    const body = res ? await res.json().catch(() => ({})) : {};
+    if (!res?.ok) {
+      setOpening(null);
+      setError(typeof body.error === "string" ? body.error : typeof body.detail === "string" ? body.detail : t("Could not open the Sha2ty catalogue."));
+      return;
+    }
+    window.location.assign(target); // a full load: the pages read the new session
+  };
+
+  return (
+    <section className="flex flex-wrap items-center gap-4 rounded-2xl bg-brand-navy p-5 text-white shadow-sm">
+      <span className="inline-flex items-center rounded-2xl bg-white px-3 py-2">
+        <Logo size={28} />
+      </span>
+      <div className="min-w-[min(100%,16rem)] flex-1">
+        <h2 className="text-lg font-semibold">{t("Sha2ty catalogue")}</h2>
+        <p className="text-sm text-white/70">
+          {info ? t("{ready} published · {all} models in total, listed by Sha2ty in the catalogue and the planner.", { ready: info.ready, all: info.models }) : t("Models added by the platform, listed by Sha2ty.")}
+        </p>
+        {error && <p className="mt-1 text-sm text-red-300">{error}</p>}
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <Button type="button" disabled={opening !== null} onClick={() => void enter("/vendor/new")} className="bg-brand-amber text-brand-navy hover:bg-[#e8952a]">
+          <Plus className="size-4" aria-hidden /> {t("Add a model")}
+        </Button>
+        <Button type="button" variant="outline" disabled={opening !== null} onClick={() => void enter("/vendor")} className="border-white/30 bg-transparent text-white hover:bg-white/10">
+          {opening === "/vendor" ? t("Opening…") : t("Manage Sha2ty models")}
+        </Button>
+      </div>
+      <p className="basis-full text-xs text-white/60">{t("This browser then works as the Sha2ty vendor (upload a GLB, or a photo → 3D with Meshy, edit, publish). Sign out there to return.")}</p>
     </section>
   );
 }

@@ -1,66 +1,63 @@
 "use client";
 
-import { useEffect } from "react";
-import i18n from "i18next";
-import { initReactI18next, useTranslation } from "react-i18next";
+import { createContext, createElement, useCallback, useContext, useLayoutEffect, useState, type ReactNode } from "react";
+import { Direction } from "radix-ui";
 import { AR } from "./ar";
 
-// The English text is the key ("Save", "{n} reviews"); ar.ts maps it to Arabic and a missing entry
-// shows the English. Plain `{name}` placeholders, no key nesting (keys contain "." and ":").
+// English text is the key ("Save", "{n} reviews"). ar.ts maps it to Arabic. A missing entry stays the
+// English key. Product names are data, not keys, so they are never translated. The dictionary is bundled,
+// so the first render (server and client) already has every string. No async load, no post-hydration swap.
 export type Locale = "ar" | "en";
-const KEY = "lang";
+export type T = (text: string, vars?: Record<string, string | number>) => string;
 
-if (!i18n.isInitialized) {
-  void i18n.use(initReactI18next).init({
-    resources: { ar: { translation: AR }, en: { translation: {} } },
-    // Arabic is the default, and what the server renders; a saved "en" switches after hydration.
-    lng: "ar",
-    fallbackLng: false,
-    initAsync: false,
-    keySeparator: false,
-    nsSeparator: false,
-    returnEmptyString: false,
-    interpolation: { escapeValue: false, prefix: "{", suffix: "}" },
-    react: { useSuspense: false },
-  });
+const LocaleContext = createContext<Locale>("ar");
+let applyLocale: (locale: Locale) => void = () => {};
+
+export function translate(locale: Locale, text: string, vars?: Record<string, string | number>): string {
+  let out = locale === "ar" ? (AR[text] ?? text) : text;
+  if (vars) for (const [key, value] of Object.entries(vars)) out = out.replaceAll(`{${key}}`, String(value));
+  return out;
 }
 
-function applyDocument(locale: Locale) {
+/** `locale` comes from the `lang` cookie, read in the root layout, so server and client start on the same language. */
+export function LocaleProvider({ locale, children }: { locale: Locale; children: ReactNode }) {
+  const [value, setValue] = useState(locale);
+  const [seen, setSeen] = useState(locale);
+  if (locale !== seen) {
+    setSeen(locale);
+    setValue(locale);
+  }
+  // Publishes the setter for setLocale. It does not change the language; the cookie already did.
+  useLayoutEffect(() => {
+    applyLocale = setValue;
+    return () => {
+      if (applyLocale === setValue) applyLocale = () => {};
+    };
+  }, []);
+  // Radix menus default to LTR and ignore <html dir>, so Arabic items sat on the left.
+  const dir = value === "ar" ? "rtl" : "ltr";
+  return createElement(LocaleContext.Provider, { value }, createElement(Direction.Provider, { dir }, children));
+}
+
+/** Writes the cookie the server reads, then updates the open page. No reload, no second language pass. */
+export function setLocale(locale: Locale) {
+  document.cookie = `lang=${locale}; Path=/; Max-Age=31536000; SameSite=Lax`;
+  try {
+    localStorage.setItem("lang", locale);
+  } catch {
+    // private mode: the cookie still persists
+  }
   document.documentElement.lang = locale;
   document.documentElement.dir = locale === "ar" ? "rtl" : "ltr";
-}
-
-export function setLocale(locale: Locale) {
-  try {
-    localStorage.setItem(KEY, locale);
-  } catch {
-    // private mode: the choice lasts for this page only
-  }
-  applyDocument(locale);
-  void i18n.changeLanguage(locale);
-}
-
-/** Mounted once in the root layout: restores a saved English choice after hydration. */
-export function LocaleBoot() {
-  useEffect(() => {
-    let saved: string | null = null;
-    try {
-      saved = localStorage.getItem(KEY);
-    } catch {
-      // storage blocked: stay on Arabic
-    }
-    if (saved === "en") setLocale("en");
-  }, []);
-  return null;
+  applyLocale(locale);
 }
 
 export function useLocale(): Locale {
-  return useTranslation().i18n.language === "en" ? "en" : "ar";
+  return useContext(LocaleContext);
 }
-
-export type T = (text: string, vars?: Record<string, string | number>) => string;
 
 /** `t("Save")`, `t("{n} reviews", { n })`. */
 export function useT(): T {
-  return useTranslation().t as unknown as T;
+  const locale = useLocale();
+  return useCallback((text: string, vars?: Record<string, string | number>) => translate(locale, text, vars), [locale]);
 }

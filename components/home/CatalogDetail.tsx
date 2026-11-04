@@ -4,7 +4,8 @@ import { authSession } from "@/lib/auth/client";
 import { useT } from "@/lib/i18n";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import Link from "next/link";
-import { ArrowLeft, Check, LayoutGrid, ShoppingCart } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { ArrowLeft, Check, LayoutGrid, Paintbrush, ShoppingCart } from "lucide-react";
 import { addToCart, type CartLine } from "@/lib/cart";
 import { Header } from "@/components/shatably/Header";
 import { safeHtml } from "@/components/plan/ModelDetails";
@@ -102,10 +103,14 @@ function ModelView({ model, signedIn }: { model: CatalogModel; signedIn: boolean
               </button>
             </div>
           )}
-          <MatchButton model={model} />
+          <div className="flex flex-wrap gap-2">
+            <MatchButton model={model} />
+            {model.glb_url && <CustomiseButton modelId={model.id} />}
+          </div>
         </div>
       }
       tag={model.company}
+      tagLogo={model.company_logo}
       price={model.price == null ? null : formatPrice(model.price, model.price_unit ?? "item")}
       title={model.title}
       cart={line("model", model.id, model.title, model.price, model.price_unit ?? "item", model.width_m && model.depth_m ? model.width_m * model.depth_m : null)}
@@ -209,6 +214,7 @@ function CutoutMedia({ kind, id, image, name }: { kind: "carpet" | "window"; id:
 function Layout({
   media,
   tag,
+  tagLogo,
   title,
   price,
   facts,
@@ -219,6 +225,8 @@ function Layout({
   signedIn?: boolean;
   media: ReactNode;
   tag: string;
+  /** The vendor's logo beside its name (Sha2ty's own models show the brand mark). */
+  tagLogo?: string | null;
   title: string;
   /** Formatted price, or null for "Price on request". */
   price: string | null;
@@ -233,7 +241,15 @@ function Layout({
       <div>{media}</div>
       <div className="space-y-5">
         <div>
-          <span className="inline-block rounded-full bg-slate-200/70 px-2.5 py-0.5 text-xs font-medium text-slate-700">{tag}</span>
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-200/70 py-0.5 pe-2.5 ps-1 text-xs font-medium text-slate-700">
+            {tagLogo ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={tagLogo} alt="" className="size-5 rounded-full bg-white object-contain ring-1 ring-slate-200" />
+            ) : (
+              <span className="ps-1.5" />
+            )}
+            {tag}
+          </span>
           <h1 className="mt-2 text-3xl font-semibold tracking-tight text-brand-navy">{title}</h1>
           <p className={`mt-2 text-2xl tabular-nums ${price ? "font-semibold text-brand-navy" : "text-base text-slate-400"}`}>{price ?? t("Price on request")}</p>
         </div>
@@ -258,6 +274,25 @@ function Layout({
         </div>
       </div>
     </div>
+  );
+}
+
+/** Customise this listing: the editor opens on the customer's own copy; nothing is saved until their first Save
+ * (which asks for a name). The vendor's model stays as it is. */
+function CustomiseButton({ modelId }: { modelId: string }) {
+  const t = useT();
+  const router = useRouter();
+  const target = `/designs/new?model=${encodeURIComponent(modelId)}`;
+  return (
+    <button
+      type="button"
+      onClick={() =>
+        void authSession().then(({ data }) => router.push(data.session ? target : `/vendor/login?next=${encodeURIComponent(target)}`))
+      }
+      className="inline-flex h-10 items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-brand-navy shadow-sm hover:bg-slate-50"
+    >
+      <Paintbrush className="size-4" aria-hidden /> {t("Customise")}
+    </button>
   );
 }
 

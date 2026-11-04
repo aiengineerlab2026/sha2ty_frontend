@@ -1,11 +1,13 @@
 "use client";
 
 import { tilted } from "@/lib/plan/placementValidation";
-import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
-import { Box3, Color, Group, Vector3 } from "three";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Box3, Color, Group, Mesh, Vector3, type Object3D } from "three";
 import { Edges, Html, useGLTF } from "@react-three/drei";
 import { normalizeModel, type Dimensions, type NormalizationReport } from "@/lib/plan/modelNormalization";
 import type { PlacedItem } from "@/lib/plan/types";
+import type { PartInfo } from "@/lib/vendor/parts";
+import { applyPoses, partBox, prepare, replayEdits, reseat, SelectionOutline, slotHit, type Slot } from "@/components/vendor/ModelViewer";
 
 const DEV = process.env.NODE_ENV !== "production";
 
@@ -15,6 +17,11 @@ export function FurnitureObject({
   showDimensions,
   onSelect,
   onNormalized,
+  onParts,
+  onMeasured,
+  editing = false,
+  partId = null,
+  onPickPart,
   interactive = true,
 }: {
   item: PlacedItem;
@@ -22,11 +29,20 @@ export function FurnitureObject({
   showDimensions?: boolean;
   onSelect: () => void;
   onNormalized?: (report: NormalizationReport) => void;
+  onParts?: (id: string, parts: PartInfo[], separated: boolean) => void;
+  /** Size after per-mesh edits, plus each part's surface area. Collision uses this size. */
+  onMeasured?: (id: string, size: Dimensions, areas: Record<string, number>) => void;
+  editing?: boolean;
+  partId?: string | null;
+  onPickPart?: (id: string) => void;
   /** false in walk mode: clicks pass through, the model can't be selected or picked up. */
   interactive?: boolean;
 }) {
   const { scene } = useGLTF(item.glbUrl);
   const placed = useRef<Group>(null);
+  const slots = useRef<Slot[]>([]);
+  const prepared = useRef<Object3D | null>(null);
+  const [slotRev, setSlotRev] = useState(0);
 
   // Normalisation depends only on the source and the catalogue size — never on the item's
   // position, rotation, the room or the camera — so dragging/rotating cannot change scale.
@@ -40,6 +56,47 @@ export function FurnitureObject({
     // report is recomputed only with `object`
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [report]);
+
+  const custom = editing || Boolean(item.materialEdits && Object.keys(item.materialEdits).length) || Boolean(item.partPoses && Object.keys(item.partPoses).length) || Boolean(item.removedParts?.length);
+  useEffect(() => {
+    if (!custom) return;
+    if (prepared.current !== object) {
+      const next = prepare(object, item.partDocument ?? null); // a customised model keeps its design's part ids
+      slots.current = next.slots;
+      prepared.current = object;
+      onParts?.(
+        item.instanceId,
+        next.slots.map((slot) => ({ id: slot.id, name: slot.name, editable: true, ...(slot.naming ? { naming: slot.naming } : {}) })),
+        next.slots.length > 1,
+      );
+      setSlotRev((n) => n + 1);
+    }
+    let cancel = false;
+    void replayEdits(slots.current, item.materialEdits).then(() => {
+      if (cancel) return;
+      applyPoses(slots.current, item.partPoses);
+      // A customised model's removed parts are not drawn.
+      for (const slot of slots.current) if (item.removedParts?.includes(slot.id)) slot.mesh.visible = false;
+      const size = reseat(object);
+      const areas: Record<string, number> = {};
+      const seen = new Set<Mesh>();
+      for (const slot of slots.current) {
+        if (seen.has(slot.mesh)) continue;
+        seen.add(slot.mesh);
+        const box = partBox(slot);
+        areas[slot.id] = 2 * (box.width * box.height + box.width * box.depth + box.height * box.depth);
+      }
+      onMeasured?.(item.instanceId, size, areas);
+    });
+    return () => {
+      cancel = true;
+    };
+    // onParts / onMeasured are stable; item.instanceId does not change for this object
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [custom, object, item.materialEdits, item.partPoses, item.removedParts]);
+
+  const picked = editing ? slots.current.find((slot) => slot.id === partId)?.mesh ?? null : null;
+  void slotRev;
 
   useLayoutEffect(() => {
     if (!DEV || !placed.current) return;
@@ -62,12 +119,14 @@ export function FurnitureObject({
   return (
     <group
       ref={placed}
+      name="placed-furniture"
       // y = 0: the normalised model already stands on its own floor plane.
       position={[item.x, item.y ?? 0, item.z]}
       rotation={[0, (item.rotation_y * Math.PI) / 180, 0]}
       // Not interactive (walk mode): the model ignores clicks entirely, so nothing can be picked up.
+      // Edit mode: the mesh click below selects a part and does not pick the item up.
       onClick={
-        interactive
+        interactive && !editing
           ? (event) => {
               event.stopPropagation();
               onSelect();
@@ -77,9 +136,24 @@ export function FurnitureObject({
     >
       {/* Tilt about the model's own X through its base centre, lifted so no corner goes below the floor. */}
       <group position={[0, tilted(size, item.rotation_x).lift, 0]} rotation={[((item.rotation_x ?? 0) * Math.PI) / 180, 0, 0]}>
-        <primitive object={object} />
-        {selected ? (
-          <SelectionFrame size={size} problem={item.warnings.length > 0} />
+        <primitive
+          object={object}
+          onClick={
+            editing
+              ? (event: { stopPropagation: () => void; object: Object3D; face?: { materialIndex?: number } | null }) => {
+                  event.stopPropagation();
+                  const mesh = event.object as Mesh;
+                  if (!mesh.isMesh) return;
+                  const materialIndex = Array.isArray(mesh.material) ? event.face?.materialIndex ?? 0 : 0;
+                  const hit = slotHit(slots.current, mesh, materialIndex);
+                  if (hit) onPickPart?.(hit.id);
+                }
+              : undefined
+          }
+        />
+        {editing && <SelectionOutline mesh={picked} />}
+        {selected && (!picked || item.warnings.length > 0) ? (
+          <SelectionFrame size={item.size ?? size} problem={item.warnings.length > 0} />
         ) : (
           DEV &&
           showDimensions && (
@@ -89,7 +163,7 @@ export function FurnitureObject({
             </mesh>
           )
         )}
-        {DEV && showDimensions && <DimensionLabels size={size} />}
+        {(editing || (DEV && showDimensions)) && <DimensionLabels size={item.size ?? size} />}
       </group>
     </group>
   );

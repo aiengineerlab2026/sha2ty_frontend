@@ -1,9 +1,11 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { ArrowRight, Box, ClipboardPaste, Footprints, FileImage, Sofa, ImagePlus, LoaderCircle, RefreshCw, Trash2, Upload } from "lucide-react";
 import { useT } from "@/lib/i18n";
+import { closes, parseWalls, polygonFromSides, wallsProblem } from "@/lib/plan/roomSize";
+import type { Vec2 } from "@/lib/plan/types";
 
 // Three.js only runs in the browser; the preview loads after the form.
 const RoomPreview = dynamic(() => import("./RoomPreview").then((m) => m.RoomPreview), { ssr: false, loading: () => <div className="size-full animate-pulse bg-slate-100" /> });
@@ -29,13 +31,14 @@ export function RoomCreationDialog({
   onImage,
   busy,
 }: {
-  onDimensions: (width: number, depth: number, height: number, thickness: number) => void;
+  onDimensions: (polygon: Vec2[], height: number, thickness: number) => void;
   onImage: (file: File, height: number) => void;
   busy?: string | null;
 }) {
   const t = useT();
   const [mode, setMode] = useState<Mode>("room");
   const [values, setValues] = useState({ width: "4.0", depth: "5.0", height: "3.0", thickness: "0.15" });
+  const [walls, setWalls] = useState("4 × 5 × 4 × 5");
   const [file, setFile] = useState<File | null>(null);
   const [fileError, setFileError] = useState<string | null>(null);
 
@@ -47,7 +50,28 @@ export function RoomCreationDialog({
       return [k, !values[k].trim() || !Number.isFinite(v) ? t("Enter a number.") : v < lo || v > hi ? t("Between {lo} and {hi} m.", { lo, hi }) : null];
     }),
   ) as Record<keyof typeof LIMITS, string | null>;
-  const roomValid = !errors.width && !errors.depth && !errors.height && !errors.thickness;
+  // The walls, in order around the room: "4 × 14 × 16 × 17" is four walls of those lengths (any shape, not only
+  // rectangles: lib/plan/roomSize.ts). The height is its own field.
+  const sides = parseWalls(walls);
+  const shapeProblem = sides ? wallsProblem(sides) : null;
+  const polygon = useMemo(() => {
+    if (!sides || shapeProblem) return null;
+    const outline = polygonFromSides(sides);
+    return closes(outline, sides) ? outline : null; // never an open room
+  }, [walls]); // eslint-disable-line react-hooks/exhaustive-deps
+  const extent = polygon ? Math.max(...polygon.flat()) : 0;
+  const wallsError = !sides
+    ? t("Write each wall's length in metres, in order around the room, e.g. 4 × 14 × 16 × 17.")
+    : shapeProblem === "few"
+      ? t("A room has at least 3 walls.")
+      : shapeProblem === "open"
+        ? t("These walls cannot meet: the longest must be shorter than all the others together.")
+        : !polygon
+          ? t("These walls do not close into a room. Check the lengths.")
+          : Math.min(...sides) < 0.5 || extent > 30
+          ? t("Each wall between 0.5 m and a room up to 30 m across.")
+          : null;
+  const roomValid = Boolean(polygon) && !wallsError && !errors.height && !errors.thickness;
   const planValid = Boolean(file) && !errors.height;
   const set = (k: keyof typeof values) => (v: string) => setValues((cur) => ({ ...cur, [k]: v }));
 
@@ -96,7 +120,7 @@ export function RoomCreationDialog({
 
   const submit = () => {
     if (busy) return;
-    if (mode === "room" && roomValid) onDimensions(num(values.width), num(values.depth), num(values.height), num(values.thickness));
+    if (mode === "room" && roomValid && polygon) onDimensions(polygon, num(values.height), num(values.thickness));
     if (mode === "plan" && planValid && file) onImage(file, num(values.height));
   };
 
@@ -117,14 +141,35 @@ export function RoomCreationDialog({
 
         <div role="radiogroup" aria-label={t("How do you want to start?")} className="mt-6 grid gap-3 sm:grid-cols-2">
           <ModeCard on={mode === "plan"} onClick={() => setMode("plan")} icon={<FileImage className="size-5" aria-hidden />} title={t("Upload 2D Floor Plan")} hint={t("Every room is built in 3D from your drawing.")} />
-          <ModeCard on={mode === "room"} onClick={() => setMode("room")} icon={<Box className="size-5" aria-hidden />} title={t("Create a Room")} hint={t("Type the size of one rectangular room.")} />
+          <ModeCard on={mode === "room"} onClick={() => setMode("room")} icon={<Box className="size-5" aria-hidden />} title={t("Create a Room")} hint={t("Type the length of each wall: any shape of room.")} />
         </div>
 
         <div key={mode} className="mt-6 animate-in fade-in-0 slide-in-from-bottom-1 duration-300">
           {mode === "room" ? (
             <div className="grid grid-cols-2 gap-x-4 gap-y-4">
-              <MetreField label={t("Width")} value={values.width} onChange={set("width")} error={errors.width} />
-              <MetreField label={t("Length")} value={values.depth} onChange={set("depth")} error={errors.depth} />
+              <div className="col-span-2 space-y-1.5">
+                <label htmlFor="room-walls" className="block text-[13px] font-semibold text-slate-700">{t("Wall lengths")}</label>
+                <span className="relative block">
+                  <input
+                    id="room-walls"
+                    dir="ltr"
+                    autoComplete="off"
+                    value={walls}
+                    onChange={(e) => setWalls(e.target.value)}
+                    placeholder="4 × 14 × 16 × 17"
+                    aria-invalid={wallsError ? true : undefined}
+                    aria-describedby="room-walls-note"
+                    className={`h-12 w-full rounded-xl border bg-slate-50/80 pe-10 ps-4 text-[15px] tabular-nums tracking-wide text-brand-navy outline-none transition focus:bg-white focus:ring-4 ${
+                      wallsError ? "border-red-300 focus:border-red-400 focus:ring-red-500/10" : "border-slate-200 hover:border-slate-300 focus:border-brand-amber focus:ring-brand-amber/20"
+                    }`}
+                  />
+                  <span className="pointer-events-none absolute end-4 top-1/2 -translate-y-1/2 text-sm text-slate-400">{t("m")}</span>
+                </span>
+                <p id="room-walls-note" className={`text-xs ${wallsError ? "text-red-600" : "text-slate-500"}`}>
+                  {wallsError ?? t("{n} walls: {list}", { n: sides!.length, list: sides!.map((x, i) => `${i + 1}) ${x} ${t("m")}`).join(" · ") })}
+                </p>
+                <p className="text-[11px] text-slate-400">{t("Each number is one wall, going around the room. Separate them with × or *. Walls of different lengths make an irregular room.")}</p>
+              </div>
               <MetreField label={t("Height")} value={values.height} onChange={set("height")} error={errors.height} hint={t("Floor to ceiling.")} />
               <MetreField label={t("Wall thickness")} value={values.thickness} onChange={set("thickness")} error={errors.thickness} hint={t("Typical walls are 0.10–0.25 m.")} />
             </div>
@@ -196,7 +241,7 @@ export function RoomCreationDialog({
         {mode === "room" ? (
           <>
             {roomValid ? (
-              <RoomPreview width={num(values.width)} length={num(values.depth)} height={num(values.height)} thickness={num(values.thickness)} />
+              <RoomPreview polygon={polygon!} height={num(values.height)} thickness={num(values.thickness)} />
             ) : (
               <div className="flex size-full items-center justify-center p-8 text-center text-sm text-slate-500">{t("Fix the highlighted sizes to see your room.")}</div>
             )}
@@ -206,13 +251,13 @@ export function RoomCreationDialog({
             {roomValid && (
               <dl className="pointer-events-none absolute bottom-4 start-4 flex gap-4 rounded-xl bg-white/90 px-4 py-2.5 text-xs shadow-sm ring-1 ring-slate-200 backdrop-blur">
                 {[
-                  [t("Width"), values.width],
-                  [t("Length"), values.depth],
+                  [t("Walls"), String(sides!.length)],
+                  [t("Perimeter"), String(sides!.reduce((a, b) => a + b, 0))],
                   [t("Height"), values.height],
-                ].map(([k, v]) => (
+                ].map(([k, v], i) => (
                   <div key={k}>
                     <dt className="text-slate-500">{k}</dt>
-                    <dd className="font-semibold tabular-nums text-brand-navy">{num(v).toFixed(2)} {t("m")}</dd>
+                    <dd className="font-semibold tabular-nums text-brand-navy">{i === 0 ? v : `${num(v).toFixed(2)} ${t("m")}`}</dd>
                   </div>
                 ))}
               </dl>

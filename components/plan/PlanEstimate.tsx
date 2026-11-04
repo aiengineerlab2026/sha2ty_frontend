@@ -3,17 +3,22 @@
 import { useT } from "@/lib/i18n";
 import { useMemo, useState } from "react";
 import { Check, ChevronUp, Receipt, ShoppingCart } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { addToCart } from "@/lib/cart";
 import { formatPrice, planCost } from "@/lib/plan/pricing";
+import { publishTask } from "@/lib/tasks";
 import type { PlacedItem, PlanGeometry } from "@/lib/plan/types";
 
 /** Running cost of the plan: models and carpets by the piece, paints and floors by the m² they cover. */
-export function PlanEstimate({ geometry, items }: { geometry: PlanGeometry; items: PlacedItem[] }) {
+export function PlanEstimate({ geometry, items, onOffer, title }: { geometry: PlanGeometry; items: PlacedItem[]; onOffer?: () => Promise<string>; title?: string }) {
   const t = useT();
+  const router = useRouter();
   const { lines, total, unpriced } = useMemo(() => planCost(geometry, items), [geometry, items]);
   const [open, setOpen] = useState(false);
   const [added, setAdded] = useState(false);
-  if (!lines.length) return null;
+  const [offering, setOffering] = useState(false);
+  const [offerError, setOfferError] = useState<string | null>(null);
+  if (!lines.length && !onOffer) return null;
   return (
     <div className="absolute bottom-4 end-4 z-10 w-[min(22rem,calc(100%-2rem))] overflow-hidden rounded-2xl border border-white/70 bg-white/90 shadow-lg shadow-slate-900/10 backdrop-blur-md">
       {open && (
@@ -45,6 +50,50 @@ export function PlanEstimate({ geometry, items }: { geometry: PlanGeometry; item
               {added ? <Check className="size-4" aria-hidden /> : <ShoppingCart className="size-4" aria-hidden />}
               {added ? t("Added to cart") : t("Add plan to cart")}
             </button>
+            {onOffer && (
+              <div className="px-3 pb-3">
+                <button
+                  type="button"
+                  disabled={offering}
+                  onClick={() => {
+                    setOffering(true);
+                    setOfferError(null);
+                    onOffer()
+                      .then((planId) => publishTask({
+                        planId,
+                        title: title?.trim() || "Untitled plan",
+                        description: "",
+                        location: "",
+                        spec: {
+                          lines,
+                          total,
+                          note: "Paint and floor areas are the surfaces in the plan. Door and window openings are not subtracted.",
+                          furniture: items.map((item) => ({
+                            instanceId: item.instanceId,
+                            modelId: item.modelId,
+                            title: item.title,
+                            dimensions: { width: item.width_m, height: item.height_m, depth: item.depth_m },
+                            catalogSize: item.catalogSize,
+                            materialEdits: item.materialEdits,
+                            partPoses: item.partPoses,
+                            surfaceMaterials: item.surfaceMaterials,
+                            x: item.x,
+                            z: item.z,
+                            rotation_y: item.rotation_y,
+                          })),
+                        },
+                      }))
+                      .then((id) => router.push(`/tasks/${id}`))
+                      .catch((caught: Error) => setOfferError(caught.message))
+                      .finally(() => setOffering(false));
+                  }}
+                  className="mt-2 h-9 w-full rounded-xl border border-slate-200 text-sm font-semibold text-brand-navy"
+                >
+                  {offering ? t("Publishing…") : t("Offer this plan to vendors")}
+                </button>
+                {offerError && <p className="mt-1 text-[11px] text-red-700">{offerError}</p>}
+              </div>
+            )}
           </div>
         </div>
       )}
