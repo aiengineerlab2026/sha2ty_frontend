@@ -1,5 +1,6 @@
 "use client";
 
+import { CARPETS_ENABLED } from "@/lib/features";
 import { authSession } from "@/lib/auth/client";
 import { useT } from "@/lib/i18n";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -9,6 +10,7 @@ import { Header } from "@/components/shatably/Header";
 import { supabase, supabaseConfigured } from "@/lib/supabase/client";
 import { API, PlanValidationError, createRoomFromDimensions, createRoomFromImage, exportRoomGlb, listPlans, loadPlan, rebuildFromGeometry, savePlan } from "@/lib/plan/api";
 import { downloadBlob } from "@/lib/plan/exportPlan";
+import { exportApartmentGlb } from "@/lib/plan/sceneExport";
 import type { CameraView } from "@/lib/plan/coordinateSystem";
 import { clampTilt, insideWalls, localWarnings, nearestValidSpot, normalizeYaw, restOnSurfaces } from "@/lib/plan/placementValidation";
 import { baseHeight, mountFor } from "@/lib/plan/categories";
@@ -19,6 +21,8 @@ import type { VendorProfile } from "@/lib/vendor/types";
 import { FloorPlanViewer, rotationKey, type Vec3 } from "./FloorPlanViewer";
 import { ModelSidebar } from "./ModelSidebar";
 import { ModelDetails } from "./ModelDetails";
+import { PlacedItemEditor } from "./PlacedItemEditor";
+import type { PartInfo } from "@/lib/vendor/parts";
 import { PlanEstimate } from "./PlanEstimate";
 import { CarpetPicker, PaintPicker, WindowPicker, brushFor, type Brush } from "./PaintPicker";
 import { FinishDetails, type Finish } from "./FinishDetails";
@@ -28,6 +32,9 @@ import { PlacementWarnings } from "./PlacementWarnings";
 import { PlanActions, ViewportToolbar } from "./PlanToolbar";
 import { RoomCreationDialog } from "./RoomCreationDialog";
 import { PlanCorrection } from "./PlanCorrection";
+import { SaveToDesigns } from "@/components/designs/SaveToDesigns";
+import { asCatalogModel, DesignVersionNotice, MyCustomisedModels, MyPrivateModels } from "@/components/designs/MyCustomisedModels";
+import { getDesign } from "@/lib/designs/api";
 import { DebugImages } from "./DebugImages";
 import { catalogDimensions, type Dimensions } from "@/lib/plan/modelNormalization";
 
@@ -112,6 +119,12 @@ export function PlanLayout() {
   const [savedSnapshot, setSavedSnapshot] = useState<string | null>(null);
   const [saveOpen, setSaveOpen] = useState(false);
   const [signedIn, setSignedIn] = useState(false);
+  const [userId, setUserId] = useState<string | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [partId, setPartId] = useState<string | null>(null);
+  const [partList, setPartList] = useState<{ id: string; parts: PartInfo[]; separated: boolean } | null>(null);
+  const [fitNotes, setFitNotes] = useState<Record<string, string[]>>({});
+  const editSnap = useRef<PlacedItem | null>(null);
   // Set while a guest is sent to log in with their design stashed: no "leave page?" prompt then.
   const leavingToSave = useRef(false);
   // Walk: pick the room to start in first, then the camera flies into it.
@@ -159,6 +172,7 @@ export function PlanLayout() {
       .then(async ({ data }) => {
         // Guests can design; only saving needs an account.
         setSignedIn(Boolean(data.session));
+        setUserId(data.session?.user.id ?? null);
         if (!data.session) return;
         const profile = await supabase().from("vendors").select("*").eq("id", data.session.user.id).maybeSingle();
         setVendor(profile.data);
@@ -270,6 +284,7 @@ export function PlanLayout() {
   // (printed vs measured room sizes) belong to the correction step and catalogue/GLB proportion
   // notes describe the vendor's data, not the plan: neither is shown here.
   const allWarnings = useMemo(() => items.flatMap((item) => item.warnings), [items]);
+  const selectedItem = items.find((item) => item.instanceId === selectedId) ?? null;
 
   // Every furniture change passes through here: TVs re-seat on the table under them, then warnings refresh.
   const applyWarnings = useCallback((input: PlacedItem[], geom: PlanGeometry | null) => {
@@ -317,6 +332,7 @@ export function PlanLayout() {
     }
     setError(null);
     setSelectedId(null);
+    setEditing(false);
     setBrush(null);
     setRugDraft(null);
     setFinish(null); // the model's own details stay open while it follows the mouse
@@ -345,6 +361,11 @@ export function PlanLayout() {
       arm_m: model.shape && model.shape !== "straight" && model.depth_m ? Number(model.depth_m) : undefined,
       price: model.price ?? null,
       price_unit: model.price_unit ?? "item",
+      catalogSize: { width, height, depth: depth ?? size.depth },
+      // A customised model: its pinned version's look, at its saved size (the size above).
+      ...(model.design
+        ? { designId: model.design.id, designVersion: model.design.version, materialEdits: model.design.materialEdits, partPoses: model.design.partPoses, partDocument: model.design.partDocument, removedParts: model.design.removedParts }
+        : {}),
       x,
       y: baseHeight(mountFor(model.category), geometry.height, size.height),
       z,
@@ -354,6 +375,7 @@ export function PlanLayout() {
     };
     pushHistory(applyWarnings([...items, next], geometry));
     setSelectedId(next.instanceId);
+    setDetail(null); // the placed copy is what you edit; the catalogue card steps aside
     setPlacing(null); // back to normal selection
   };
 
@@ -563,7 +585,7 @@ export function PlanLayout() {
 
   // Saves run one after another, so a new plan's id is used by every later save.
   const store = (name: string, allow: boolean) => {
-    if (!geometry) return Promise.resolve();
+    if (!geometry) return Promise.reject(new Error(t("Nothing to save yet.")));
     const body = { name, source: geometry.source, geometry: planGeometry(geometry), items, warnings: allWarnings, allow_invalid: allow };
     const stored = JSON.stringify([body.name, body.geometry, body.items]);
     const run = saveChain.current.then(async () => {
@@ -572,6 +594,7 @@ export function PlanLayout() {
       setSavedSnapshot(stored);
       setPlanId(saved.id);
       rememberPlan(saved.id);
+      return saved.id as string;
     });
     saveChain.current = run.catch(() => undefined);
     return run;
@@ -618,6 +641,29 @@ export function PlanLayout() {
       setBusy(null);
     }
   };
+
+  // ?design=<id> (the editor's "View in 3D planner"): once a room is open, that customised model follows the mouse
+  // to be placed (its latest saved version). Read once, then dropped from the address.
+  const pendingDesign = useRef<string | null>(typeof window === "undefined" ? null : new URLSearchParams(window.location.search).get("design"));
+  const startPlacingRef = useRef(startPlacing);
+  useEffect(() => {
+    startPlacingRef.current = startPlacing;
+  });
+  useEffect(() => {
+    const id = pendingDesign.current;
+    if (!id || !geometry) return;
+    pendingDesign.current = null;
+    const url = new URL(window.location.href);
+    url.searchParams.delete("design");
+    window.history.replaceState(null, "", url);
+    void getDesign(id)
+      .then(async (design) => {
+        const model = design.current ? await asCatalogModel(design, design.current) : null;
+        if (!model) throw new Error(t("{name} has no size saved.", { name: design.title }));
+        startPlacingRef.current(model);
+      })
+      .catch((caught: Error) => setError(caught.message));
+  }, [geometry, t]);
 
   return (
     <div className="flex h-dvh flex-col bg-slate-100">
@@ -669,6 +715,14 @@ export function PlanLayout() {
           ) : undefined
         }
       />
+      {geometry && (
+        <div className="flex justify-end border-b border-slate-200 bg-white px-3 py-1">
+          <SaveToDesigns
+            signedIn={signedIn}
+            ensureSaved={async () => (await store(planName.trim() || t("Untitled plan"), allowInvalid)) || planIdRef.current}
+          />
+        </div>
+      )}
       {saveOpen && geometry && (
         <SavePlanDialog
           initialName={planName === "Untitled plan" && !planId ? "" : planName}
@@ -725,10 +779,10 @@ export function PlanLayout() {
           )}
           <RoomCreationDialog
             busy={busy}
-            onDimensions={async (width, depth, height, thickness) => {
+            onDimensions={async (polygon, height, thickness) => {
               setBusy(t("Creating room…"));
               try {
-                const room = await createRoomFromDimensions({ width, depth, height, wall_thickness: thickness });
+                const room = await createRoomFromDimensions({ polygon, height, wall_thickness: thickness });
                 setGeometry(room);
                 setView("2d"); // a freshly converted plan opens in 2D
                 setBusy(null);
@@ -800,7 +854,7 @@ export function PlanLayout() {
               aria-label={t("Catalogue")}
               className="m-3 mb-0 grid shrink-0 grid-cols-2 gap-1.5"
               onKeyDown={(event) => {
-                const order = ["models", "paints", "carpets", "windows"] as const;
+                const order = (["models", "paints", "carpets", "windows"] as const).filter((id) => CARPETS_ENABLED || id !== "carpets");
                 const step = event.key === "ArrowRight" || event.key === "ArrowDown" ? 1 : event.key === "ArrowLeft" || event.key === "ArrowUp" ? -1 : 0;
                 if (!step) return;
                 event.preventDefault();
@@ -816,7 +870,7 @@ export function PlanLayout() {
                   ["carpets", "Carpets", RectangleHorizontal],
                   ["windows", "Windows", AppWindow],
                 ] as const
-              ).map(([id, label, Icon]) => {
+              ).filter(([id]) => CARPETS_ENABLED || id !== "carpets").map(([id, label, Icon]) => {
                 const on = tab === id;
                 return (
                   <button
@@ -841,6 +895,9 @@ export function PlanLayout() {
               })}
             </div>
             {tab === "models" ? (
+              <>
+              <MyCustomisedModels signedIn={signedIn} activeId={placing?.design?.id ?? null} onPlace={startPlacing} />
+              <MyPrivateModels signedIn={signedIn} activeId={placing?.id ?? null} onPlace={startPlacing} />
               <ModelSidebar
                 activeId={placing?.id ?? detail?.id ?? null}
                 onPick={(model) => {
@@ -849,6 +906,7 @@ export function PlanLayout() {
                   setDetail(model);
                 }}
               />
+              </>
             ) : tab === "paints" ? (
               <PaintPicker
                 active={brush}
@@ -892,15 +950,40 @@ export function PlanLayout() {
                 roomSizes={showRoomSizes}
                 roomNames={showRoomNames}
                 hideWalls={hideWalls}
-                selectedRoomId={view === "2d" ? roomId : null}
+                selectedRoomId={roomId}
                 // Rooms are picked in 2D only (where the card replaces the room names); 3D clicks never select a room.
-                onSelectRoom={geometry.source === "image" && view === "2d" ? setRoomId : undefined}
+                onSelectRoom={geometry.source === "image" ? setRoomId : undefined}
                 geometry={geometry}
                 items={items}
                 selectedId={selectedId}
                 view={view}
                 showGrid={showGrid}
-                onSelect={setSelectedId}
+                editing={editing}
+                partId={partId}
+                onPickPart={setPartId}
+                onParts={(id, parts, separated) => setPartList({ id, parts, separated })}
+                onMeasured={(id, size, areas) => {
+                  if (!geometry) return;
+                  // eslint-disable-next-line react-hooks/immutability -- a ref flag read by the history effect, never rendered
+                  quiet.current = true;
+                  setItems((list) =>
+                    applyWarnings(
+                      list.map((item) => {
+                        if (item.instanceId !== id) return item;
+                        const surfaceMaterials = item.surfaceMaterials?.map((mat) => (areas[mat.partId] ? { ...mat, area_m2: Math.round(areas[mat.partId] * 100) / 100 } : mat));
+                        return { ...item, size, y: baseHeight(item.mount, geometry.height, size.height), surfaceMaterials };
+                      }),
+                      geometry,
+                    ),
+                  );
+                }}
+                onSelect={(id) => {
+                  if (id !== selectedId) {
+                    setEditing(false);
+                    setPartId(null);
+                  }
+                  setSelectedId(id);
+                }}
                 placing={placing}
                 onPlace={placeModel}
                 onCancelPlacing={() => setPlacing(null)}
@@ -979,18 +1062,17 @@ export function PlanLayout() {
                 onItemNormalized={(id, report) => {
                   // Rendered size (proportions kept) drives collisions; refresh it for loaded plans too, and
                   // re-fit the item if its real size no longer fits where it stands.
+                  // A size the customer chose stays put and turns red when it does not fit.
                   if (report.warnings.length && process.env.NODE_ENV !== "production") console.debug("[catalogue size]", id, report.warnings);
+                  setFitNotes((notes) => ({ ...notes, [id]: report.warnings }));
                   // eslint-disable-next-line react-hooks/immutability -- a ref flag read by the history effect, never rendered
                   quiet.current = true; // a loaded model reporting its real size is not an undo step
-                  setItems((list) =>
-                    settle(
-                      list.map((item) =>
-                        item.instanceId === id ? { ...item, size: report.finalSize, y: baseHeight(item.mount, geometry.height, report.finalSize.height) } : item,
-                      ),
-                      geometry,
-                      [id],
-                    ),
-                  );
+                  setItems((list) => {
+                    const mapped = list.map((item) =>
+                      item.instanceId === id ? { ...item, size: report.finalSize, y: baseHeight(item.mount, geometry.height, report.finalSize.height) } : item,
+                    );
+                    return mapped.find((item) => item.instanceId === id)?.sizedByUser ? applyWarnings(mapped, geometry) : settle(mapped, geometry, [id]);
+                  });
                 }}
                 onDrop={(id) => setItems((list) => settle(list, geometry, [id]))}
               />
@@ -1088,7 +1170,7 @@ export function PlanLayout() {
                 </div>
               )}
               {(() => {
-                const room = roomId && view === "2d" ? (geometry.zones?.length ? geometry.zones : geometry.rooms).find((a) => a.id === roomId) : null;
+                const room = roomId ? (geometry.zones?.length ? geometry.zones : geometry.rooms).find((a) => a.id === roomId) : null;
                 if (!room) return null;
                 const xs = room.polygon.map((p) => p[0]);
                 const zs = room.polygon.map((p) => p[1]);
@@ -1115,6 +1197,11 @@ export function PlanLayout() {
                       <dd>{approx}{area.toFixed(2)} m²</dd>
                     </dl>
                     <p className="mt-1 text-xs text-slate-500">{t(printed ? "Read from the plan's dimensions" : "Estimated from the drawing's scale")}</p>
+                    {(room.kind === "kitchen" || room.kind === "bathroom") && (
+                      <p className="mt-2 rounded-md bg-amber-50 px-2 py-1.5 text-xs text-amber-900">
+                        {t(room.kind === "kitchen" ? "This is a kitchen. Furnishing kitchens is not supported on our platform yet." : "This is a bathroom. Furnishing bathrooms is not supported on our platform yet.")}
+                      </p>
+                    )}
                   </div>
                 );
               })()}
@@ -1241,7 +1328,9 @@ export function PlanLayout() {
             </button>
             {/* Hidden while walking: the walk key guide uses the bottom of the view. */}
             {/* Hidden while a key guide or hint owns the bottom of the view (walking, placing, measuring…). */}
-            {view !== "walk" && !measurePoints && !placing && !rugDraft && !windowDraft && !doorDraft && !brush && <PlanEstimate geometry={geometry} items={items} />}
+            {view !== "walk" && !measurePoints && !placing && !rugDraft && !windowDraft && !doorDraft && !brush && (
+              <PlanEstimate geometry={geometry} items={items} onOffer={() => store(planName.trim() || t("Untitled plan"), true)} title={planName} />
+            )}
             {walkPicker && (
               <WalkRoomBanner
                 onCancel={() => {
@@ -1253,6 +1342,69 @@ export function PlanLayout() {
           </main>
           {/* Docked beside the canvas (never over it): the plan shrinks instead of being covered. */}
           {detail && <ModelDetails key={detail.id} model={detail} onClose={() => setDetail(null)} onShow={() => startPlacing(detail)} />}
+          {!detail && !finish && selectedItem?.designId && selectedItem.designVersion && (
+            <DesignVersionNotice
+              key={`${selectedItem.instanceId}-${selectedItem.designVersion}`}
+              item={selectedItem}
+              onUpdate={(patch) => pushHistory(applyWarnings(items.map((i) => (i.instanceId === selectedItem.instanceId ? { ...i, ...patch } : i)), geometry!))}
+            />
+          )}
+          {!detail && !finish && selectedItem && (
+            <PlacedItemEditor
+              key={selectedItem.instanceId}
+              item={selectedItem}
+              parts={partList?.id === selectedItem.instanceId ? partList.parts : []}
+              separated={partList?.id === selectedItem.instanceId ? partList.separated : false}
+              partId={partId}
+              editing={editing}
+              fitNotes={fitNotes[selectedItem.instanceId] ?? []}
+              canUndo={history.length > 0}
+              canRedo={future.length > 0}
+              userId={userId}
+              onClose={() => {
+                setSelectedId(null);
+                setEditing(false);
+              }}
+              onEdit={() => {
+                editSnap.current = structuredClone(selectedItem);
+                setPlacing(null);
+                setBrush(null);
+                setEditing(true);
+              }}
+              onApply={() => {
+                editSnap.current = null;
+                setEditing(false);
+                setPartId(null);
+              }}
+              onCancel={() => {
+                const snap = editSnap.current;
+                editSnap.current = null;
+                setEditing(false);
+                setPartId(null);
+                if (snap && geometry) setItems((list) => applyWarnings(list.map((item) => (item.instanceId === snap.instanceId ? snap : item)), geometry));
+              }}
+              onUndo={undo}
+              onRedo={redo}
+              onPickPart={setPartId}
+              onPatch={(patch) => {
+                if (!geometry || !selectedId) return;
+                setItems((list) => applyWarnings(list.map((item) => (item.instanceId === selectedId ? { ...item, ...patch } : item)), geometry));
+              }}
+              onDuplicate={() => {
+                if (!geometry) return;
+                const copy: PlacedItem = { ...structuredClone(selectedItem), instanceId: crypto.randomUUID(), x: selectedItem.x + 0.4, designId: undefined, warnings: [] };
+                setItems((list) => applyWarnings([...list, copy], geometry));
+                setSelectedId(copy.instanceId);
+                setEditing(false);
+              }}
+              onExport={() => {
+                void exportApartmentGlb().then((blob) => {
+                  if (blob) downloadBlob(blob, "apartment.glb");
+                  else setError(t("The apartment is still loading."));
+                });
+              }}
+            />
+          )}
           {!detail && finish && (
             <FinishDetails
               key={finish.kind === "paint" ? finish.paint.id : finish.kind === "carpet" ? finish.carpet.id : finish.window.id}

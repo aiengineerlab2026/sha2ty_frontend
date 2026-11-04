@@ -18,6 +18,13 @@ async function supabaseError(res: Response) {
 export async function GET(req: NextRequest, { params }: { params: Promise<{ action: string }> }) {
   const { action } = await params;
   if (action === "admin-me") return NextResponse.json({ admin: Boolean(req.cookies.get(ADMIN_COOKIE)?.value) });
+  if (action === "realtime") {
+    // Live chat: the Realtime socket needs the user's own short-lived access token (it applies row-level security
+    // per subscriber). Same-origin only (the cookie is SameSite=Lax); never cached.
+    const s = await session(req);
+    if (!s.access) return persist(NextResponse.json({ token: null }, { status: 401 }), s);
+    return persist(NextResponse.json({ token: s.access }, { headers: { "Cache-Control": "no-store" } }), s);
+  }
   if (action !== "me") return fail("Not found.", 404);
   const s = await session(req);
   if (!s.access) return persist(NextResponse.json({ user: null }), s);
@@ -95,6 +102,18 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ act
     return out;
   }
 
+  if (action === "admin-studio") {
+    // Admin → the Sha2ty catalogue vendor: the backend (admin token) returns a session for that account, kept in
+    // the usual cookies, so the vendor pages (upload, photo to 3D, editor) work as Sha2ty.
+    const admin = req.cookies.get(ADMIN_COOKIE)?.value;
+    if (!admin) return fail("Admin sign-in required.", 401);
+    const res = await fetch(`${BACKEND_URL}/api/admin/studio-session`, { method: "POST", headers: { "X-Admin-Token": admin } }).catch(() => null);
+    const data = res ? await res.json().catch(() => ({})) : {};
+    if (!res?.ok || !data.access_token) return fail(typeof data.detail === "string" ? data.detail : "Could not open the Sha2ty catalogue.", res?.status ?? 502);
+    const out = NextResponse.json({ vendor: data.vendor });
+    setTokens(out, { access_token: data.access_token, refresh_token: data.refresh_token, expires_in: data.expires_in });
+    return out;
+  }
   if (action === "admin-logout") {
     const out = NextResponse.json({ ok: true });
     out.cookies.set(ADMIN_COOKIE, "", { ...cookieBase, maxAge: 0 });

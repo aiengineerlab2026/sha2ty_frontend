@@ -1,5 +1,6 @@
 "use client";
 
+import { CARPETS_ENABLED } from "@/lib/features";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Armchair, ArrowLeft, ArrowRight, Images, ImagePlus, LoaderCircle, Minus, PackageCheck, PaintRoller, Plus, RectangleHorizontal, ShoppingCart, Wand2 } from "lucide-react";
 import { useCart } from "@/lib/cart";
@@ -198,7 +199,7 @@ function MatchWizard({ open, onOpenChange, model, onDone }: { open: boolean; onO
           {current === "type" && (
             <Question title={t("What would you like to match?")}>
               <div role="radiogroup" className="grid gap-3 sm:grid-cols-3">
-                {TYPES.map(({ id, label, hint, icon: Icon }) => (
+                {TYPES.filter(({ id }) => CARPETS_ENABLED || id !== "carpet").map(({ id, label, hint, icon: Icon }) => (
                   <button
                     key={id}
                     type="button"

@@ -12,5 +12,5 @@
     "verbatimModuleSyntax": false,
     "plugins": []
   },
-  "include": ["lib/plan/__tests__/*.test.ts"]
+  "include": ["lib/plan/__tests__/*.test.ts", "lib/designs/__tests__/*.test.ts"]
 }

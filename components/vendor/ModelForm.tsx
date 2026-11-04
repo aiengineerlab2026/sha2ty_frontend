@@ -2,7 +2,7 @@
 
 import { authSession } from "@/lib/auth/client";
 import { useLocale, useT } from "@/lib/i18n";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Header } from "@/components/shatably/Header";
 import { Button } from "@/components/ui/button";
@@ -12,6 +12,7 @@ import { Progress } from "@/components/ui/progress";
 import { supabase, supabaseConfigured } from "@/lib/supabase/client";
 import { on } from "@/lib/events";
 import { fetchGenerationQuota, generateFromPhoto, type PhotoReading } from "@/lib/vendor/generate";
+import { glbSize } from "@/lib/vendor/glbSize";
 import { uploadPublicFile } from "@/lib/vendor/storage";
 import type { ModelProvider, ModelSource, VendorProfile } from "@/lib/vendor/types";
 import { Dimensions, numberOrNull } from "./Dimensions";
@@ -19,23 +20,32 @@ import { PriceField, priceOrNull } from "./PriceField";
 import { ImagePicker } from "./ImagePicker";
 import { VariantsEditor } from "./VariantsEditor";
 import { CategoryPicker } from "./CategoryPicker";
+import { WoodsField } from "./WoodsField";
 import { ShapeField, type ModelShape } from "./ShapeField";
 import { categoryLabel, categoryOf, type ModelCategory } from "@/lib/plan/categories";
 import type { PriceUnit } from "@/lib/vendor/types";
 import { RichText } from "./RichText";
 import { ModelViewer } from "./ModelViewer";
+import { customizedModelFields, updateModel, type PartDocument, type PartEditorApi } from "@/lib/vendor/parts";
 
 export function ModelForm() {
   const t = useT();
   const locale = useLocale();
   const router = useRouter();
   const [vendor, setVendor] = useState<VendorProfile | null>(null);
+  // Signed in without a vendor profile (a customer): the model is their own private one (supabase/user_models.sql),
+  // used in their planner and the app's AR, never in the catalogue. null until the session is read.
+  const [userId, setUserId] = useState<string | null>(null);
+  const mine = Boolean(userId) && !vendor;
+  const ownerId = vendor?.id ?? userId;
+  const table = mine ? "user_models" : "models";
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [width, setWidth] = useState("");
   const [price, setPrice] = useState("");
   const [priceUnit, setPriceUnit] = useState<PriceUnit>("item");
   const [category, setCategory] = useState<ModelCategory>("furniture");
+  const [woods, setWoods] = useState<string[] | null>(null); // null: all the vendor works with
   // Furniture: what exactly it is ("corner sofa"), sent to the vision model and Meshy / Astra.
   const [kind, setKind] = useState("");
   const [shape, setShape] = useState<ModelShape>("straight");
@@ -43,9 +53,23 @@ export function ModelForm() {
   const [height, setHeight] = useState("");
   const [depth, setDepth] = useState("");
   const [source, setSource] = useState<ModelSource>("photo");
+  // The generator is the admin's choice (admin portal); the backend uses it whatever is sent. Known from the quota.
   const [provider, setProvider] = useState<ModelProvider>("meshy");
   const [photo, setPhoto] = useState<File | null>(null);
   const [glb, setGlb] = useState<File | null>(null);
+  // The size read from the chosen GLB (glTF is in metres), shown under the file input.
+  const [glbMeasured, setGlbMeasured] = useState<string | null>(null);
+  const chooseGlb = async (file: File | null) => {
+    setGlb(file);
+    setGlbMeasured(null);
+    const size = file ? await glbSize(file) : null;
+    if (!size) return;
+    const cm = (v: number) => String(Math.round(v * 100) / 100); // to the centimetre
+    setWidth(cm(size.width));
+    setHeight(cm(size.height));
+    setDepth(cm(size.depth));
+    setGlbMeasured([size.width, size.height, size.depth].map(cm).join(" × "));
+  };
   const [variants, setVariants] = useState<File[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -53,8 +77,13 @@ export function ModelForm() {
   const [progressPercent, setProgressPercent] = useState(0);
   const [quota, setQuota] = useState<Record<ModelProvider, number> | null>(null);
   /** The generated model awaiting the vendor's check (saved as a draft): its id and 3D file. */
-  const [review, setReview] = useState<{ id: string; glbUrl: string } | null>(null);
-  const refreshQuota = () => void fetchGenerationQuota().then(setQuota);
+  const [review, setReview] = useState<{ id: string; glbUrl: string; sourceGlbUrl: string | null; components: PartDocument | null } | null>(null);
+  const editor = useRef<PartEditorApi | null>(null);
+  const refreshQuota = () =>
+    void fetchGenerationQuota().then((q) => {
+      setQuota(q?.remaining ?? null);
+      if (q) setProvider(q.provider);
+    });
   useEffect(() => {
     const offStarted = on("generation.started", ({ provider, remaining }) => setQuota((q) => q && { ...q, [provider]: remaining }));
     const offFinished = on("generation.finished", ({ ok }) => !ok && refreshQuota()); // a failed call is refunded
@@ -75,6 +104,7 @@ export function ModelForm() {
         }
         const profile = await supabase().from("vendors").select("*").eq("id", data.session.user.id).maybeSingle();
         setVendor(profile.data);
+        setUserId(data.session.user.id);
         refreshQuota();
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -97,7 +127,7 @@ export function ModelForm() {
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
-    if (!vendor) return;
+    if (!ownerId) return setError(t("Still loading your account. Try again in a moment."));
     setBusy(true);
     setError(null);
     setProgressLabel(null);
@@ -105,9 +135,17 @@ export function ModelForm() {
     let createdId: string | null = null;
     try {
       const row = await supabase()
-        .from("models")
-        .insert({
-          vendor_id: vendor.id,
+        .from(table)
+        .insert(mine ? {
+          title: title || t("Untitled model"),
+          description,
+          width_m: numberOrNull(width),
+          height_m: numberOrNull(height),
+          depth_m: numberOrNull(depth),
+          category,
+          status: "generating",
+        } : {
+          vendor_id: ownerId,
           title: title || t("Untitled model"),
           description,
           width_m: numberOrNull(width),
@@ -118,6 +156,8 @@ export function ModelForm() {
           category,
           shape,
           length2_m: shape === "straight" ? null : numberOrNull(length2),
+          // Only a chosen few are stored ("All woods" is the column's null default).
+          ...(woods !== null && category === "furniture" ? { woods } : {}),
           source,
           provider: source === "photo" ? provider : null,
           status: "generating",
@@ -130,23 +170,25 @@ export function ModelForm() {
 
       let sourceImageUrl: string | null = null;
       let glbUrl: string | null = null;
+      let components: PartDocument | null = null;
+      let sourceGlbUrl: string | null = null;
       let estimated: PhotoReading | null = null;
       if (photo) {
         setProgressLabel(t("Uploading photo…"));
         setProgressPercent(6);
-        sourceImageUrl = await uploadPublicFile(vendor.id, photo, `${id}/photo`);
+        sourceImageUrl = await uploadPublicFile(ownerId, photo, `${id}/photo`);
       }
       if (source === "upload") {
         if (!glb) throw new Error(t("Choose a GLB file."));
         setProgressLabel(t("Uploading GLB…"));
         setProgressPercent(20);
-        glbUrl = await uploadPublicFile(vendor.id, glb, `${id}/model`);
+        glbUrl = await uploadPublicFile(ownerId, glb, `${id}/model`);
         setProgressPercent(100);
         setProgressLabel(t("Upload complete"));
       } else {
         if (!photo) throw new Error(t("Choose a photo to generate from."));
-        if (quota && quota[provider] <= 0) throw new Error(t("No {name} generations left on this account.", { name: provider === "astra" ? "GPT Astra" : "Meshy" }));
-        ({ glbUrl, reading: estimated } = await generateFromPhoto(
+        if (quota && quota[provider] <= 0) throw new Error(t("No {name} generations left on this account.", { name: { meshy: "Meshy", astra: "GPT Astra", sol: "GPT Sol" }[provider] }));
+        ({ glbUrl, reading: estimated, components, sourceGlbUrl } = await generateFromPhoto(
           photo,
           provider,
           id,
@@ -160,10 +202,10 @@ export function ModelForm() {
       }
 
       const variantUrls: { model_id: string; image_url: string; sort_order: number }[] = [];
-      for (const [index, file] of variants.entries()) {
+      for (const [index, file] of (mine ? [] : variants).entries()) {
         setProgressLabel(t("Uploading variant images…"));
         setProgressPercent(Math.min(99, 90 + Math.round(((index + 1) / variants.length) * 8)));
-        const url = await uploadPublicFile(vendor.id, file, `${id}/variants`);
+        const url = await uploadPublicFile(ownerId, file, `${id}/variants`);
         variantUrls.push({ model_id: id, image_url: url, sort_order: index });
       }
       if (variantUrls.length) {
@@ -173,7 +215,7 @@ export function ModelForm() {
 
       // Kept as a draft (not in the catalogue) until the vendor confirms the details below: the 3D file and
       // photo are saved now, so leaving the page loses nothing.
-      const draft = await supabase().from("models").update({ status: "draft", glb_url: glbUrl, source_image_url: sourceImageUrl, error: null }).eq("id", id);
+      const draft = await supabase().from(table).update({ status: "draft", glb_url: glbUrl, source_image_url: sourceImageUrl, components, source_glb_url: sourceGlbUrl, error: null }).eq("id", id);
       if (draft.error) throw new Error(draft.error.message);
       // Fields left empty: what the vision model read from the photo. The vendor checks and corrects them.
       const listing = listingFrom(estimated);
@@ -183,11 +225,11 @@ export function ModelForm() {
       if (!numberOrNull(width)) setWidth(m(estimated?.width_m));
       if (!numberOrNull(height)) setHeight(m(estimated?.height_m));
       if (!numberOrNull(depth)) setDepth(m(estimated?.depth_m));
-      setReview({ id, glbUrl: glbUrl! });
+      setReview({ id, glbUrl: glbUrl!, sourceGlbUrl, components });
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : String(caught);
       if (createdId) {
-        await supabase().from("models").update({ status: "failed", error: message }).eq("id", createdId);
+        await supabase().from(table).update({ status: "failed", error: message }).eq("id", createdId);
       }
       setError(message);
     } finally {
@@ -202,19 +244,23 @@ export function ModelForm() {
     setBusy(true);
     setError(null);
     try {
-      const updated = await supabase()
-        .from("models")
-        .update({
-          status: "ready",
-          title: title.trim() || t("Untitled model"),
-          description,
-          width_m: numberOrNull(width),
-          height_m: numberOrNull(height),
-          depth_m: numberOrNull(depth),
-        })
-        .eq("id", review.id);
+      const materials = editor.current && ownerId ? await customizedModelFields(ownerId, review.id, review.glbUrl, review.sourceGlbUrl, editor.current) : null;
+      const fields = {
+        status: "ready",
+        title: title.trim() || t("Untitled model"),
+        description,
+        width_m: numberOrNull(width),
+        height_m: numberOrNull(height),
+        depth_m: numberOrNull(depth),
+        ...(materials?.fields ?? {}),
+      };
+      const updated = mine ? await supabase().from("user_models").update(fields).eq("id", review.id) : await updateModel(review.id, fields);
       if (updated.error) throw new Error(updated.error.message);
-      router.push("/vendor");
+      if (materials?.thumbnailError) {
+        setError(t("Saved, but the model image could not be updated ({error}). The previous image is kept; save again to retry.", { error: materials.thumbnailError }));
+        return;
+      }
+      router.push(mine ? "/plan" : "/vendor"); // a private model is placed from the planner's "My models"
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
@@ -227,12 +273,12 @@ export function ModelForm() {
     return (
       <div className="min-h-full bg-slate-50 text-slate-900">
         <Header vendor={vendor} />
-        <main className="mx-auto max-w-2xl px-4 py-8">
+        <main className="mx-auto max-w-6xl px-4 py-8">
           <h1 className="font-serif text-3xl">{t("Review the model")}</h1>
           <p className="mt-2 text-sm text-slate-600">{t("Check the name, description and size written from the photo and correct anything, then save. The 3D model stays as generated.")}</p>
           <form onSubmit={saveReviewed} className="mt-6 space-y-5 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
             {/* The generated model at the size in the fields below: a correction shows here at once. */}
-            <ModelViewer url={review.glbUrl} dimensions={w && h ? { width: w, height: h, ...(d ? { depth: d } : {}) } : null} />
+            <ModelViewer edit parts={review.components} onApi={(api) => { editor.current = api; }} url={review.glbUrl} dimensions={w && h ? { width: w, height: h, ...(d ? { depth: d } : {}) } : null} />
             <div className="space-y-1.5">
               <Label htmlFor="review-title">{t("Name")}</Label>
               <Input id="review-title" value={title} onChange={(event) => setTitle(event.target.value)} required />
@@ -256,7 +302,8 @@ export function ModelForm() {
     <div className="min-h-full bg-slate-50 text-slate-900">
       <Header vendor={vendor} />
       <main className="mx-auto max-w-2xl px-4 py-8">
-        <h1 className="font-serif text-3xl">{t("Add a model")}</h1>
+        <h1 className="font-serif text-3xl">{mine ? t("Add my model") : t("Add a model")}</h1>
+        {mine && <p className="mt-1 text-sm text-slate-500">{t("A private 3D model of your own furniture, for your plans and the app's AR. Only you see it; it is not listed in the catalogue.")}</p>}
         <form onSubmit={submit} className="mt-6 space-y-5 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
           <div className="space-y-1.5">
             <Label htmlFor="title">{t("Name")}</Label>
@@ -277,13 +324,14 @@ export function ModelForm() {
           <Dimensions width={width} height={height} depth={depth} onWidth={setWidth} onHeight={setHeight} onDepth={setDepth} labels={shape === "straight" ? undefined : ["Length on wall A m", "Height m", "Arm depth m"]} required={source !== "photo"} />
           {source === "photo" && <p className="-mt-2 text-xs text-slate-500">{t("Optional: sizes left empty are estimated from the photo.")}</p>}
           <CategoryPicker value={category} onChange={setCategory} />
+          {category === "furniture" && vendor && <WoodsField vendorId={vendor?.id} platform={vendor?.platform} value={woods} onChange={setWoods} />}
           {category === "furniture" && source === "photo" && (
             <div className="space-y-1.5">
               <Label htmlFor="kind">{t("Furniture type")}</Label>
               <Input id="kind" value={kind} onChange={(event) => setKind(event.target.value)} placeholder={t("e.g. corner sofa, bunk bed, armchair")} maxLength={60} required />
             </div>
           )}
-          <PriceField price={price} unit={priceUnit} onPrice={setPrice} onUnit={setPriceUnit} />
+          {!mine && <PriceField price={price} unit={priceUnit} onPrice={setPrice} onUnit={setPriceUnit} />}
           <fieldset className="space-y-2">
             <legend className="text-sm font-medium">{t("Source")}</legend>
             <label className="flex items-center gap-2 text-sm">
@@ -297,19 +345,7 @@ export function ModelForm() {
           </fieldset>
           {source === "photo" && (
             <>
-              <fieldset className="space-y-2">
-                <legend className="text-sm font-medium">{t("Generator")}</legend>
-                <label className="flex items-center gap-2 text-sm">
-                  <input type="radio" checked={provider === "meshy"} onChange={() => setProvider("meshy")} />
-                  {t("Meshy")}
-                  <TriesLeft n={quota?.meshy} />
-                </label>
-                <label className="flex items-center gap-2 text-sm">
-                  <input type="radio" checked={provider === "astra"} onChange={() => setProvider("astra")} />
-                  {t("GPT Astra")}
-                  <TriesLeft n={quota?.astra} />
-                </label>
-              </fieldset>
+              {quota && <p className="text-xs text-slate-500">{t("3D generations left")} <TriesLeft n={quota[provider]} /></p>}
               {/* Upload, drag and drop, or paste a copied image (button or Ctrl/⌘+V). */}
               <ImagePicker variant="dropzone" label={t("Photo")} value={photo} onChange={setPhoto} />
             </>
@@ -317,10 +353,11 @@ export function ModelForm() {
           {source === "upload" && (
             <div className="space-y-1.5">
               <Label htmlFor="glb">{t("GLB file")}</Label>
-              <Input id="glb" type="file" accept=".glb,model/gltf-binary" onChange={(event) => setGlb(event.target.files?.[0] ?? null)} required />
+              <Input id="glb" type="file" accept=".glb,model/gltf-binary" onChange={(event) => void chooseGlb(event.target.files?.[0] ?? null)} required />
+              {glbMeasured && <p className="text-xs text-slate-500">{t("Size measured from the file: {size} m. Change it below if the model was not made at real size.", { size: glbMeasured })}</p>}
             </div>
           )}
-          <VariantsEditor kind="model" pending={variants} onPending={setVariants} />
+          {!mine && <VariantsEditor kind="model" pending={variants} onPending={setVariants} />}
           {busy && progressLabel && (
             <div className="space-y-2 rounded-xl border border-slate-200 bg-slate-50 p-3">
               <div className="flex items-center justify-between gap-3 text-sm">
@@ -331,7 +368,7 @@ export function ModelForm() {
             </div>
           )}
           {error && <p className="text-sm text-red-700">{error}</p>}
-          <Button type="submit" disabled={busy}>
+          <Button type="submit" disabled={busy || !ownerId}>
             {busy ? (progressLabel ?? t("Saving…")) : t(source === "photo" ? "Generate 3D model" : "Continue")}
           </Button>
         </form>

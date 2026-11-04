@@ -31,8 +31,10 @@ import { clampTilt, cornerSnap, fitWindowOnWall, localWarnings, slideInsideWalls
 import { cameraForView, type CameraView } from "@/lib/plan/coordinateSystem";
 import { FACADE, finishFor, tileSize, wallSides, wallTexture } from "@/lib/plan/roomMaterials";
 import { WalkControls } from "./WalkControls";
+import { wallJoints } from "@/lib/plan/wallJoints";
 import { baseHeight, mountFor, type Mount } from "@/lib/plan/categories";
 import { walkStart } from "@/lib/plan/walkStart";
+import { bindApartmentScene } from "@/lib/plan/sceneExport";
 
 /** World point in metres: x, y (up), z. */
 export type Vec3 = [number, number, number];
@@ -77,6 +79,11 @@ export function FloorPlanViewer({
   measurePoints = null,
   onMeasurePoint,
   panning = false,
+  editing = false,
+  partId = null,
+  onPickPart,
+  onParts,
+  onMeasured,
 }: {
   geometry: PlanGeometry;
   items: PlacedItem[];
@@ -134,6 +141,12 @@ export function FloorPlanViewer({
   onMeasurePoint?: (point: Vec3) => void;
   /** Pan tool: start-drag pans the view; nothing in the scene reacts to clicks. */
   panning?: boolean;
+  /** Edit model: clicks select a mesh and do not pick the furniture up or place a new one. */
+  editing?: boolean;
+  partId?: string | null;
+  onPickPart?: (id: string) => void;
+  onParts?: (id: string, parts: import("@/lib/vendor/parts").PartInfo[], separated: boolean) => void;
+  onMeasured?: (id: string, size: Dimensions, areas: Record<string, number>) => void;
 }) {
   const t = useT();
   const width = geometry.extents?.width ?? span(geometry, 0);
@@ -156,6 +169,12 @@ export function FloorPlanViewer({
   const [showDimensions, setShowDimensions] = useState(false);
   // Carry mode: click furniture to pick it up, it follows the cursor on the floor, next click drops it.
   const [carrying, setCarrying] = useState<{ id: string; origin: [number, number] } | null>(null);
+  useEffect(() => {
+    if (!editing || !carrying) return;
+    onDrop?.(carrying.id);
+    setCarrying(null);
+  }, [editing, carrying, onDrop]);
+
   // Switching to the pan tool cancels a carry in progress: the item goes back where it was.
   useEffect(() => {
     if (!panning || !carrying) return;
@@ -297,7 +316,7 @@ export function FloorPlanViewer({
     }
     justPicked.current = true; // this same click must not also count as the drop
     onSelect(item.instanceId);
-    if (item.category === "door") return; // a fitted door stays in its doorway: fit it elsewhere from the catalogue
+    if (editing || item.category === "door") return; // editing selects a mesh; a fitted door stays in its doorway
     setCarrying({ id: item.instanceId, origin: [item.x, item.z] });
   };
 
@@ -412,7 +431,7 @@ export function FloorPlanViewer({
         flat
         camera={{ position: [...cam.position], fov: 45 }}
         onPointerMissed={() => {
-          if (!placing && !painting && !rugDraft && !windowDraft && !onPickRoom) {
+          if (!editing && !placing && !painting && !rugDraft && !windowDraft && !onPickRoom) {
             onSelect(null);
             onSelectRoom?.(null);
           }
@@ -427,11 +446,12 @@ export function FloorPlanViewer({
         <directionalLight position={[10, 10, 3]} intensity={0.3 * Math.PI} />
         <directionalLight position={[-3, 8, -10]} intensity={0.15 * Math.PI} />
         {/* Soft ambient occlusion: darkens inside corners and wall / floor / ceiling junctions. */}
-        {!is2d && (
+        {!is2d && !editing && (
           <EffectComposer multisampling={4}>
             <N8AO aoRadius={0.8} distanceFalloff={0.6} intensity={2.2} halfRes />
           </EffectComposer>
         )}
+        <SceneCapture />
         <CameraRig view={view} width={width} depth={depth} height={height} onCamera={(c) => {
             camera.current = c;
           }}
@@ -503,6 +523,7 @@ export function FloorPlanViewer({
             }
           />
         ))}
+        {!hideWalls && <WallJoints walls={geometry.walls} />}
         {(geometry.rugs ?? []).map((rug) => (
           <Rug
             key={rug.id}
@@ -584,6 +605,11 @@ export function FloorPlanViewer({
             item={item}
             selected={selectedId === item.instanceId}
             showDimensions={showDimensions}
+            editing={editing && selectedId === item.instanceId}
+            partId={partId}
+            onPickPart={onPickPart}
+            onParts={onParts}
+            onMeasured={onMeasured}
             onPick={() => pick(item)}
             // While a model, carpet, window or door is being placed, other objects ignore clicks.
             interactive={!walking && !onPickRoom && !panning && !placing && !rugDraft && !windowDraft && !doorDraft && !painting && (!carrying || carrying.id === item.instanceId)}
@@ -682,6 +708,11 @@ function FurnitureDraggable({
   onNormalized,
   showDimensions,
   interactive,
+  editing,
+  partId,
+  onPickPart,
+  onParts,
+  onMeasured,
 }: {
   item: PlacedItem;
   selected: boolean;
@@ -689,9 +720,37 @@ function FurnitureDraggable({
   onPick: () => void;
   onNormalized: (report: NormalizationReport) => void;
   interactive: boolean;
+  editing?: boolean;
+  partId?: string | null;
+  onPickPart?: (id: string) => void;
+  onParts?: (id: string, parts: import("@/lib/vendor/parts").PartInfo[], separated: boolean) => void;
+  onMeasured?: (id: string, size: Dimensions, areas: Record<string, number>) => void;
 }) {
   // Position follows the cursor through the viewer's carry mode; only x/z ever change.
-  return <FurnitureObject item={item} selected={selected} onSelect={onPick} showDimensions={showDimensions} onNormalized={onNormalized} interactive={interactive} />;
+  return (
+    <FurnitureObject
+      item={item}
+      selected={selected}
+      onSelect={onPick}
+      showDimensions={showDimensions}
+      onNormalized={onNormalized}
+      interactive={interactive}
+      editing={editing}
+      partId={partId}
+      onPickPart={onPickPart}
+      onParts={onParts}
+      onMeasured={onMeasured}
+    />
+  );
+}
+
+function SceneCapture() {
+  const scene = useThree((state) => state.scene);
+  useEffect(() => {
+    bindApartmentScene(scene);
+    return () => bindApartmentScene(null);
+  }, [scene]);
+  return null;
 }
 
 /**
@@ -854,6 +913,7 @@ function Floor({
   return (
     // Shape (x, z) → world (x, 0, z). A −π/2 turn would map z to −z and mirror floors away from walls.
     <mesh
+      name="apartment-floor"
       rotation={[Math.PI / 2, 0, 0]}
       receiveShadow
       onPointerOver={selectable ? (event) => (event.stopPropagation(), setHovered(true)) : undefined}
@@ -1075,6 +1135,27 @@ function usePaintTexture(url: string | null | undefined) {
   return url ? paintTextures.get(url) ?? null : null;
 }
 
+/** Corner posts: fill the joint where walls meet, so rooms close at any angle (lib/plan/wallJoints.ts). */
+function WallJoints({ walls }: { walls: PlanGeometry["walls"] }) {
+  const joints = useMemo(() => wallJoints(walls).map((j) => {
+    const shape = new Shape();
+    j.outline.forEach(([x, z], i) => (i ? shape.lineTo(x, -z) : shape.moveTo(x, -z)));
+    return { shape, height: j.height };
+  }), [walls]);
+  return (
+    <>
+      {joints.map((j, i) => (
+        <mesh key={i} rotation-x={-Math.PI / 2} castShadow raycast={() => undefined}>
+          <extrudeGeometry args={[j.shape, { depth: j.height, bevelEnabled: false }]} />
+          {/* ExtrudeGeometry groups: 0 the caps (slate top, like the walls' cut core in 2D), 1 the sides. */}
+          <meshStandardMaterial attach="material-0" color="#475569" roughness={0.85} />
+          <meshStandardMaterial attach="material-1" color={FACADE.wall} roughness={0.85} />
+        </mesh>
+      ))}
+    </>
+  );
+}
+
 function WallMesh({
   wall,
   sides,
@@ -1131,6 +1212,7 @@ function WallMesh({
   useEffect(() => () => materials.forEach((m) => m.map?.dispose()), [materials]);
   return (
     <mesh
+      name="apartment-wall"
       position={[(wall.start[0] + wall.end[0]) / 2, (wall.elevation ?? 0) + wall.height / 2, (wall.start[1] + wall.end[1]) / 2]}
       rotation={[0, -angle, 0]}
       castShadow

@@ -1,3 +1,4 @@
+import type { PartDocument } from "./parts";
 import type { ModelProvider } from "./types";
 
 import { publish } from "@/lib/events";
@@ -24,7 +25,7 @@ export async function generateFromPhoto(
   imageUrl?: string,
   /** What to extract (catalogue category, product title, furniture type); the backend builds the Meshy / Astra prompt. */
   subject?: { category: string; title: string; kind?: string; lang?: "ar" | "en" },
-): Promise<{ glbUrl: string; reading: PhotoReading | null }> {
+): Promise<{ glbUrl: string; reading: PhotoReading | null; components: PartDocument | null; sourceGlbUrl: string | null }> {
   const body = new FormData();
   body.append("image", file);
   body.append("provider", provider);
@@ -40,7 +41,7 @@ export async function generateFromPhoto(
   }
 
   onProgress?.({ percent: 4, status: "Uploading photo…" });
-  const stopPulse = provider === "astra" ? pulseProgress(onProgress) : null;
+  const stopPulse = provider !== "meshy" ? pulseProgress(onProgress) : null;
 
   const created = await fetch(`${API}/api/vendor/generate`, {
     method: "POST",
@@ -61,7 +62,7 @@ export async function generateFromPhoto(
     : null;
   if (json.glb_url) {
     onProgress?.({ percent: 100, status: "Conversion complete" });
-    return { glbUrl: json.glb_url as string, reading };
+    return { glbUrl: json.glb_url as string, reading, components: (json.components as PartDocument) ?? null, sourceGlbUrl: (json.source_glb_url as string) ?? null };
   }
 
   const taskId = json.task_id as string;
@@ -77,7 +78,8 @@ export async function generateFromPhoto(
     onProgress?.({ percent: last, status: conversionLabel(String(task.status || ""), last) });
     if (task.status === "SUCCEEDED" && task.glb_url) {
       onProgress?.({ percent: 100, status: "Saving model to CDN…" });
-      return { glbUrl: task.glb_url as string, reading };
+      // glb_url is the split (modular) model when the backend could separate parts; source_glb_url the untouched one.
+      return { glbUrl: task.glb_url as string, reading, components: (task.components as PartDocument) ?? null, sourceGlbUrl: (task.source_glb_url as string) ?? null };
     }
     if (task.status === "FAILED" || task.status === "CANCELED") {
       throw new Error(task.error || "Generation failed.");
@@ -87,12 +89,13 @@ export async function generateFromPhoto(
   throw new Error("Generation timed out. Try again.");
 }
 
-/** Generation tries left per provider for the signed-in vendor, or null when unavailable. */
-export async function fetchGenerationQuota(): Promise<Record<ModelProvider, number> | null> {
+/** Generation tries left per provider for the signed-in vendor, and the generator in use (the admin's choice), or
+ * null when unavailable. */
+export async function fetchGenerationQuota(): Promise<{ remaining: Record<ModelProvider, number>; provider: ModelProvider } | null> {
   const res = await fetch(`${API}/api/vendor/generation-quota`).catch(() => null);
   if (!res?.ok) return null;
   const body = await res.json().catch(() => null);
-  return body?.remaining ?? null;
+  return body?.remaining ? { remaining: body.remaining, provider: body.provider ?? "meshy" } : null;
 }
 
 function conversionLabel(status: string, percent: number): string {

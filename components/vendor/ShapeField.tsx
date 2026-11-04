@@ -8,8 +8,8 @@ export type ModelShape = "straight" | "l_left" | "l_right";
 
 const OPTIONS: { id: ModelShape; label: string; hint: string }[] = [
   { id: "straight", label: "Straight", hint: "One wall" },
-  { id: "l_left", label: "L-shaped", hint: "Corner on the left" },
-  { id: "l_right", label: "L-shaped", hint: "Corner on the right" },
+  { id: "l_left", label: "L-shaped", hint: "Left corner" },
+  { id: "l_right", label: "L-shaped", hint: "Right corner" },
 ];
 
 /** Plan view of each shape (front at the bottom), so the corner side is unambiguous. */
@@ -43,16 +43,17 @@ export function ShapeField({ shape, onShape, length2, onLength2 }: { shape: Mode
                 role="radio"
                 aria-checked={on}
                 onClick={() => onShape(o.id)}
-                className={`flex items-center gap-2 rounded-xl border px-3 py-2 text-start text-xs transition ${
+                // Icon above a short two-line label: fits a narrow side panel without breaking words.
+                className={`flex min-w-0 flex-col items-center gap-1 rounded-xl border px-1.5 py-2.5 text-center text-xs transition ${
                   on ? "border-brand-amber bg-brand-amber-soft/60 text-brand-navy ring-2 ring-brand-amber/20" : "border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50"
                 }`}
               >
                 <span className={on ? "text-brand-amber" : "text-slate-400"}>
                   <Glyph shape={o.id} />
                 </span>
-                <span>
-                  <span className="block font-semibold">{t(o.label)}</span>
-                  <span className="block text-[11px] text-slate-500">{t(o.hint)}</span>
+                <span className="min-w-0">
+                  <span className="block whitespace-nowrap font-semibold">{t(o.label)}</span>
+                  <span className="block whitespace-nowrap text-[11px] text-slate-500">{t(o.hint)}</span>
                 </span>
               </button>
             );
@@ -63,7 +64,7 @@ export function ShapeField({ shape, onShape, length2, onLength2 }: { shape: Mode
         <div className="space-y-1.5">
           <Label htmlFor="length2">{t("Length on wall B m")}</Label>
           <Input id="length2" type="number" min="0" step="0.01" value={length2} onChange={(e) => onLength2(e.target.value)} />
-          <p className="text-xs text-slate-500">Wall A is the back run (Length on wall A above); wall B is the side arm. Depth is how deep each arm is.</p>
+          <p className="text-xs text-slate-500">{t("Wall A is the back run (Length on wall A above); wall B is the side arm. Depth is how deep each arm is.")}</p>
         </div>
       )}
     </div>

@@ -63,7 +63,8 @@ export async function fetchCatalogModel(id: string) {
   return data.companies[0]?.models[0] ?? null;
 }
 
-export function createRoomFromDimensions(body: { width: number; depth: number; height: number; wall_thickness: number; name?: string }) {
+/** One room: a width × depth rectangle, or any shape from its floor outline (one wall per side, in order). */
+export function createRoomFromDimensions(body: { width?: number; depth?: number; polygon?: [number, number][]; height: number; wall_thickness: number; name?: string }) {
   return request<PlanGeometry>("/api/plans/from-dimensions", {
     method: "POST",
     headers: { "Content-Type": "application/json" },

@@ -29,6 +29,16 @@ test("paints by covered area, models and carpets by the piece", () => {
   assert.equal(total, 225 + 600 + 2000 + 500);
 });
 
+test("a resized model and its fabric are priced from the edited size", () => {
+  const geometry = { rooms: [], walls: [], warnings: [], scale_confidence: 1, source: "dimensions", wall_thickness: 0.1, height: 2.8 } as unknown as PlanGeometry;
+  const wide = { modelId: "bed", title: "Bed", width_m: 1.8, depth_m: 2, price: 100, price_unit: "m2", size: { width: 1.8, height: 1, depth: 2 } } as PlacedItem;
+  const narrow = { ...wide, size: { width: 1.6, height: 1, depth: 2 }, surfaceMaterials: [{ partId: "head", refId: "fab", name: "Linen", price: 50, price_unit: "m2" as const, area_m2: 1.2 }] };
+  assert.equal(planCost(geometry, [wide]).lines[0].quantity, 3.6);
+  const lines = planCost(geometry, [narrow]).lines;
+  assert.equal(lines.find((l) => l.key === "model:bed")?.quantity, 3.2);
+  assert.equal(lines.find((l) => l.key === "texture:fab")?.total, 60);
+});
+
 test("finish usage: rooms using a floor finish, their area and tile count", async () => {
   const { finishUsage, tilesFor } = await import("../pricing");
   const geometry = {

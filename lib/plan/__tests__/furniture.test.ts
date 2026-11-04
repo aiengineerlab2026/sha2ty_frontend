@@ -213,6 +213,20 @@ test("a 3 m sofa along a 4 m wall uses 75% of it, with no warning", () => {
   assert.deepEqual(localWarnings(item, geometry, [item]), []);
 });
 
+test("collision uses the edited size, not an older catalogue width", () => {
+  const geometry = roomGeometry(2.5, 5);
+  const edited = sofaItem({ x: 1.25, z: 2.5, width_m: 1.6, size: { width: 1.6, height: 1, depth: 1.5 } });
+  assert.deepEqual(localWarnings(edited, geometry, [edited]), []);
+  const stillWide = sofaItem({ x: 1.25, z: 2.5, width_m: 1.6, size: { width: 3, height: 1, depth: 1.5 } });
+  assert.ok(localWarnings(stillWide, geometry, [stillWide]).some((w) => w.includes("3.00 m wide")));
+});
+
+test("a shorter height still stands on the floor", () => {
+  const { object } = normalizeModel(PROPORTIONAL(), { width: 3, height: 0.8, depth: 1.5 });
+  assert.ok(Math.abs(new Box3().setFromObject(object, true).min.y) < 1e-4);
+  close(measure(object), { width: 3, height: 0.8, depth: 1.5 });
+});
+
 test("furniture larger than the room warns instead of shrinking", () => {
   const geometry = roomGeometry(2.5, 5);
   const item = sofaItem({ x: 1.25, z: 2.5 });

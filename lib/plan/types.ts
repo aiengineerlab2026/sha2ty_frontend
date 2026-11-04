@@ -266,6 +266,15 @@ export interface CatalogModel {
   company_id: string;
   company: string;
   company_logo?: string | null;
+  /** A customised model from My designs (placed with this version's size and edits; the listing is unchanged). */
+  design?: {
+    id: string;
+    version: number;
+    materialEdits: NonNullable<PlacedItem["materialEdits"]>;
+    partPoses?: PlacedItem["partPoses"];
+    partDocument?: import("@/lib/vendor/parts").PartDocument;
+    removedParts?: string[];
+  };
 }
 
 export interface CompanyGroup {
@@ -301,8 +310,28 @@ export interface PlacedItem {
   scale?: [number, number, number];
   /** Door model: the plan doorway it is fitted into (one door per doorway; it is never carried around). */
   opening_id?: string;
-  /** Rendered size in metres (GLB proportions kept, fitted inside width_m/height_m/depth_m). */
+  /** Rendered size in metres (GLB proportions kept, fitted inside width_m/height_m/depth_m). Collision uses this. */
   size?: { width: number; height: number; depth: number };
+  /** Catalogue size at placement. Reset restores it. The catalogue row is never written. */
+  catalogSize?: { width: number; height: number; depth: number };
+  /** Customer names for mesh ids. */
+  partNames?: Record<string, string>;
+  /** Customer material overrides, keyed by mesh id. */
+  materialEdits?: Record<string, { color?: string; mapUrl?: string | null; repeat?: [number, number]; rotation?: number; offset?: [number, number]; roughness?: number; metalness?: number; tile?: number; mapping?: "uv" | "box" }>;
+  /** Per-mesh move / turn / scale. Absent means the mesh stays as authored. */
+  partPoses?: Record<string, { scale?: [number, number, number]; position?: [number, number, number]; rotation?: [number, number, number] }>;
+  /** Paid textures applied to parts. Area is the part's box surface, updated when the model is resized. */
+  surfaceMaterials?: { partId: string; refId: string; name: string; price: number | null; price_unit: "item" | "m2"; area_m2: number }[];
+  /** The customer set the size. A bad fit is shown in red and is not slid into a free spot. */
+  sizedByUser?: boolean;
+  designId?: string;
+  /** The customised model's version this placement uses (fixed: later saves of the design do not change it; the
+   * planner offers an explicit update). */
+  designVersion?: number;
+  /** The design's part list: its part ids key materialEdits / partPoses (as in the design editor). */
+  partDocument?: import("@/lib/vendor/parts").PartDocument;
+  /** Parts the customer removed from this customised model (not drawn). */
+  removedParts?: string[];
   price?: number | null;
   price_unit?: "item" | "m2";
   warnings: string[];

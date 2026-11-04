@@ -81,7 +81,7 @@ export function VendorSettings() {
       <Header vendor={vendor} />
       <main className="mx-auto max-w-xl px-4 py-8">
         <h1 className="font-serif text-3xl">{t("Settings")}</h1>
-        <p className="mt-1 text-sm text-slate-500">{t("Your company profile, shown with your models, paints and carpets.")}</p>
+        <p className="mt-1 text-sm text-slate-500">{t("Your company profile, shown with your models and paints.")}</p>
         <form onSubmit={save} className="mt-6 space-y-5 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
           <div className="flex items-center gap-4">
             {shown ? (
