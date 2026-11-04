@@ -57,6 +57,7 @@ export function Dashboard() {
   };
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- loads the dashboard once; state is set after the await
     void load();
   }, []);
 

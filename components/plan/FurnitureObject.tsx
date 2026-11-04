@@ -95,6 +95,7 @@ export function FurnitureObject({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [custom, object, item.materialEdits, item.partPoses, item.removedParts]);
 
+  // eslint-disable-next-line react-hooks/refs -- slots is filled once the GLB loads; slotRev re-renders when it changes
   const picked = editing ? slots.current.find((slot) => slot.id === partId)?.mesh ?? null : null;
   void slotRev;
 

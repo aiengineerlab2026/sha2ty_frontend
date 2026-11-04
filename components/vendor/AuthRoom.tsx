@@ -121,6 +121,7 @@ export function AuthRoom({ className }: { className?: string }) {
 function Fit() {
   const { camera, size } = useThree();
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/immutability -- a three.js camera is meant to be changed in place (r3f)
     camera.zoom = Math.min(size.width / 14.5, size.height / 10);
     camera.updateProjectionMatrix();
   }, [camera, size]);
