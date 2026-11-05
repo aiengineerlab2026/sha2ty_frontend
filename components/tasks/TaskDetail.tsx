@@ -15,6 +15,7 @@ import {
 } from "@/lib/tasks";
 import type { VendorProfile } from "@/lib/vendor/types";
 import { DesignSpecView } from "./DesignSpecView";
+import { ReportButton } from "./ReportButton";
 import { TaskChat } from "./TaskChat";
 
 const STATUS: Record<TaskRow["status"], string> = {
@@ -133,6 +134,7 @@ export function TaskDetail({ id }: { id: string }) {
                       ? t("Only for {vendor}", { vendor: task.spec.vendor?.name || name(task.exclusive_vendor_id ?? "") })
                       : t("Open to all vendors")}
                   </span>
+                  <ReportButton taskId={task.id} className="ms-auto" />
                 </div>
                 <dl className="mt-3 grid grid-cols-2 gap-3 text-sm sm:grid-cols-4 lg:grid-cols-5">
                   {[

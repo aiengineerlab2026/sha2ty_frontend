@@ -4,6 +4,7 @@ import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { Box, Check, Clock, Eye, LoaderCircle, Lock, LogOut, Mail, MapPin, Plus, Sparkles, UserRound, Wand2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { ReportButton } from "@/components/tasks/ReportButton";
 import { Logo } from "@/components/shatably/Logo";
 import { LanguageSwitch } from "@/components/shatably/Header";
 import { AuthInput } from "@/components/vendor/AuthInput";
@@ -133,6 +134,7 @@ export function AdminRequests() {
         <div className="mt-6"><AdminWoods call={call} /></div>
         <div className="mt-6"><AdminPaintColors call={call} /></div>
         <div className="mt-6"><AdminModels call={call} /></div>
+        <div className="mt-6"><AdminTasks call={call} /></div>
         <h1 className="mt-10 text-2xl font-bold text-brand-navy">{t("Vendor requests")}</h1>
         <p className="mt-1 text-sm text-slate-500">{t("New studios sell right away; suspend or reject any of them here.")}</p>
 
@@ -315,6 +317,45 @@ function ServerChoice({ call, path, field, icon, title, intro }: { call: (path: 
         })}
       </div>
       {error && <p className="mt-3 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">{t(error)}</p>}
+    </section>
+  );
+}
+
+/** Customers' implementation requests (newest first), each with its one-page PDF report. */
+function AdminTasks({ call }: { call: (path: string, init?: RequestInit) => Promise<Record<string, unknown> | null> }) {
+  const t = useT();
+  type Row = { id: string; title: string; status: string; created_at: string; budget_max: number | null; offers: number; customer: string };
+  const [rows, setRows] = useState<Row[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    call("/tasks").then(
+      (body) => body && setRows(body.tasks as Row[]),
+      (caught: Error) => setError(caught.message),
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  return (
+    <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      <h2 className="text-lg font-semibold text-brand-navy">{t("Implementation requests")}</h2>
+      <p className="mt-1 text-sm text-slate-500">{t("Customers' requests to have a model made. Download a one-page report of any of them.")}</p>
+      {error && <p className="mt-3 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p>}
+      {!rows && !error && <p className="mt-3 text-sm text-slate-500">{t("Loading…")}</p>}
+      {rows && !rows.length && <p className="mt-3 text-sm text-slate-500">{t("No requests yet.")}</p>}
+      {rows && rows.length > 0 && (
+        <ul className="mt-4 max-h-[28rem] divide-y divide-slate-100 overflow-y-auto rounded-xl border border-slate-200">
+          {rows.map((r) => (
+            <li key={r.id} className="flex flex-wrap items-center gap-3 px-4 py-3 text-sm">
+              <span className="min-w-0 flex-1">
+                <span className="block truncate font-medium text-brand-navy">{r.title}</span>
+                <span className="block text-xs text-slate-500">
+                  {[r.customer, new Date(r.created_at).toLocaleDateString(), t("{n} offers", { n: r.offers }), t(r.status)].filter(Boolean).join(" · ")}
+                </span>
+              </span>
+              <ReportButton taskId={r.id} />
+            </li>
+          ))}
+        </ul>
+      )}
     </section>
   );
 }
