@@ -1474,4 +1474,7 @@ export const AR: Record<string, string> = {
   "Loading 3D model…": "جارٍ تحميل النموذج ثلاثي الأبعاد…",
   "Add to cart · {qty} {unit}": "أضف إلى السلة · {qty} {unit}",
   "Added to cart · {qty} {unit}": "أُضيف إلى السلة · {qty} {unit}",
+  "{n} parts selected": "{n} أجزاء محددة",
+  "Select several": "تحديد عدة أجزاء",
+  "or shift-click": "أو Shift مع النقر",
 };
