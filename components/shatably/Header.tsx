@@ -56,11 +56,12 @@ export function Header({ vendor, actions }: { vendor?: VendorProfile | null; act
   const t = useT();
   const router = useRouter();
   const pathname = usePathname();
-  const nav = vendor ? STUDIO_NAV : CATALOG_NAV;
-  const current = activeHref(pathname, nav);
   const [getApp, setGetApp] = useState(false);
   // Signed in without a vendor profile: a customer (or a vendor page still loading its profile).
   const [user, setUser] = useState<AuthUser | null>(null);
+  // Requests are a signed-in feature: guests do not see the link (the page itself asks them to log in).
+  const nav = vendor ? STUDIO_NAV : CATALOG_NAV.filter((item) => user || item.href !== "/tasks");
+  const current = activeHref(pathname, nav);
   const [admin, setAdmin] = useState(false);
   useEffect(() => {
     void getUser().then(setUser);

@@ -27,7 +27,7 @@ import { customisedModels, deleteDesign } from "@/lib/designs/api";
 import { Header } from "@/components/shatably/Header";
 import { PaintSwatch } from "@/components/vendor/PaintLibrary";
 import { fetchCatalog } from "@/lib/plan/api";
-import { SHOWN_CATEGORIES, categoryOf } from "@/lib/plan/categories";
+import { CATALOG_GROUPS, groupOf } from "@/lib/plan/categories";
 import { formatPrice } from "@/lib/plan/pricing";
 import { tileLabel } from "@/lib/plan/roomMaterials";
 import type { CatalogModel } from "@/lib/plan/types";
@@ -67,24 +67,26 @@ export function HomePage({ only }: { only?: CatalogKind } = {}) {
 
   useEffect(() => {
     if (!supabaseConfigured()) return;
-    // Home shows furniture only. Paints, carpets and windows load on their own /catalog page, not here.
+    // Home shows furniture and paints. Carpets and windows load on their own /catalog page, not here.
     let live = true;
-    const finish = () => live && setLoaded(true);
+    // Loaded once every query of this page has answered (home: furniture and paints), so no row says "none yet" early.
+    let pending = (only === "models" ? 0 : 1) + (!only || only === "models" ? 1 : 0);
+    const finish = () => live && --pending <= 0 && setLoaded(true);
     if (!only || only === "models") {
       void fetchCatalog("", 0, false)
         .then((catalog) => live && setModels(catalog.companies.flatMap((c) => c.models)))
         .catch(() => live && setModels([]))
         .finally(finish);
     }
-    if (only && only !== "models") {
+    if (only !== "models") {
       void supabase()
-        .from(only)
+        .from(only ?? "paints")
         .select("*")
         .order("name")
         // A Supabase query is only "then-able" (no .finally): finish on both outcomes.
         .then(({ data }) => {
           if (live) {
-            if (only === "paints") setPaints((data ?? []) as Paint[]);
+            if (!only || only === "paints") setPaints((data ?? []) as Paint[]);
             if (only === "carpets") setCarpets((data ?? []) as Carpet[]);
             if (only === "windows") setWindows((data ?? []) as WindowItem[]);
           }
@@ -116,15 +118,15 @@ export function HomePage({ only }: { only?: CatalogKind } = {}) {
     });
   }, []);
 
-  // The home page is the furniture; paints, carpets and windows each have their own page (/catalog/<kind>).
-  const show = (kind: CatalogKind) => (only ? only === kind : kind === "models");
+  // The home page is the furniture and the paints; carpets and windows each have their own page (/catalog/<kind>).
+  const show = (kind: CatalogKind) => (only ? only === kind : kind === "models" || kind === "paints");
   const grid = Boolean(only);
   const colours = paints.filter((p) => (p.surface ?? "wall") === "wall");
   const floors = paints.filter((p) => p.surface === "floor");
   // One carousel per model type that has models (all empty: a single "Models" row says so).
-  const modelGroups = SHOWN_CATEGORIES.map((c) => ({
+  const modelGroups = CATALOG_GROUPS.map((c) => ({
     ...c,
-    items: models.filter((m) => categoryOf(m.category) === c.id),
+    items: models.filter((m) => groupOf(m.category) === c.id),
   })).filter((g) => g.items.length);
   const metrics: [string, number | null, string][] = [
     ["Your models", ownModels, "/vendor"],
