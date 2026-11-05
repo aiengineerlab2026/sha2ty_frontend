@@ -24,6 +24,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { customisedModels, deleteDesign } from "@/lib/designs/api";
+import { vendorBrands } from "@/lib/tasks";
 import { Header } from "@/components/shatably/Header";
 import { PaintSwatch } from "@/components/vendor/PaintLibrary";
 import { fetchCatalog } from "@/lib/plan/api";
@@ -63,6 +64,11 @@ export function HomePage({ only }: { only?: CatalogKind } = {}) {
   const [paints, setPaints] = useState<Paint[]>([]);
   const [carpets, setCarpets] = useState<Carpet[]>([]);
   const [windows, setWindows] = useState<WindowItem[]>([]);
+  // Upholstery fabrics (vendors' library) on the home page, and each paint's / fabric's vendor (name and logo).
+  const [fabrics, setFabrics] = useState<FabricItem[]>([]);
+  const [brands, setBrands] = useState<Map<string, Owner>>(new Map());
+  // The admins' paint palette (supabase/model_paints.sql): shown with the vendors' paints, as Sha2ty's colours.
+  const [palette, setPalette] = useState<{ id: string; name: string; hex: string }[]>([]);
   const [loaded, setLoaded] = useState(false); // catalogue fetched: until then rows show placeholders, not "none yet"
 
   useEffect(() => {
@@ -70,7 +76,7 @@ export function HomePage({ only }: { only?: CatalogKind } = {}) {
     // Home shows furniture and paints. Carpets and windows load on their own /catalog page, not here.
     let live = true;
     // Loaded once every query of this page has answered (home: furniture and paints), so no row says "none yet" early.
-    let pending = (only === "models" ? 0 : 1) + (!only || only === "models" ? 1 : 0);
+    let pending = (only === "models" ? 0 : 1) + (!only || only === "models" ? 1 : 0) + (only ? 0 : 1);
     const finish = () => live && --pending <= 0 && setLoaded(true);
     if (!only || only === "models") {
       void fetchCatalog("", 0, false)
@@ -93,10 +99,49 @@ export function HomePage({ only }: { only?: CatalogKind } = {}) {
           finish();
         }, finish);
     }
+    if (!only) {
+      void supabase()
+        .from("fabrics")
+        .select("id, name, texture_url, price_per_m, vendor_id")
+        .eq("kind", "fabric")
+        .order("name")
+        .then(({ data }) => {
+          if (live) setFabrics((data ?? []) as FabricItem[]);
+          finish();
+        }, finish);
+    }
     return () => {
       live = false;
     };
   }, [only]);
+
+  useEffect(() => {
+    if (!supabaseConfigured() || (only && only !== "paints")) return;
+    let live = true;
+    void supabase()
+      .from("paint_colors")
+      .select("id, name, hex")
+      .order("created_at")
+      .then(({ data }) => live && setPalette((data ?? []) as { id: string; name: string; hex: string }[]), () => undefined);
+    return () => {
+      live = false;
+    };
+  }, [only]);
+
+  // Guests cannot read the vendors table: names and logos come from the backend's public brands list.
+  useEffect(() => {
+    const ids = [...new Set([...paints, ...fabrics].map((x) => (x as { vendor_id?: string | null }).vendor_id).filter((id): id is string => Boolean(id)))];
+    if (!ids.length) return;
+    let live = true;
+    vendorBrands(ids).then(
+      (list) => live && setBrands(new Map(list.map((b) => [b.id, { name: b.name, logo_url: b.logo_url }]))),
+      () => undefined, // no brands: the cards simply show no owner
+    );
+    return () => {
+      live = false;
+    };
+  }, [paints, fabrics]);
+  const ownerOf = (x: object) => brands.get((x as { vendor_id?: string | null }).vendor_id ?? "") ?? null;
 
   useEffect(() => {
     if (!supabaseConfigured()) return;
@@ -122,7 +167,9 @@ export function HomePage({ only }: { only?: CatalogKind } = {}) {
   const show = (kind: CatalogKind) => (only ? only === kind : kind === "models" || kind === "paints");
   const grid = Boolean(only);
   const colours = paints.filter((p) => (p.surface ?? "wall") === "wall");
-  const floors = paints.filter((p) => p.surface === "floor");
+  // Palette colours no vendor paint already shows (same colour).
+  const vendorHexes = new Set(colours.filter((p) => p.kind === "color").map((p) => p.color.toLowerCase()));
+  const adminColours = palette.filter((c) => !vendorHexes.has(c.hex.toLowerCase()));
   // One carousel per model type that has models (all empty: a single "Models" row says so).
   const modelGroups = CATALOG_GROUPS.map((c) => ({
     ...c,
@@ -247,6 +294,7 @@ export function HomePage({ only }: { only?: CatalogKind } = {}) {
                           : formatPrice(m.price, m.price_unit ?? "item")
                       }
                       title={m.title}
+                      owner={m.company ? { name: m.company, logo_url: m.company_logo ?? null } : null}
                       meta={
                         sizeLabel(m) ?? t("Size not set")
                       }
@@ -269,7 +317,7 @@ export function HomePage({ only }: { only?: CatalogKind } = {}) {
                 grid={grid}
                 title={t("Paint colours")}
                 subtitle={t("Wall finishes")}
-                count={colours.length}
+                count={colours.length + adminColours.length}
                 empty={t("No wall paints yet.")}
               >
                 {colours.map((p) => (
@@ -282,6 +330,7 @@ export function HomePage({ only }: { only?: CatalogKind } = {}) {
                         : formatPrice(Number(p.price), p.price_unit ?? "m2")
                     }
                     tag={p.kind === "color" ? t("Paint") : t("Wall texture")}
+                    owner={ownerOf(p)}
                     title={p.name}
                     meta={
                       p.kind === "color" ? p.color.toUpperCase() : tileLabel(p)
@@ -294,37 +343,28 @@ export function HomePage({ only }: { only?: CatalogKind } = {}) {
                     />
                   </Card>
                 ))}
+                {adminColours.map((c) => (
+                  <Card key={`palette-${c.id}`} href="/plan" tag={t("Paint")} title={t(c.name)} meta={c.hex.toUpperCase()} owner={{ name: "Sha2ty", logo_url: "/icon.svg" }} compact>
+                    <span className="block size-full" style={{ background: c.hex }} />
+                  </Card>
+                ))}
               </Carousel>
             )}
-            {show("paints") && (
-              <Carousel
-                loading={!loaded}
-                grid={grid}
-                title={t("Floor textures")}
-                subtitle={t("Ground finishes")}
-                count={floors.length}
-                empty={t("No floor finishes yet.")}
-              >
-                {floors.map((p) => (
+            {!only && (
+              <Carousel loading={!loaded} grid={grid} title={t("Fabrics")} subtitle={t("Upholstery fabrics from our vendors")} count={fabrics.length} empty={t("No upholstery fabrics yet.")}>
+                {fabrics.map((f) => (
                   <Card
-                    key={p.id}
-                    href={`/catalog/paints/${p.id}`}
-                    price={
-                      p.price == null
-                        ? null
-                        : formatPrice(Number(p.price), p.price_unit ?? "m2")
-                    }
-                    tag={t("Floor")}
-                    title={p.name}
-                    meta={
-                      p.kind === "color" ? p.color.toUpperCase() : tileLabel(p)
-                    }
+                    key={f.id}
+                    href={f.vendor_id ? `/vendors/${f.vendor_id}` : "/catalog/models"}
+                    price={f.price_per_m == null ? null : `${formatPrice(Number(f.price_per_m))} / ${t("m")}`}
+                    tag={t("Fabric")}
+                    title={f.name}
+                    meta={t("Upholstery fabric")}
+                    owner={ownerOf(f)}
                     compact
                   >
-                    <PaintSwatch
-                      paint={p}
-                      className="size-full"
-                    />
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    {f.texture_url ? <img src={f.texture_url} alt="" loading="lazy" decoding="async" className="size-full object-cover" /> : null}
                   </Card>
                 ))}
               </Carousel>
@@ -725,6 +765,9 @@ function MyCustomisedRow({ grid }: { grid: boolean }) {
   );
 }
 
+type Owner = { name: string; logo_url: string | null };
+type FabricItem = { id: string; name: string; texture_url: string | null; price_per_m: number | null; vendor_id: string | null };
+
 function Card({
   href,
   tag,
@@ -732,6 +775,7 @@ function Card({
   meta,
   price,
   compact = false,
+  owner,
   children,
 }: {
   href: string;
@@ -741,6 +785,8 @@ function Card({
   meta: string;
   /** Formatted price, null for "Price on request", or left out (private models: no price line). */
   price?: string | null;
+  /** The vendor who sells it: logo and name under the title. */
+  owner?: Owner | null;
   compact?: boolean;
   children: ReactNode;
 }) {
@@ -764,6 +810,15 @@ function Card({
         <h3 className="truncate text-sm font-semibold text-brand-navy">
           {title}
         </h3>
+        {owner && (
+          <p className="flex min-w-0 items-center gap-1.5 text-xs text-slate-600">
+            <span className="flex size-5 shrink-0 items-center justify-center overflow-hidden rounded-full border border-slate-200 bg-white text-[9px] font-semibold text-brand-navy">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              {owner.logo_url ? <img src={owner.logo_url} alt="" className="size-full object-cover" loading="lazy" /> : owner.name.slice(0, 1).toUpperCase()}
+            </span>
+            <span className="truncate">{owner.name}</span>
+          </p>
+        )}
         <p className="truncate text-xs tabular-nums text-slate-500">
           {/* Sizes and hex codes are Latin: isolate them so RTL does not reorder "m" before the numbers. */}
           <bdi dir="auto">{meta}</bdi>
