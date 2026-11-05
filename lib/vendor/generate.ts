@@ -1,8 +1,8 @@
+import { apiFetch } from "@/lib/api";
 import type { PartDocument } from "./parts";
 import type { ModelProvider } from "./types";
 
 import { publish } from "@/lib/events";
-import { API } from "@/lib/plan/api"; // same-origin proxy: the JWT comes from the httpOnly cookie
 
 export type GenerateProgress = { percent: number; status: string };
 
@@ -43,7 +43,7 @@ export async function generateFromPhoto(
   onProgress?.({ percent: 4, status: "Uploading photo…" });
   const stopPulse = provider !== "meshy" ? pulseProgress(onProgress) : null;
 
-  const created = await fetch(`${API}/api/vendor/generate`, {
+  const created = await apiFetch(`/api/vendor/generate`, {
     method: "POST",
     body,
   });
@@ -70,7 +70,7 @@ export async function generateFromPhoto(
   onProgress?.({ percent: last, status: "Queued for conversion…" });
 
   for (let i = 0; i < 180; i++) {
-    const polled = await fetch(`${API}/api/vendor/tasks/${taskId}`);
+    const polled = await apiFetch(`/api/vendor/tasks/${taskId}`);
     const task = await polled.json().catch(() => ({}));
     if (!polled.ok) throw new Error(detail(task) || "Could not check generation status.");
     const reported = Number(task.progress);
@@ -92,7 +92,7 @@ export async function generateFromPhoto(
 /** Generation tries left per provider for the signed-in vendor, and the generator in use (the admin's choice), or
  * null when unavailable. */
 export async function fetchGenerationQuota(): Promise<{ remaining: Record<ModelProvider, number>; provider: ModelProvider } | null> {
-  const res = await fetch(`${API}/api/vendor/generation-quota`).catch(() => null);
+  const res = await apiFetch(`/api/vendor/generation-quota`).catch(() => null);
   if (!res?.ok) return null;
   const body = await res.json().catch(() => null);
   return body?.remaining ? { remaining: body.remaining, provider: body.provider ?? "meshy" } : null;

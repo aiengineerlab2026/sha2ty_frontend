@@ -1,5 +1,6 @@
 "use client";
 
+import { apiFetch } from "@/lib/api";
 import { useEffect, useState } from "react";
 
 /** The mobile app opens web pages in its own browser view signed in as the app's user: the tokens come in the URL
@@ -12,7 +13,7 @@ export default function AppSession() {
     const next = params.get("next") ?? "/";
     const safe = next.startsWith("/") && !next.startsWith("//") ? next : "/";
     history.replaceState(null, "", window.location.pathname); // drop the tokens from the address bar
-    void fetch("/api/auth/session", {
+    void apiFetch("/api/auth/session", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "same-origin",

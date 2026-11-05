@@ -1,5 +1,6 @@
 "use client";
 
+import { apiFetch } from "@/lib/api";
 /**
  * Browser auth. The session is two httpOnly cookies set by the backend's /api/auth (access JWT + refresh token),
  * so nothing here can read a token: it asks the server who is signed in, and every Supabase /
@@ -17,7 +18,7 @@ let current: Promise<AuthUser | null> | null = null;
 /** The signed-in user (one request per page, shared by every caller). */
 export function getUser(force = false): Promise<AuthUser | null> {
   if (!current || force) {
-    current = fetch("/api/auth/me", { cache: "no-store", credentials: "same-origin" })
+    current = apiFetch("/api/auth/me", { cache: "no-store" })
       .then((r) => r.json())
       .then((j) => (j.user as AuthUser | null) ?? null)
       .catch(() => null);
@@ -44,7 +45,7 @@ async function changed() {
 
 async function post(action: string, body?: unknown): Promise<{ error?: string; [k: string]: unknown }> {
   try {
-    const res = await fetch(`/api/auth/${action}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body ?? {}), credentials: "same-origin" });
+    const res = await apiFetch(`/api/auth/${action}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body ?? {}) });
     const json = await res.json().catch(() => ({}));
     return res.ok ? json : { error: String(json.error ?? `Request failed (${res.status}).`) };
   } catch {

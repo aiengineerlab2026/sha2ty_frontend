@@ -1,5 +1,6 @@
 "use client";
 
+import { apiFetch } from "@/lib/api";
 import { useEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
@@ -11,7 +12,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { authSession } from "@/lib/auth/client";
 import { useT } from "@/lib/i18n";
-import { API } from "@/lib/plan/api";
 import { catalogDimensions } from "@/lib/plan/modelNormalization";
 import { supabase } from "@/lib/supabase/client";
 import { buildFurniture, furnitureParts, partOf, partOptions, type FurnitureKind, type FurnitureSpec } from "@/lib/vendor/furnitureBuilder";
@@ -36,7 +36,7 @@ type Option = { id: string; name: string; spec: FurnitureSpec; glb: Blob; url: s
 type Built = { glb: Blob; url: string; render: Blob; renderUrl: string; options: Record<string, Option[]>; parts: PartDocument };
 
 async function backend(path: string, init: RequestInit) {
-  const res = await fetch(`${API}/api/vendor/furniture/${path}`, init);
+  const res = await apiFetch(`/api/vendor/furniture/${path}`, init);
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(typeof body.detail === "string" ? body.detail : `Request failed (${res.status}).`);
   return body;
@@ -109,7 +109,7 @@ export function FurnitureGenerator() {
   };
 
   /** Product photos from the render: every shot, or only `which` (its slot is replaced). */
-  const makePhotos = async (render: Blob, of: FurnitureSpec, name: string, which?: number) => {
+  const makePhotos = async (render: Blob, of: FurnitureSpec, which?: number) => {
     const slots = which === undefined ? [0, 1, 2, 3] : [which];
     setShooting((was) => [...was, ...slots]);
     setError(null);
@@ -117,7 +117,6 @@ export function FurnitureGenerator() {
       const form = new FormData();
       form.append("render", new File([render], "render.png", { type: "image/png" }));
       form.append("kind", of.kind);
-      form.append("title", name);
       form.append("style", of.style);
       form.append("looks", JSON.stringify(of.looks));
       if (which !== undefined) form.append("which", String(which));
@@ -125,7 +124,7 @@ export function FurnitureGenerator() {
       const made = body.images as Record<string, string>;
       setPhotos((was) => {
         const next = which === undefined ? Array<string | null>(body.shots as number).fill(null) : [...was];
-        for (const [i, b64] of Object.entries(made)) next[Number(i)] = `data:image/png;base64,${b64}`;
+        for (const [i, b64] of Object.entries(made)) next[Number(i)] = `data:${(body.mime as string) || "image/jpeg"};base64,${b64}`;
         return next;
       });
       if (which === undefined) setStale(false);
@@ -158,7 +157,7 @@ export function FurnitureGenerator() {
       setSize({ width: metres(designed.width_m), height: metres(designed.height_m), depth: metres(designed.depth_m) });
     });
     const made = next as { spec: FurnitureSpec; built: Built } | null;
-    if (made) await makePhotos(made.built.render, made.spec, made.spec.title);
+    if (made) await makePhotos(made.built.render, made.spec);
   };
 
   /** A new size rebuilds the model at it (its parts keep their own sizes: legs, rails, cushions). */
@@ -200,7 +199,7 @@ export function FurnitureGenerator() {
         const shown = api && (Object.keys(chosen).length || api.dirty()) ? await api.exportGlb() : null;
         const glbUrl = await uploadPublicFile(owner, new File([shown ?? built.glb], `${spec.kind}.glb`, { type: "model/gltf-binary" }), `${id}/model`);
         const urls: string[] = [];
-        for (const photo of photos.filter((p): p is string => Boolean(p))) urls.push(await uploadPublicFile(owner, new File([await (await fetch(photo)).blob()], "photo.png", { type: "image/png" }), `${id}/variants`));
+        for (const photo of photos.filter((p): p is string => Boolean(p))) urls.push(await uploadPublicFile(owner, new File([await (await fetch(photo)).blob()], "photo.jpg", { type: "image/jpeg" }), `${id}/variants`));
         if (urls.length) {
           const inserted = await supabase().from("model_variants").insert(urls.map((image_url, sort_order) => ({ model_id: id, image_url, sort_order })));
           if (inserted.error) throw new Error(inserted.error.message);
@@ -242,7 +241,7 @@ export function FurnitureGenerator() {
         </div>
 
         <section className="space-y-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <p className="text-sm text-slate-600">{t("Choose a type. GPT Sol designs a new piece with its parts, sizes, Arabic name and product photos. Nothing is saved until you confirm.")}</p>
+          <p className="text-sm text-slate-600">{t("Choose a type. A new piece is designed with its parts, sizes, Arabic name and product photos. Nothing is saved until you confirm.")}</p>
           <div role="radiogroup" aria-label={t("Furniture type")} className="grid grid-cols-2 gap-2 sm:grid-cols-4">
             {KINDS.map(({ id, label, icon: Icon }) => (
               <button key={id} type="button" role="radio" aria-checked={kind === id} disabled={busy !== null} onClick={() => setKind(id)}
@@ -253,7 +252,7 @@ export function FurnitureGenerator() {
           </div>
           <button type="button" disabled={busy !== null} onClick={() => void generate()} className="inline-flex h-11 items-center gap-2 rounded-xl bg-brand-amber px-5 text-sm font-semibold text-brand-navy shadow-sm disabled:opacity-60">
             {busy === "design" ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <Sparkles className="size-4" aria-hidden />}
-            {busy === "design" ? t("Designing with GPT Sol…") : spec ? t("Generate another") : t("Generate furniture")}
+            {busy === "design" ? t("Designing…") : spec ? t("Generate another") : t("Generate furniture")}
           </button>
           {error && <p className="rounded-xl bg-red-50 px-4 py-2.5 text-sm text-red-700">{error}</p>}
         </section>
@@ -305,12 +304,12 @@ export function FurnitureGenerator() {
               <div className="rounded-2xl border border-slate-200 bg-white p-4">
                 <div className="mb-3 flex items-center justify-between gap-2">
                   <p className="text-sm font-semibold text-brand-navy">{t("Product photos")}</p>
-                  <button type="button" disabled={busy !== null || shooting.length > 0} onClick={async () => void makePhotos(await reference(), spec, title)} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-brand-navy disabled:opacity-60">
+                  <button type="button" disabled={busy !== null || shooting.length > 0} onClick={async () => void makePhotos(await reference(), spec)} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-brand-navy disabled:opacity-60">
                     {shooting.length ? <Loader2 className="size-3.5 animate-spin" aria-hidden /> : <RefreshCw className="size-3.5" aria-hidden />} {shooting.length ? t("Making photos…") : t("Regenerate all photos")}
                   </button>
                 </div>
                 {stale && <p className="mb-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-900">{t("The photos show an earlier version of the model. Regenerate them to match.")}</p>}
-                {shooting.length > 0 && <p className="mb-2 text-xs text-slate-500">{t("GPT Sol is photographing the model in high quality (1–3 minutes)…")}</p>}
+                {shooting.length > 0 && <p className="mb-2 text-xs text-slate-500">{t("Photographing the model (about a minute)…")}</p>}
                 {photos.length || shooting.length ? (
                   <div className="grid grid-cols-2 gap-2">
                     {SHOTS.map((label, i) => {
@@ -330,7 +329,7 @@ export function FurnitureGenerator() {
                           )}
                           <figcaption className="flex items-center gap-1 border-t bg-white px-2 py-1 text-[11px] text-slate-600">
                             <span className="me-auto truncate">{t(label)}{i === 0 && src ? ` · ${t("Main photo")}` : ""}</span>
-                            <button type="button" disabled={making || busy === "save"} onClick={async () => void makePhotos(await reference(), spec, title, i)} aria-label={t("Regenerate this photo")} title={t("Regenerate this photo")} className="flex size-7 items-center justify-center rounded-md hover:bg-slate-100 disabled:opacity-40">
+                            <button type="button" disabled={making || busy === "save"} onClick={async () => void makePhotos(await reference(), spec, i)} aria-label={t("Regenerate this photo")} title={t("Regenerate this photo")} className="flex size-7 items-center justify-center rounded-md hover:bg-slate-100 disabled:opacity-40">
                               <RefreshCw className="size-3.5" aria-hidden />
                             </button>
                             {src && (

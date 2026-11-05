@@ -124,13 +124,14 @@ export function ModelDetail({ id }: { id: string }) {
           ...newFile,
           ...(materials?.fields ?? {}),
           // Only when changed: saving keeps working before woods.sql adds the column.
-          ...(JSON.stringify(woods) !== JSON.stringify(model.woods ?? null) ? { woods } : {}),
+          // Sha2ty's models are offered in every wood (an earlier pick is cleared); a vendor's keep their choice.
+          ...(vendor?.platform ? (model.woods != null ? { woods: null } : {}) : JSON.stringify(woods) !== JSON.stringify(model.woods ?? null) ? { woods } : {}),
         });
       if (updated.error) {
         setError(updated.error.message);
         return;
       }
-      setModel({ ...model, ...newFile, ...(materials?.fields ?? {}), woods, title: title.trim() || model.title } as CatalogModel);
+      setModel({ ...model, ...newFile, ...(materials?.fields ?? {}), woods: vendor?.platform ? null : woods, title: title.trim() || model.title } as CatalogModel);
       setReplaced(null);
       if (materials?.thumbnailError) {
         setError(t("Saved, but the model image could not be updated ({error}). The previous image is kept; save again to retry.", { error: materials.thumbnailError }));
@@ -173,7 +174,8 @@ export function ModelDetail({ id }: { id: string }) {
         {/* Changes to variants save immediately (add / remove one / remove all). */}
         <VariantsEditor kind="model" itemId={model.id} vendorId={vendor?.id} />
       </Card>
-      {category === "furniture" && (
+      {/* Sha2ty's models (admins) come in every wood: the customer picks one when customising. */}
+      {category === "furniture" && !vendor?.platform && (
         <Card title={t("Wood types")} icon={<Trees className="size-4" aria-hidden />}>
           <WoodsField vendorId={vendor?.id} platform={vendor?.platform} value={woods} onChange={setWoods} />
         </Card>
