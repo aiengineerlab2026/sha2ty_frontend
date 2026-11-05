@@ -2,7 +2,7 @@
 
 import { CARPETS_ENABLED, WINDOWS_ENABLED } from "@/lib/features";
 import { setLocale, useLocale, useT } from "@/lib/i18n";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { Check, ChevronDown, LayoutGrid, LogOut, Menu, PackageCheck, PencilRuler, Plus, Settings, Shapes, Shield, ShoppingBag } from "lucide-react";
@@ -62,6 +62,24 @@ export function Header({ vendor, actions }: { vendor?: VendorProfile | null; act
   // Requests are a signed-in feature: guests do not see the link (the page itself asks them to log in).
   const nav = vendor ? STUDIO_NAV : CATALOG_NAV.filter((item) => user || item.href !== "/tasks");
   const current = activeHref(pathname, nav);
+  // The links show whenever they fit beside the brand and the account controls (measured, so a desktop never gets the
+  // menu button for links that would fit); the menu button only when they do not. With page actions (the plan
+  // editor) the links share the bar with them, so they stay in the menu until 2xl as before.
+  const navRef = useRef<HTMLElement>(null);
+  const linksRef = useRef<HTMLUListElement>(null);
+  const [fits, setFits] = useState(true);
+  useLayoutEffect(() => {
+    const bar = navRef.current;
+    const links = linksRef.current;
+    if (!bar || !links || actions) return;
+    const check = () => setFits(links.scrollWidth <= bar.clientWidth);
+    check();
+    const observer = new ResizeObserver(check);
+    observer.observe(bar);
+    observer.observe(links);
+    return () => observer.disconnect();
+  }, [actions, nav.length]);
+  const showLinks = actions ? "hidden 2xl:flex" : fits ? "flex" : "pointer-events-none invisible absolute flex";
   const [admin, setAdmin] = useState(false);
   useEffect(() => {
     void getUser().then(setUser);
@@ -98,9 +116,10 @@ export function Header({ vendor, actions }: { vendor?: VendorProfile | null; act
 
         {/* The links show only when the space left by the brand and the account controls fits them all (a container
             query on this nav, so a longer studio nav or a wider account area never overlaps); otherwise the menu. */}
-        <nav className="@container flex h-full min-w-9 flex-1 items-center gap-4 xl:gap-6" aria-label={t("Main")}>
-          <MobileNav nav={nav} current={current} signedIn={Boolean(vendor)} admin={admin} wideOnly={Boolean(actions)} onGetApp={() => setGetApp(true)} />
-          <ul className={`hidden h-full shrink-0 items-center gap-1 ${actions ? "2xl:flex" : "@[62rem]:flex"}`}>
+        <nav ref={navRef} className="relative flex h-full min-w-9 flex-1 items-center gap-4 xl:gap-6" aria-label={t("Main")}>
+          {(actions || !fits) && <MobileNav nav={nav} current={current} signedIn={Boolean(vendor)} admin={admin} wideOnly={Boolean(actions)} onGetApp={() => setGetApp(true)} />}
+          {/* Kept laid out when hidden (invisible): its natural width is what is measured. */}
+          <ul ref={linksRef} aria-hidden={!actions && !fits ? true : undefined} className={`h-full shrink-0 items-center gap-1 whitespace-nowrap ${showLinks}`}>
             {nav.map((item) => {
               const active = current === item.href;
               return (
@@ -301,7 +320,7 @@ function MobileNav({ nav, current, signedIn, admin, wideOnly, onGetApp }: { nav:
         <button
           type="button"
           aria-label={t("Menu")}
-          className={`flex size-9 shrink-0 items-center justify-center rounded-lg text-slate-600 transition-colors hover:bg-slate-100 hover:text-brand-navy ${wideOnly ? "2xl:hidden" : "@[62rem]:hidden"}`}
+          className={`flex size-9 shrink-0 items-center justify-center rounded-lg text-slate-600 transition-colors hover:bg-slate-100 hover:text-brand-navy ${wideOnly ? "2xl:hidden" : ""}`}
         >
           <Menu className="size-5" />
         </button>
