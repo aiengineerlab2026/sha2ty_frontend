@@ -5,7 +5,7 @@ import { TV_ENABLED } from "../features";
 export type ModelCategory = "furniture" | "table" | "wardrobe" | "door" | "tv" | "lighting" | "ceiling_light" | "air_conditioner" | "wall_art";
 
 export const CATEGORIES: { id: ModelCategory; label: string; hint: string }[] = [
-  { id: "furniture", label: "Furniture", hint: "Sofas, beds, chairs, storage" },
+  { id: "furniture", label: "Furniture", hint: "Sofas, beds, chairs, tables, storage" },
   { id: "table", label: "Tables", hint: "Dining, coffee and side tables, desks" },
   { id: "wardrobe", label: "Wardrobes", hint: "Wardrobes and closets" },
   { id: "door", label: "Doors", hint: "Interior and entrance doors, fitted into a doorway of the plan" },
@@ -18,6 +18,14 @@ export const CATEGORIES: { id: ModelCategory; label: string; hint: string }[] = 
 
 /** The categories offered (pickers, catalogue rows, planner groups): TV & AV is switched off for now (lib/features). */
 export const SHOWN_CATEGORIES = CATEGORIES.filter((c) => TV_ENABLED || c.id !== "tv");
+
+/** The catalogue's rows and the planner's groups: tables are shown with the furniture (they keep their own category,
+ * which decides how they behave in a plan, e.g. a TV standing on one). */
+export const CATALOG_GROUPS = SHOWN_CATEGORIES.filter((c) => c.id !== "table");
+export const groupOf = (c: string | null | undefined): ModelCategory => {
+  const cat = categoryOf(c);
+  return cat === "table" ? "furniture" : cat;
+};
 
 export const categoryOf = (c: string | null | undefined): ModelCategory => (CATEGORIES.some((x) => x.id === c) ? (c as ModelCategory) : "furniture");
 
