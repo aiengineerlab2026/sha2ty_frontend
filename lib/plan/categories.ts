@@ -1,3 +1,5 @@
+import { TV_ENABLED } from "../features";
+
 /** Catalogue model categories. Ceiling lights hang from the ceiling, wall art hangs on a wall at eye
  * level; everything else stands on the floor. */
 export type ModelCategory = "furniture" | "table" | "wardrobe" | "door" | "tv" | "lighting" | "ceiling_light" | "air_conditioner" | "wall_art";
@@ -13,6 +15,9 @@ export const CATEGORIES: { id: ModelCategory; label: string; hint: string }[] = 
   { id: "air_conditioner", label: "Air conditioners", hint: "Split and standing units" },
   { id: "wall_art", label: "Wall art & images", hint: "Framed pictures, paintings, prints and mirrors, hung at eye level" },
 ];
+
+/** The categories offered (pickers, catalogue rows, planner groups): TV & AV is switched off for now (lib/features). */
+export const SHOWN_CATEGORIES = CATEGORIES.filter((c) => TV_ENABLED || c.id !== "tv");
 
 export const categoryOf = (c: string | null | undefined): ModelCategory => (CATEGORIES.some((x) => x.id === c) ? (c as ModelCategory) : "furniture");
 

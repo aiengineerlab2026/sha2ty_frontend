@@ -9,7 +9,7 @@ import type { CatalogModel, CompanyGroup } from "@/lib/plan/types";
 import { CompanyModelGroup } from "./CompanyModelGroup";
 import { SIDEBAR_ACTION, SidebarStatus } from "./SidebarStatus";
 import { CategoryIcon } from "@/components/shatably/CategoryIcon";
-import { CATEGORIES, categoryOf } from "@/lib/plan/categories";
+import { SHOWN_CATEGORIES, categoryOf } from "@/lib/plan/categories";
 
 export function ModelSidebar({ activeId, onPick }: { activeId: string | null; onPick: (model: CatalogModel) => void }) {
   const t = useT();
@@ -39,7 +39,7 @@ export function ModelSidebar({ activeId, onPick }: { activeId: string | null; on
 
   const byCategory = useMemo(() => {
     const models = visible.flatMap((g) => g.models);
-    return CATEGORIES.map((c) => ({ id: c.id, name: c.label, logo_url: null, models: models.filter((m) => categoryOf(m.category) === c.id) })).filter((g) => g.models.length);
+    return SHOWN_CATEGORIES.map((c) => ({ id: c.id, name: c.label, logo_url: null, models: models.filter((m) => categoryOf(m.category) === c.id) })).filter((g) => g.models.length);
   }, [visible]);
 
   return (

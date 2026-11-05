@@ -2,7 +2,7 @@
 
 import { useT } from "@/lib/i18n";
 import { CategoryIcon } from "@/components/shatably/CategoryIcon";
-import { CATEGORIES, type ModelCategory } from "@/lib/plan/categories";
+import { SHOWN_CATEGORIES, type ModelCategory } from "@/lib/plan/categories";
 
 /** Which catalogue group a model belongs to; ceiling lights are hung from the ceiling in plans. */
 export function CategoryPicker({ value, onChange }: { value: ModelCategory; onChange: (c: ModelCategory) => void }) {
@@ -11,7 +11,7 @@ export function CategoryPicker({ value, onChange }: { value: ModelCategory; onCh
     <fieldset className="space-y-1.5">
       <legend className="text-sm font-medium">{t("Category")}</legend>
       <div role="radiogroup" className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-        {CATEGORIES.map((c) => {
+        {SHOWN_CATEGORIES.map((c) => {
           const on = value === c.id;
           return (
             <button
