@@ -87,14 +87,17 @@ export function Header({ vendor, actions }: { vendor?: VendorProfile | null; act
     void getUser().then(setUser);
     return onAuthChange(setUser);
   }, []);
+  // Checked again whenever the session changes: signing out ends the admin's session too.
   useEffect(() => {
     void apiFetch("/api/auth/admin-me")
       .then((res) => res.json())
       .then((body) => setAdmin(Boolean(body?.admin)))
       .catch(() => setAdmin(false));
-  }, []);
+  }, [user]);
 
   const signOut = async () => {
+    setAdmin(false);
+    setUser(null);
     await logout();
     router.push("/vendor/login");
     router.refresh();
