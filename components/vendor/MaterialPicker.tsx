@@ -2,9 +2,10 @@
 
 import { useT } from "@/lib/i18n";
 import { useEffect, useMemo, useState } from "react";
-import { Search, X } from "lucide-react";
+import { Search, ShoppingCart, X } from "lucide-react";
 import { supabase, supabaseConfigured } from "@/lib/supabase/client";
 import { vendorBrands } from "@/lib/tasks";
+import { addToCart } from "@/lib/cart";
 import { formatPrice } from "@/lib/plan/pricing";
 import { PAINT_COATS, quote, UNIT_LABEL, woodType, type PartMaterial, type PartMaterialOption } from "@/lib/designs/materials";
 import { ROLL_WIDTH_M } from "@/lib/designs/fabric";
@@ -52,6 +53,7 @@ function patch(material: PartMaterial, shown: PartMaterialOption): MaterialEdit 
  * Picking calls `onPick` with the material edit. */
 export function MaterialPicker({ mode, edit, area, woodVendor, woodModel, onPick }: { mode: "fabric" | "wood" | "paint"; edit: MaterialEdit | null; area?: number | null; woodVendor?: string | null; woodModel?: string | null; onPick: (patch: MaterialEdit) => void }) {
   const t = useT();
+  const [added, setAdded] = useState<string | null>(null); // the material last added to the cart (button says so)
   const [library, setLibrary] = useState<PartMaterialOption[] | null>(() => (supabaseConfigured() ? null : []));
   const [search, setSearch] = useState("");
   const [colors, setColors] = useState<PaintColor[] | null>(() => (supabaseConfigured() ? null : []));
@@ -74,10 +76,12 @@ export function MaterialPicker({ mode, edit, area, woodVendor, woodModel, onPick
         ]);
         const brands = await vendorBrands([...new Set([...rows, ...walls].map((r) => r.vendor_id))]).catch(() => []);
         const of = new Map(brands.map((b) => [b.id, b]));
+        // Paints are the vendors' own: Sha2ty's studio (the admins') sells none here.
+        const vendors = (r: { vendor_id: string }) => !of.get(r.vendor_id)?.platform;
         // A wall paint in a palette colour is listed under that colour; another colour gets its own swatch.
         const byHex = new Map(palette.map((c) => [c.hex.toLowerCase(), c]));
         const extra: PaintColor[] = [];
-        const wallOptions = walls.filter((w) => /^#[0-9a-f]{6}$/i.test(w.color ?? "")).map((w): PartMaterialOption => {
+        const wallOptions = walls.filter((w) => vendors(w) && /^#[0-9a-f]{6}$/i.test(w.color ?? "")).map((w): PartMaterialOption => {
           const hex = w.color!.toLowerCase();
           let color = byHex.get(hex);
           if (!color) {
@@ -88,7 +92,7 @@ export function MaterialPicker({ mode, edit, area, woodVendor, woodModel, onPick
           return { id: w.id, kind: "paint", name: w.name, url: "", tile: 1, price: w.price == null ? null : Number(w.price), unit: "m2", color, coverage_m2: 1, vendor: of.get(w.vendor_id) ?? null };
         });
         setColors([...palette, ...extra]);
-        setLibrary([...rows.map((r) => option({ ...r, vendors: of.get(r.vendor_id) ?? null }, new Map(palette.map((c) => [c.id, c])))), ...wallOptions]);
+        setLibrary([...rows.filter((r) => r.kind !== "paint" || vendors(r)).map((r) => option({ ...r, vendors: of.get(r.vendor_id) ?? null }, new Map(palette.map((c) => [c.id, c])))), ...wallOptions]);
       });
   }, []);
   // A vendor's own model: only the woods that vendor works with (supabase/woods.sql vendor_woods). Sha2ty's models
@@ -353,6 +357,24 @@ export function MaterialPicker({ mode, edit, area, woodVendor, woodModel, onPick
           <p className="mt-0.5 text-[11px] text-slate-400">
             {estimate.kind === "fabric" ? t("Estimate for a {width} m wide roll, with 10% for seams.", { width: ROLL_WIDTH_M }) : estimate.kind === "paint" ? t("Estimate for {coats} coats.", { coats: estimate.coats ?? PAINT_COATS }) : t("Estimate: boards from half the wooden parts' surface, with 15% for cutting waste.")}
           </p>
+          {/* Fabric and paint can be bought as estimated for this model (metres, litres / kg, or m²); a guest is asked to log in. */}
+          {(estimate.kind === "fabric" || estimate.kind === "paint") && estimate.quantity != null && (
+            <button
+              type="button"
+              onClick={() => {
+                const per = t(UNIT_LABEL[estimate.unit]);
+                const kind = estimate.kind as "fabric" | "paint";
+                void addToCart([{ key: `${kind}:${estimate.id}`, kind, refId: estimate.id, name: estimate.name, quantity: estimate.quantity!, unit: "item", per, price: estimate.price ?? null }]).then(
+                  () => setAdded(estimate.id),
+                  () => setAdded(null),
+                );
+              }}
+              className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-lg bg-brand-navy px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-brand-navy/90"
+            >
+              <ShoppingCart className="size-3.5" aria-hidden />
+              {added === estimate.id ? t("Added to cart · {qty} {unit}", { qty: String(estimate.quantity), unit: t(UNIT_LABEL[estimate.unit]) }) : t("Add to cart · {qty} {unit}", { qty: String(estimate.quantity), unit: t(UNIT_LABEL[estimate.unit]) })}
+            </button>
+          )}
         </div>
       )}
     </>

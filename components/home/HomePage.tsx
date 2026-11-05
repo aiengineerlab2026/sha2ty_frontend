@@ -67,8 +67,7 @@ export function HomePage({ only }: { only?: CatalogKind } = {}) {
   // Upholstery fabrics (vendors' library) on the home page, and each paint's / fabric's vendor (name and logo).
   const [fabrics, setFabrics] = useState<FabricItem[]>([]);
   const [brands, setBrands] = useState<Map<string, Owner>>(new Map());
-  // The admins' paint palette (supabase/model_paints.sql): shown with the vendors' paints, as Sha2ty's colours.
-  const [palette, setPalette] = useState<{ id: string; name: string; hex: string }[]>([]);
+  const [platformIds, setPlatformIds] = useState<Set<string>>(new Set());
   const [loaded, setLoaded] = useState(false); // catalogue fetched: until then rows show placeholders, not "none yet"
 
   useEffect(() => {
@@ -115,26 +114,17 @@ export function HomePage({ only }: { only?: CatalogKind } = {}) {
     };
   }, [only]);
 
-  useEffect(() => {
-    if (!supabaseConfigured() || (only && only !== "paints")) return;
-    let live = true;
-    void supabase()
-      .from("paint_colors")
-      .select("id, name, hex")
-      .order("created_at")
-      .then(({ data }) => live && setPalette((data ?? []) as { id: string; name: string; hex: string }[]), () => undefined);
-    return () => {
-      live = false;
-    };
-  }, [only]);
-
   // Guests cannot read the vendors table: names and logos come from the backend's public brands list.
   useEffect(() => {
     const ids = [...new Set([...paints, ...fabrics].map((x) => (x as { vendor_id?: string | null }).vendor_id).filter((id): id is string => Boolean(id)))];
     if (!ids.length) return;
     let live = true;
     vendorBrands(ids).then(
-      (list) => live && setBrands(new Map(list.map((b) => [b.id, { name: b.name, logo_url: b.logo_url }]))),
+      (list) => {
+        if (!live) return;
+        setBrands(new Map(list.map((b) => [b.id, { name: b.name, logo_url: b.logo_url }])));
+        setPlatformIds(new Set(list.filter((b) => b.platform).map((b) => b.id)));
+      },
       () => undefined, // no brands: the cards simply show no owner
     );
     return () => {
@@ -166,10 +156,8 @@ export function HomePage({ only }: { only?: CatalogKind } = {}) {
   // The home page is the furniture and the paints; carpets and windows each have their own page (/catalog/<kind>).
   const show = (kind: CatalogKind) => (only ? only === kind : kind === "models" || kind === "paints");
   const grid = Boolean(only);
-  const colours = paints.filter((p) => (p.surface ?? "wall") === "wall");
-  // Palette colours no vendor paint already shows (same colour).
-  const vendorHexes = new Set(colours.filter((p) => p.kind === "color").map((p) => p.color.toLowerCase()));
-  const adminColours = palette.filter((c) => !vendorHexes.has(c.hex.toLowerCase()));
+  // Vendors' paints only: Sha2ty's own (the admins' studio) are left out.
+  const colours = paints.filter((p) => (p.surface ?? "wall") === "wall" && !platformIds.has((p as { vendor_id?: string }).vendor_id ?? ""));
   // One carousel per model type that has models (all empty: a single "Models" row says so).
   const modelGroups = CATALOG_GROUPS.map((c) => ({
     ...c,
@@ -317,7 +305,7 @@ export function HomePage({ only }: { only?: CatalogKind } = {}) {
                 grid={grid}
                 title={t("Paint colours")}
                 subtitle={t("Wall finishes")}
-                count={colours.length + adminColours.length}
+                count={colours.length}
                 empty={t("No wall paints yet.")}
               >
                 {colours.map((p) => (
@@ -341,11 +329,6 @@ export function HomePage({ only }: { only?: CatalogKind } = {}) {
                       paint={p}
                       className="size-full"
                     />
-                  </Card>
-                ))}
-                {adminColours.map((c) => (
-                  <Card key={`palette-${c.id}`} href="/plan" tag={t("Paint")} title={t(c.name)} meta={c.hex.toUpperCase()} owner={{ name: "Sha2ty", logo_url: "/icon.svg" }} compact>
-                    <span className="block size-full" style={{ background: c.hex }} />
                   </Card>
                 ))}
               </Carousel>

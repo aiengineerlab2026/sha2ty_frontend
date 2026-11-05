@@ -6,7 +6,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { placeOrder } from "@/lib/orders";
-import { AppWindow, Armchair, BrickWall, DoorOpen, LayoutGrid, LoaderCircle, Minus, Plus, RectangleHorizontal, ShoppingCart, Trash2 } from "lucide-react";
+import { AppWindow, Armchair, BrickWall, DoorOpen, LayoutGrid, LoaderCircle, Minus, PaintBucket, Plus, RectangleHorizontal, Scissors, ShoppingCart, Trash2 } from "lucide-react";
 import { Header } from "@/components/shatably/Header";
 import { clearCart, lineTotal, setCartQuantity, useCart, type CartLine } from "@/lib/cart";
 import { formatPrice } from "@/lib/plan/pricing";
@@ -20,6 +20,8 @@ const GROUPS: { kind: CartLine["kind"]; title: string; icon: typeof Armchair }[]
   { kind: "floor", title: "Floor finishes", icon: LayoutGrid },
   { kind: "window", title: "Windows", icon: AppWindow },
   { kind: "door", title: "Doors", icon: DoorOpen },
+  { kind: "fabric", title: "Fabrics", icon: Scissors },
+  { kind: "paint", title: "Furniture paints", icon: PaintBucket },
 ];
 
 /** Cart: everything the user added, grouped by kind, with quantities (pieces or m²) and totals. */
@@ -55,7 +57,8 @@ export function CartPage() {
 
   const subtotal = lines.reduce((sum, l) => sum + (lineTotal(l) ?? 0), 0);
   const unpriced = lines.filter((l) => l.price == null).length;
-  const pieces = lines.reduce((n, l) => n + (l.unit === "m2" ? 1 : Math.round(l.quantity)), 0);
+  // Area, metre, litre and kg lines count as one item each; pieces by their number.
+  const pieces = lines.reduce((n, l) => n + (l.unit === "m2" || l.per ? 1 : Math.round(l.quantity)), 0);
 
   return (
     <div className="min-h-full bg-slate-50">
@@ -107,7 +110,7 @@ export function CartPage() {
                         <li key={l.key} className="flex flex-wrap items-center gap-4 px-5 py-4">
                           <div className="min-w-0 flex-1">
                             <p className="truncate font-medium text-brand-navy">{l.name}</p>
-                            <p className="text-xs text-slate-500">{formatPrice(l.price, l.unit)}</p>
+                            <p className="text-xs text-slate-500">{formatPrice(l.price, l.unit)}{l.per ? ` / ${l.per}` : ""}</p>
                           </div>
                           <Stepper line={l} />
                           <p className="w-28 text-end text-sm font-semibold tabular-nums text-brand-navy">{lineTotal(l) == null ? t("On request") : formatPrice(lineTotal(l))}</p>

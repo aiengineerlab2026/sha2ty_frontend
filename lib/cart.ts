@@ -9,12 +9,15 @@ import type { PriceUnit } from "./plan/pricing";
 /** One cart line. quantity is pieces for item prices, m² for area prices. */
 export interface CartLine {
   key: string;
-  kind: "model" | "carpet" | "wall" | "floor" | "window" | "door";
+  kind: "model" | "carpet" | "wall" | "floor" | "window" | "door" | "fabric" | "paint";
   refId: string;
   name: string;
   quantity: number;
   unit: PriceUnit;
   price: number | null;
+  /** What one unit of `quantity` is, when not a piece or m² (fabric by the metre, paint by the litre or kg): shown after
+   * the price ("/ m"). The total is still price × quantity. */
+  per?: string;
 }
 
 /**
