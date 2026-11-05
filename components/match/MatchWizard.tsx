@@ -2,8 +2,11 @@
 
 import { CARPETS_ENABLED } from "@/lib/features";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Armchair, ArrowLeft, ArrowRight, Images, ImagePlus, LoaderCircle, Minus, PackageCheck, PaintRoller, Plus, RectangleHorizontal, ShoppingCart, Wand2 } from "lucide-react";
+import { Armchair, ArrowLeft, ArrowRight, Images, ImagePlus, LoaderCircle, Minus, PackageCheck, PaintRoller, Plus, RectangleHorizontal, Search, ShoppingCart, Wand2 } from "lucide-react";
 import { useCart } from "@/lib/cart";
+import { customisedModels } from "@/lib/designs/api";
+import { fetchCatalog } from "@/lib/plan/api";
+import { supabase, supabaseConfigured } from "@/lib/supabase/client";
 import { fetchOrders } from "@/lib/orders";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { useT } from "@/lib/i18n";
@@ -22,8 +25,8 @@ const TYPES: { id: MatchType; label: string; hint: string; icon: typeof Armchair
 ];
 
 /** Cart / bought line kinds that can be matched, and the match type each becomes. */
-const PICKABLE = { model: "furniture", carpet: "carpet", wall: "wall_paint" } as const;
-type Pick = { kind: keyof typeof PICKABLE; id: string; name: string; bought: boolean };
+const PICKABLE = { model: "furniture", design: "furniture", user_model: "furniture", carpet: "carpet", wall: "wall_paint" } as const;
+type Pick = { kind: keyof typeof PICKABLE; id: string; name: string; bought: boolean; image?: string | null };
 
 const POSITIONS: { id: MatchPosition; label: string }[] = [
   { id: "front", label: "Front" },
@@ -33,8 +36,12 @@ const POSITIONS: { id: MatchPosition; label: string }[] = [
 ];
 
 
-/** "Match" on a model's page: wizard → backend compositing → full-screen results (kept for reopening). */
-export function MatchButton({ model }: { model: CatalogModel }) {
+/** The item shown with the other one: a catalogue model, or (in the 3D editor) the shopper's saved design or own model. */
+export type MatchItem = { [K in "id" | "title" | "thumbnail" | "width_m" | "height_m" | "depth_m"]: CatalogModel[K] } & { kind?: "model" | "design" | "user_model" };
+
+/** "Match" on a model's page or in the 3D editor: wizard → backend compositing → full-screen results (kept for
+ * reopening). `canOpen` may refuse (unsaved edits: the backend only sees the saved design). */
+export function MatchButton({ model, canOpen, compact = false }: { model: MatchItem; canOpen?: () => boolean; compact?: boolean }) {
   const t = useT();
   const [open, setOpen] = useState(false);
   // Bumped on every Match press: the wizard remounts, so it starts empty at step 1.
@@ -47,19 +54,23 @@ export function MatchButton({ model }: { model: CatalogModel }) {
   if (!model.thumbnail) return null; // nothing to match against
   return (
     <>
-      <div className="flex flex-wrap gap-2">
+      {/* `compact`: icon buttons for a toolbar (the editor's top bar on phones). */}
+      <div className={`flex gap-2 ${compact ? "shrink-0" : "flex-wrap"}`}>
         <button
           type="button"
           onClick={() => {
+            if (canOpen && !canOpen()) return;
             setSession((n) => n + 1);
             setOpen(true);
           }}
-          className="inline-flex h-10 items-center gap-2 rounded-xl bg-brand-navy px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-navy-hover">
-          <Wand2 className="size-4 text-brand-amber" aria-hidden /> {t("See how it looks with other items")}
+          aria-label={t("See how it looks with other items")}
+          title={compact ? t("See how it looks with other items") : undefined}
+          className={compact ? "inline-flex size-10 items-center justify-center rounded-xl bg-brand-navy text-white shadow-sm transition hover:bg-brand-navy-hover" : "inline-flex h-10 items-center gap-2 rounded-xl bg-brand-navy px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-navy-hover"}>
+          <Wand2 className="size-4 text-brand-amber" aria-hidden /> {!compact && t("See how it looks with other items")}
         </button>
         {results && (
-          <button type="button" onClick={() => setResultsOpen(true)} className="inline-flex h-10 items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:text-brand-navy">
-            <Images className="size-4" aria-hidden /> {t("View results ({n})", { n: results.variations.length })}
+          <button type="button" onClick={() => setResultsOpen(true)} aria-label={t("View results ({n})", { n: results.variations.length })} className={compact ? "inline-flex size-10 items-center justify-center rounded-xl border border-slate-200 bg-white text-brand-navy shadow-sm" : "inline-flex h-10 items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:text-brand-navy"}>
+            <Images className="size-4" aria-hidden /> {!compact && t("View results ({n})", { n: results.variations.length })}
           </button>
         )}
       </div>
@@ -92,7 +103,7 @@ export function MatchButton({ model }: { model: CatalogModel }) {
   );
 }
 
-function MatchWizard({ open, onOpenChange, model, onDone }: { open: boolean; onOpenChange: (v: boolean) => void; model: CatalogModel; onDone: (r: { variations: MatchVariation[]; warnings: string[]; type: MatchType }) => void }) {
+function MatchWizard({ open, onOpenChange, model, onDone }: { open: boolean; onOpenChange: (v: boolean) => void; model: MatchItem; onDone: (r: { variations: MatchVariation[]; warnings: string[]; type: MatchType }) => void }) {
   const t = useT();
   const [type, setType] = useState<MatchType | null>(null);
   const [step, setStep] = useState(0);
@@ -145,6 +156,7 @@ function MatchWizard({ open, onOpenChange, model, onDone }: { open: boolean; onO
       const result = await requestMatch(
         {
           modelId: model.id,
+          modelKind: model.kind,
           matchType: type,
           width: picked ? undefined : num(width),
           height: picked ? undefined : num(height),
@@ -257,6 +269,15 @@ function MatchWizard({ open, onOpenChange, model, onDone }: { open: boolean; onO
                   </div>
                 </div>
               )}
+              <ModelChooser
+                modelId={model.id}
+                picked={picked}
+                onPick={(p) => {
+                  setPicked(p);
+                  setType("furniture");
+                  setPosition(null);
+                }}
+              />
             </Question>
           )}
 
@@ -492,4 +513,108 @@ function usePicks(modelId: string): Pick[] {
       return true;
     });
   }, [cart, bought, modelId]);
+}
+
+type Source = "model" | "design" | "user_model";
+const SOURCES: { id: Source; label: string }[] = [
+  { id: "model", label: "Catalogue" },
+  { id: "design", label: "My customised models" },
+  { id: "user_model", label: "My uploaded models" },
+];
+
+/** Instead of uploading a photo: a catalogue model, or one of the shopper's customised or uploaded models. Its photo
+ * and real size are read by the backend (only items with both are listed). */
+function ModelChooser({ modelId, picked, onPick }: { modelId: string; picked: Pick | null; onPick: (p: Pick) => void }) {
+  const t = useT();
+  const [source, setSource] = useState<Source>("model");
+  const [query, setQuery] = useState("");
+  const [items, setItems] = useState<Pick[] | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    const done = (list: Pick[]) => live && setItems(list.filter((p) => p.image));
+    const fail = () => live && setItems([]); // signed out / table missing: nothing to choose
+    const timer = setTimeout(() => {
+      if (source === "model") {
+        fetchCatalog(query.trim(), 0, false).then(
+          (r) => done(r.companies.flatMap((c) => c.models).filter((m) => m.id !== modelId && m.width_m && m.height_m).map((m) => ({ kind: "model", id: m.id, name: m.title, bought: false, image: m.thumbnail }))),
+          fail,
+        );
+      } else if (source === "design") {
+        customisedModels().then(
+          (list) => done(list.filter((d) => d.current?.data.item).map((d) => ({ kind: "design", id: d.id, name: d.title || d.current!.data.item!.source.title, bought: false, image: d.current?.thumbnail_url || d.thumbnail_url }))),
+          fail,
+        );
+      } else if (supabaseConfigured()) {
+        void supabase()
+          .from("user_models")
+          .select("*") // thumbnail_url only exists once user_models.sql has been rerun
+          .eq("status", "ready")
+          .not("width_m", "is", null)
+          .order("created_at", { ascending: false })
+          .then(({ data }) => done(((data ?? []) as { id: string; title: string; thumbnail_url?: string | null; source_image_url: string | null }[]).map((m) => ({ kind: "user_model", id: m.id, name: m.title, bought: false, image: m.thumbnail_url || m.source_image_url }))), fail);
+      } else fail();
+    }, source === "model" && query ? 300 : 0);
+    return () => {
+      live = false;
+      clearTimeout(timer);
+    };
+  }, [source, query, modelId]);
+
+  return (
+    <div className="mt-6">
+      <h4 className="text-sm font-semibold text-brand-navy">{t("Or choose a model instead of uploading a photo")}</h4>
+      <p className="mt-0.5 text-xs text-slate-500">{t("Its photo and size are already known, so there's nothing to measure or upload.")}</p>
+      <div className="mt-3 flex flex-wrap items-center gap-1.5" role="tablist">
+        {SOURCES.map((s) => (
+          <button
+            key={s.id}
+            type="button"
+            role="tab"
+            aria-selected={source === s.id}
+            onClick={() => {
+              setSource(s.id);
+              setItems(null);
+            }}
+            className={`rounded-full px-3 py-1 text-xs font-medium ${source === s.id ? "bg-brand-navy text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"}`}
+          >
+            {t(s.label)}
+          </button>
+        ))}
+        {source === "model" && (
+          <label className="relative ms-auto w-full sm:w-48">
+            <Search className="pointer-events-none absolute start-2.5 top-1/2 size-3.5 -translate-y-1/2 text-slate-400" aria-hidden />
+            <input
+              value={query}
+              onChange={(e) => {
+                setQuery(e.target.value);
+                setItems(null);
+              }}
+              placeholder={t("Search…")}
+              aria-label={t("Search models")}
+              className="h-8 w-full rounded-lg border border-slate-200 ps-8 pe-2 text-xs outline-none focus:border-brand-amber"
+            />
+          </label>
+        )}
+      </div>
+      {items === null ? (
+        <LoaderCircle className="mt-3 size-5 animate-spin text-slate-400" aria-label={t("Loading…")} />
+      ) : !items.length ? (
+        <p className="mt-3 text-xs text-slate-500">{t(source === "model" ? "No models match." : "No models with a photo and size yet.")}</p>
+      ) : (
+        <div role="radiogroup" className="mt-3 grid max-h-64 grid-cols-3 gap-2 overflow-y-auto sm:grid-cols-4">
+          {items.map((p) => {
+            const on = picked?.kind === p.kind && picked.id === p.id;
+            return (
+              <button key={p.id} type="button" role="radio" aria-checked={on} onClick={() => onPick(p)} className={`overflow-hidden rounded-xl border text-start transition ${on ? "border-brand-amber ring-2 ring-brand-amber/30" : "border-slate-200 hover:border-slate-300"}`}>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={p.image!} alt="" loading="lazy" className="aspect-square w-full bg-slate-50 object-cover" />
+                <span className="block truncate px-2 py-1.5 text-xs font-medium text-brand-navy">{p.name || t("Model")}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
 }

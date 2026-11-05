@@ -5,17 +5,22 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Box, Hammer, Loader2, Save, Trash2 } from "lucide-react";
+import { ArrowLeft, Box, Camera, Hammer, Loader2, Save, Trash2 } from "lucide-react";
 import { Header } from "@/components/shatably/Header";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { appView, useInApp } from "@/lib/app";
 import { authSession } from "@/lib/auth/client";
 import { deleteDesign, designFromModel, designFromUserModel, getDesign, renameDesign, saveItemVersion, savePlanVersion } from "@/lib/designs/api";
 import { requestImplementation, requestTarget, type RequestTarget } from "@/lib/tasks";
 import { resized, stretch } from "@/lib/designs/resize";
 import type { Design, DesignData, DesignVersion, Dimensions, ItemEdits, SourceModel } from "@/lib/designs/schema";
 import { fetchCatalogModel } from "@/lib/plan/api";
+import { supabase, supabaseConfigured } from "@/lib/supabase/client";
+import type { PartDocument } from "@/lib/vendor/parts";
 import { uploadPublicFile } from "@/lib/vendor/storage";
 import { Section } from "@/components/vendor/PartEditor";
+import { MatchButton } from "@/components/match/MatchWizard";
+import { ReplaceGlb } from "@/components/vendor/ReplaceGlb";
 import type { PartEditorApi } from "@/lib/vendor/parts";
 
 const ModelViewer = dynamic(() => import("@/components/vendor/ModelViewer").then((mod) => mod.ModelViewer), {
@@ -45,6 +50,7 @@ function stable(value: unknown): string {
  * creates the design; every later Save adds a version to it (nothing is created before that first Save). */
 export function DesignEditor({ id, model }: { id: string; model?: string }) {
   const t = useT();
+  const inApp = useInApp(); // the app's browser view: it opens a saved design in AR when asked
   const router = useRouter();
   const [designId, setDesignId] = useState<string | null>(id === "new" ? null : id);
   const [userId, setUserId] = useState<string | null>(null);
@@ -73,7 +79,12 @@ export function DesignEditor({ id, model }: { id: string; model?: string }) {
   const exclusive = target?.audience === "vendor_exclusive";
   const requestLabel = exclusive ? t("Request from {vendor}", { vendor: target?.vendor?.name || t("the vendor") }) : t("Get bids from vendors");
   const [dims, setDims] = useState<Dimensions | null>(null);
+  // The listing's part list as it is now: its part variants (added by the vendor after this design was made too).
+  // undefined while loading; the editor waits for it, so variants are there from the first frame.
+  const [liveParts, setLiveParts] = useState<PartDocument | null | undefined>(undefined);
   const [proportional, setProportional] = useState(true);
+  // The customer's own new 3D file, not saved yet: Save builds the design on it (the listing is never changed).
+  const [base, setBase] = useState<string | null>(null);
   const [unit, setUnit] = useState<Unit>("cm");
   const editor = useRef<PartEditorApi | null>(null);
   const saving = useRef(false); // double clicks: one save at a time, whatever the render
@@ -152,10 +163,12 @@ export function DesignEditor({ id, model }: { id: string; model?: string }) {
     const resizedFromSource = Boolean(dims && original && stable(dims) !== stable(original));
     return {
       dimensions: dims ?? undefined,
-      components: doc.components.length ? doc : item.components,
+      components: doc.components.length ? doc : base ? undefined : item.components,
       material_edits: api.edits(),
-      ...(item.part_poses ? { part_poses: item.part_poses } : {}),
+      ...(base ?? item.base_glb_url ? { base_glb_url: base ?? item.base_glb_url } : {}),
+      ...(item.part_poses && !base ? { part_poses: item.part_poses } : {}),
       ...(api.removedParts?.().length ? { removed_parts: api.removedParts() } : {}),
+      ...(api.partVariants && Object.keys(api.partVariants()).length ? { part_variants: api.partVariants() } : {}),
       ...(resizedFromSource ? { resize_mode: proportional && dims && original && stretch(dims, original) < 1.001 ? "proportional" : "independent" } : {}),
     };
   };
@@ -164,7 +177,7 @@ export function DesignEditor({ id, model }: { id: string; model?: string }) {
   const files = async (folder: string) => {
     const api = editor.current!;
     let glbUrl = shown?.glb_url ?? null;
-    if (api.dirty() || !glbUrl) {
+    if (base || api.dirty() || !glbUrl) {
       const blob = await api.exportGlb();
       if (blob) glbUrl = await uploadPublicFile(userId!, new File([blob], "design.glb", { type: "model/gltf-binary" }), `${folder}/model`);
     }
@@ -204,6 +217,8 @@ export function DesignEditor({ id, model }: { id: string; model?: string }) {
       token.current = crypto.randomUUID();
       if ((v as { unchanged?: boolean }).unchanged) return t("No changes to save.");
       editor.current?.markClean?.();
+      if (base) setViewKey((k) => k + 1); // the saved part list of the new file from now on
+      setBase(null);
       setShown({ ...(v as Shown), data: v.data ?? { ...shown!.data, item: { ...prev!, ...item } } });
       await refresh(design.id);
       return t("Saved.");
@@ -222,6 +237,8 @@ export function DesignEditor({ id, model }: { id: string; model?: string }) {
         : await designFromModel(source.model_id, name, { item, glb_url: glbUrl, thumbnail_url: thumbnailUrl, note: "", clientToken: token.current });
       token.current = crypto.randomUUID();
       editor.current?.markClean?.();
+      if (base) setViewKey((k) => k + 1);
+      setBase(null);
       setNaming(null);
       setDesignId(made.id);
       // The page now is this design (a refresh reopens it), without reloading the editor or its undo history.
@@ -233,6 +250,7 @@ export function DesignEditor({ id, model }: { id: string; model?: string }) {
 
   /** Changes on screen that are not in the saved version (a request uses the saved version). */
   const unsaved = () => {
+    if (base) return true;
     if (editor.current?.dirty()) return true;
     const saved = shown?.data.item?.dimensions;
     return Boolean(dims && saved && stable(dims) !== stable(saved));
@@ -245,6 +263,32 @@ export function DesignEditor({ id, model }: { id: string; model?: string }) {
     });
 
   const item = shown?.data.item;
+  const listingId = item && item.source.source_type !== "user" ? item.source.model_id : null;
+  useEffect(() => {
+    if (!shown || !listingId || !supabaseConfigured()) return; // the customer's own model: its variants are its own
+    let live = true;
+    void supabase()
+      .from("models")
+      .select("components")
+      .eq("id", listingId)
+      .maybeSingle()
+      .then(
+        ({ data }) => live && setLiveParts((data?.components as PartDocument | null) ?? null),
+        () => live && setLiveParts(null),
+      );
+    return () => {
+      live = false;
+    };
+  }, [shown, listingId]);
+  // The design's own part list (its names), with each part's variants as the listing offers them now.
+  const parts: PartDocument | null = (() => {
+    if (base) return null; // a new file: its parts are read from it
+    const own = item?.components ?? null;
+    if (!listingId || item?.base_glb_url || !liveParts?.components.length) return own;
+    if (!own?.components.length) return liveParts;
+    const variants = new Map(liveParts.components.map((c) => [c.id, c.variants]));
+    return { ...own, components: own.components.map((c) => ({ ...c, variants: variants.get(c.id) ?? c.variants })) };
+  })();
   const plan = shown?.data.plan;
   const kind = design?.kind ?? "item";
   const roomCount = Array.isArray(plan?.geometry.rooms) ? plan.geometry.rooms.length : 0;
@@ -280,6 +324,17 @@ export function DesignEditor({ id, model }: { id: string; model?: string }) {
     </div>
   );
 
+  // "See how it looks with other items" with the saved design (its thumbnail and size): the backend reads it, so
+  // unsaved edits are saved first.
+  const matchPicture = shown?.thumbnail_url || design?.thumbnail_url;
+  const matchSize = shown?.data.item ? (shown.data.item.dimensions ?? sourceSize(shown.data.item.source)) : null;
+  const match = design?.kind === "item" && matchPicture ? (
+    <MatchButton
+      model={{ kind: "design", id: design.id, title: design.title, thumbnail: matchPicture, width_m: matchSize?.width ?? null, height_m: matchSize?.height ?? null, depth_m: matchSize?.depth ?? null }}
+      canOpen={() => !unsaved() || (setNotice(t("Save your changes first, so the picture shows the model as it is now.")), false)}
+    />
+  ) : null;
+
   const deleteButton = design && (
     <button
       type="button"
@@ -295,17 +350,19 @@ export function DesignEditor({ id, model }: { id: string; model?: string }) {
   );
 
   return (
-    // Editing a model on desktop: a fixed workspace the height of the window. The page never scrolls; each side
-    // panel scrolls on its own.
-    <div className={`min-h-full bg-slate-50 ${item ? "lg:flex lg:h-dvh lg:flex-col lg:overflow-hidden" : ""}`}>
-      <Header />
-      <main className={`mx-auto w-full max-w-[1600px] space-y-4 px-3 py-4 sm:px-6 ${item ? "lg:flex lg:min-h-0 lg:flex-1 lg:flex-col lg:gap-3 lg:space-y-0" : ""}`}>
-        {/* Workspace header: back, the name (edit in place), its version, and Save (always in reach). */}
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-          <Link href="/designs" className="inline-flex items-center gap-1.5 text-sm text-slate-500 transition hover:text-brand-navy">
-            <ArrowLeft className="size-4 rtl:-scale-x-100" aria-hidden /> {t("My designs")}
+    // Editing a model: a fixed workspace the height of the window. The page never scrolls; on desktop each side
+    // panel scrolls on its own, on phones the panels are a bottom sheet over the 3D view (ModelViewer `fill`).
+    // In the app the native screen has its own header, so the site's is left out.
+    <div className={`min-h-full overflow-x-hidden bg-slate-50 ${item ? "flex h-dvh flex-col overflow-hidden" : ""}`}>
+      {!inApp && <Header />}
+      <main className={`mx-auto w-full max-w-[1600px] space-y-4 px-3 py-4 sm:px-6 ${item ? "flex min-h-0 flex-1 flex-col space-y-0 max-lg:px-0 max-lg:py-0 lg:gap-3" : ""}`}>
+        {/* Workspace header: back, the name (edit in place), its version, and Save (always in reach). Phones: one
+            compact bar, icons for the secondary actions. */}
+        <div className={`flex flex-wrap items-center gap-x-3 gap-y-2 ${item ? "max-lg:flex-nowrap max-lg:gap-2 max-lg:border-b max-lg:border-slate-200 max-lg:bg-white max-lg:px-3 max-lg:py-2" : ""}`}>
+          <Link href="/designs" aria-label={t("My designs")} className="inline-flex shrink-0 items-center gap-1.5 text-sm text-slate-500 transition hover:text-brand-navy max-lg:size-10 max-lg:justify-center max-lg:rounded-full max-lg:hover:bg-slate-100">
+            <ArrowLeft className="size-4 rtl:-scale-x-100" aria-hidden /> <span className="max-lg:hidden">{t("My designs")}</span>
           </Link>
-          <span className="text-slate-300" aria-hidden>/</span>
+          <span className="text-slate-300 max-lg:hidden" aria-hidden>/</span>
           {shown && (
             <>
               {design ? (
@@ -316,24 +373,43 @@ export function DesignEditor({ id, model }: { id: string; model?: string }) {
                   onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
                   maxLength={200}
                   aria-label={t("Design name")}
-                  className="min-w-0 max-w-full flex-1 rounded-lg border border-transparent bg-transparent px-2 py-1 text-xl font-semibold tracking-tight text-brand-navy outline-none transition hover:border-slate-200 hover:bg-white focus:border-brand-amber focus:bg-white focus:ring-2 focus:ring-brand-amber/20 sm:flex-none sm:basis-80"
+                  className="min-w-0 max-w-full flex-1 rounded-lg border border-transparent bg-transparent px-2 py-1 text-xl font-semibold max-lg:text-base tracking-tight text-brand-navy outline-none transition hover:border-slate-200 hover:bg-white focus:border-brand-amber focus:bg-white focus:ring-2 focus:ring-brand-amber/20 sm:flex-none sm:basis-80"
                 />
               ) : (
-                <p className="px-2 text-xl font-semibold tracking-tight text-brand-navy">{t("Customising “{title}”", { title })}</p>
+                <p className="min-w-0 flex-1 truncate px-2 text-xl font-semibold tracking-tight text-brand-navy max-lg:text-base">{t("Customising “{title}”", { title })}</p>
               )}
               {/* Save status beside the Save button it reports on, right-aligned with it. */}
-              <span className={`ms-auto rounded-full px-2.5 py-1 text-xs font-medium ${!design ? "bg-slate-100 text-slate-600" : "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200"}`}>
+              <span className={`ms-auto rounded-full px-2.5 py-1 text-xs font-medium max-lg:hidden ${!design ? "bg-slate-100 text-slate-600" : "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200"}`}>
                 {!design ? t("Not saved yet") : t("Saved {date}", { date: new Date(design.updated_at).toLocaleString() })}
               </span>
-              {design?.kind === "item" && (
+              {/* Mobile app: the image matching shortcut beside View in camera. */}
+              {inApp && match && <MatchButton {...match.props} compact />}
+              {inApp && shown?.data.item && (
+                // Mobile app only: AR shows the saved design (its GLB and size), so edits are saved first.
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() =>
+                    !design || unsaved()
+                      ? setNotice(t("Save your changes first, so the camera shows the model as it is now."))
+                      : appView()?.postMessage(JSON.stringify({ type: "ar", model: shown.data.item!.source.model_id, design: design.id }))
+                  }
+                  aria-label={t("View in camera")}
+                  className="inline-flex shrink-0 items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-brand-navy shadow-sm transition hover:bg-slate-50 disabled:opacity-60 max-lg:h-10 max-lg:px-3"
+                >
+                  <Camera className="size-4" aria-hidden /> <span className="max-sm:hidden">{t("View in camera")}</span>
+                </button>
+              )}
+              {design?.kind === "item" && !inApp && ( // the planner is web-only
                 <button
                   type="button"
                   disabled={busy}
                   onClick={() => (unsaved() ? setNotice(t("Save your changes first, so the planner shows the model as it is now.")) : router.push(`/plan?design=${design.id}`))}
                   title={t("Place this model in your room in the 3D planner.")}
-                  className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-brand-navy shadow-sm transition hover:bg-slate-50 disabled:opacity-60"
+                  aria-label={t("View in 3D planner")}
+                  className="inline-flex shrink-0 items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-brand-navy shadow-sm transition hover:bg-slate-50 disabled:opacity-60 max-lg:size-10 max-lg:justify-center max-lg:px-0"
                 >
-                  <Box className="size-4" aria-hidden /> {t("View in 3D planner")}
+                  <Box className="size-4" aria-hidden /> <span className="max-lg:hidden">{t("View in 3D planner")}</span>
                 </button>
               )}
               <button
@@ -341,38 +417,49 @@ export function DesignEditor({ id, model }: { id: string; model?: string }) {
                 disabled={busy}
                 onClick={save}
                 title={design ? t("Saves your changes to this design.") : t("The first save asks for a name and adds the model to My designs.")}
-                className="inline-flex items-center gap-2 rounded-xl bg-brand-amber px-5 py-2.5 text-sm font-semibold text-brand-navy shadow-sm shadow-brand-amber/30 transition hover:-translate-y-px hover:bg-[#e8952a] hover:shadow-md active:translate-y-0 disabled:opacity-60"
+                className="inline-flex shrink-0 items-center gap-2 rounded-xl bg-brand-amber px-5 py-2.5 text-sm font-semibold max-lg:h-10 max-lg:px-4 text-brand-navy shadow-sm shadow-brand-amber/30 transition hover:-translate-y-px hover:bg-[#e8952a] hover:shadow-md active:translate-y-0 disabled:opacity-60"
               >
                 {busy ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <Save className="size-4" aria-hidden />} {t("Save")}
               </button>
             </>
           )}
         </div>
-        {error && <p className="rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700">{error}</p>}
-        {notice && <p role="status" className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm text-emerald-800">{notice}</p>}
+        {error && <p className="shrink-0 rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700 max-lg:mx-3 max-lg:mt-2">{error}</p>}
+        {notice && <p role="status" onClick={() => setNotice(null)} className="shrink-0 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm text-emerald-800 max-lg:mx-3 max-lg:mt-2">{notice}</p>}
         {!shown && !error && <p className="text-sm text-slate-500">{t("Loading…")}</p>}
-        {shown && item && (
+        {shown && item && (!listingId || !supabaseConfigured() || liveParts !== undefined) && (
           // The catalogue original plus every saved edit: reset and undo always go back to the vendor's model.
           <ModelViewer
             key={viewKey}
             edit
             fill
-            url={item.source.glb_url}
-            parts={item.components ?? null}
-            edits={item.material_edits}
+            url={base ?? item.base_glb_url ?? item.source.glb_url}
+            parts={parts}
+            partVariants={base ? null : item.part_variants ?? null}
+            edits={base ? {} : item.material_edits}
             replay
             dimensions={original}
             designSize={dims}
             onDesignSize={setDims}
             proportional={proportional}
-            removedParts={item.removed_parts ?? []}
+            removedParts={base ? [] : item.removed_parts ?? []}
             onApi={(api) => { editor.current = api; }}
             partsFooter={requestCard}
             woodVendor={target?.audience === "vendor_exclusive" ? target.vendor?.id ?? null : null}
             woodModel={item.source.source_type === "user" ? null : item.source.model_id}
+            actionsLabel="Size & more"
             actions={
               <div className="space-y-3">
                 <DimensionFields dims={dims} original={original} unit={unit} proportional={proportional} onProportional={setProportional} onUnit={setUnit} onChange={setDims} />
+                {match}
+                {userId && (
+                  <ReplaceGlb
+                    upload={(file) => uploadPublicFile(userId, file, `designs/${designId ?? `new-${token.current}`}/base`)}
+                    onReplaced={(url) => { setBase(url); setViewKey((k) => k + 1); editor.current = null; setError(null); setNotice(t("New 3D file loaded. Save to keep it.")); }}
+                    onError={setError}
+                    className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-brand-navy transition hover:bg-slate-50"
+                  />
+                )}
                 {deleteButton}
                 {item.source.source_type === "user" ? (
                   <p className="px-1 text-[11px] leading-relaxed text-slate-500">{t("Based on your own model “{title}”. Your model is never changed by this design.", { title: item.source.title })}</p>
