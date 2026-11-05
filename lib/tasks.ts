@@ -230,9 +230,9 @@ export interface VendorProfileData {
   reviews: { id: string; task_id: string; rating: number; comment: string; created_at: string }[];
 }
 
-/** Public name and logo of approved vendors, by id. */
+/** Public name and logo of approved vendors, by id; `platform`: Sha2ty's own studio (the admins'). */
 export const vendorBrands = (ids: string[]) =>
-  ids.length ? backend<{ id: string; name: string; logo_url: string | null }[]>(`/api/vendors/brands?ids=${ids.map(encodeURIComponent).join(",")}`) : Promise.resolve([]);
+  ids.length ? backend<{ id: string; name: string; logo_url: string | null; platform?: boolean }[]>(`/api/vendors/brands?ids=${ids.map(encodeURIComponent).join(",")}`) : Promise.resolve([]);
 export const vendorProfile = (vendorId: string) => backend<VendorProfileData>(`/api/vendors/${vendorId}/profile`);
 
 export async function myReview(taskId: string) {

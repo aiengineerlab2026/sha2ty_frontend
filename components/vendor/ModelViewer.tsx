@@ -1,8 +1,8 @@
 "use client";
 
 import { useT } from "@/lib/i18n";
-import { Suspense, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
-import { Download, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen } from "lucide-react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { Download, Loader2, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen } from "lucide-react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { Bounds, ContactShadows, Environment, OrbitControls, useBounds, useGLTF } from "@react-three/drei";
 import { OutlinePass } from "three/examples/jsm/postprocessing/OutlinePass.js";
@@ -831,6 +831,12 @@ export function ModelViewer({
   const t = useT();
   const [downloading, setDownloading] = useState(false);
   const [report, setReport] = useState<NormalizationReport | null>(null);
+  // Which file the report is for: until the current one has loaded, the canvas shows a spinner.
+  const [loadedUrl, setLoadedUrl] = useState<string | null>(null);
+  const onLoaded = useCallback((next: NormalizationReport | null) => {
+    setReport(next);
+    if (next) setLoadedUrl(url);
+  }, [url]);
   const [slots, setSlots] = useState<Slot[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   // Saved edits are the starting record: a save keeps them (not only this session's), reset and undo work on them.
@@ -1107,7 +1113,7 @@ export function ModelViewer({
         <Suspense fallback={null}>
           <Bounds fit clip observe margin={1.25}>
             <group ref={sizer} name={SIZER} scale={factor}>
-              <LoadedModel url={url} dimensions={dimensions} edit={edit} server={server} saved={saved} replay={replay} onReport={setReport} onSlots={onSlots} onPick={setSelected} track={track} />
+              <LoadedModel url={url} dimensions={dimensions} edit={edit} server={server} saved={saved} replay={replay} onReport={onLoaded} onSlots={onSlots} onPick={setSelected} track={track} />
             </group>
             <FitOnSignal signal={resetView} />
           </Bounds>
@@ -1144,6 +1150,14 @@ export function ModelViewer({
                 </button>
               ))}
             </div>
+          </div>
+        </div>
+      )}
+      {loadedUrl !== url && (
+        <div className="pointer-events-none absolute inset-0 grid place-items-center" role="status" aria-live="polite">
+          <div className="flex flex-col items-center gap-2 rounded-2xl border border-white/70 bg-white/85 px-5 py-4 shadow-lg backdrop-blur">
+            <Loader2 className="size-7 animate-spin text-brand-amber" aria-hidden />
+            <span className="text-xs font-medium text-slate-600">{t("Loading 3D model…")}</span>
           </div>
         </div>
       )}

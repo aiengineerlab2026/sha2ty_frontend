@@ -11,7 +11,7 @@ import { fetchOrders, type Order } from "@/lib/orders";
 import { formatPrice } from "@/lib/plan/pricing";
 import { supabaseConfigured } from "@/lib/supabase/client";
 
-const KIND = { model: "Furniture", carpet: "Carpet", wall: "Wall finish", floor: "Floor finish", window: "Window", door: "Door" } as const;
+const KIND = { model: "Furniture", carpet: "Carpet", wall: "Wall finish", floor: "Floor finish", window: "Window", door: "Door", fabric: "Fabric", paint: "Paint" } as const;
 const HREF: Partial<Record<keyof typeof KIND, string>> = { model: "models", carpet: "carpets", wall: "paints", floor: "paints", window: "windows" }; // doors have no catalogue page yet
 
 /** Bought items: every order the user placed since signing up, newest first. */
@@ -72,7 +72,7 @@ export function OrdersPage() {
                       )}
                       <p className="text-xs text-slate-500">
                         {t(KIND[l.kind])} · {l.quantity}
-                        {l.unit === "m2" ? " m²" : " ×"} {formatPrice(l.price, l.unit)}
+                        {l.per ? ` ${l.per}` : l.unit === "m2" ? " m²" : " ×"} {formatPrice(l.price, l.unit)}
                       </p>
                     </div>
                     <span className="text-sm font-semibold tabular-nums text-brand-navy">{lineTotal(l) == null ? t("On request") : formatPrice(lineTotal(l))}</span>

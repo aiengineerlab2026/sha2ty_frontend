@@ -1469,4 +1469,9 @@ export const AR: Record<string, string> = {
   "Added": "أُضيف",
   "Clear lacquer": "ورنيش شفاف",
   "A clear protective coat: the board's own grain shows, with a soft satin sheen.": "طبقة حماية شفافة: تظهر عروق اللوح نفسه مع لمعة ساتان ناعمة.",
+  "Upholstery fabrics from our vendors": "أقمشة تنجيد من البائعين",
+  "No upholstery fabrics yet.": "لا توجد أقمشة تنجيد بعد.",
+  "Loading 3D model…": "جارٍ تحميل النموذج ثلاثي الأبعاد…",
+  "Add to cart · {qty} {unit}": "أضف إلى السلة · {qty} {unit}",
+  "Added to cart · {qty} {unit}": "أُضيف إلى السلة · {qty} {unit}",
 };

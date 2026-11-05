@@ -7,7 +7,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { clearCart, lineTotal, setCartQuantity, useCart } from "@/lib/cart";
 import { formatPrice } from "@/lib/plan/pricing";
 
-const KIND = { model: "Furniture", carpet: "Carpet", wall: "Wall finish", floor: "Floor finish", window: "Window", door: "Door" } as const;
+const KIND = { model: "Furniture", carpet: "Carpet", wall: "Wall finish", floor: "Floor finish", window: "Window", door: "Door", fabric: "Fabric", paint: "Paint" } as const;
 
 /** Header cart: lines with quantity steppers (pieces, or m² for area-priced finishes) and the total. */
 export function CartMenu() {
@@ -52,7 +52,7 @@ export function CartMenu() {
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-medium text-brand-navy">{l.name}</p>
                     <p className="text-[11px] text-slate-500">
-                      {t(KIND[l.kind])} · {formatPrice(l.price, l.unit)}
+                      {t(KIND[l.kind])} · {formatPrice(l.price, l.unit)}{l.per ? ` / ${l.per}` : ""}
                     </p>
                   </div>
                   <div className="flex items-center rounded-lg border border-slate-200">

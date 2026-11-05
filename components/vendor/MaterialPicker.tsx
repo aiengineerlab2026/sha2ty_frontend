@@ -2,9 +2,10 @@
 
 import { useT } from "@/lib/i18n";
 import { useEffect, useMemo, useState } from "react";
-import { Search, X } from "lucide-react";
+import { Search, ShoppingCart, X } from "lucide-react";
 import { supabase, supabaseConfigured } from "@/lib/supabase/client";
 import { vendorBrands } from "@/lib/tasks";
+import { addToCart } from "@/lib/cart";
 import { formatPrice } from "@/lib/plan/pricing";
 import { PAINT_COATS, quote, UNIT_LABEL, woodType, type PartMaterial, type PartMaterialOption } from "@/lib/designs/materials";
 import { ROLL_WIDTH_M } from "@/lib/designs/fabric";
@@ -19,6 +20,7 @@ type Row = {
 };
 
 export type PaintColor = { id: string; name: string; hex: string };
+type WallPaint = { id: string; name: string; color: string | null; price: number | null; price_unit: PartMaterialOption["unit"] | null; vendor_id: string };
 
 const option = (row: Row, colors: Map<string, PaintColor>): PartMaterialOption => ({
   id: row.id,
@@ -51,6 +53,7 @@ function patch(material: PartMaterial, shown: PartMaterialOption): MaterialEdit 
  * Picking calls `onPick` with the material edit. */
 export function MaterialPicker({ mode, edit, area, woodVendor, woodModel, onPick }: { mode: "fabric" | "wood" | "paint"; edit: MaterialEdit | null; area?: number | null; woodVendor?: string | null; woodModel?: string | null; onPick: (patch: MaterialEdit) => void }) {
   const t = useT();
+  const [added, setAdded] = useState<string | null>(null); // the material last added to the cart (button says so)
   const [library, setLibrary] = useState<PartMaterialOption[] | null>(() => (supabaseConfigured() ? null : []));
   const [search, setSearch] = useState("");
   const [colors, setColors] = useState<PaintColor[] | null>(() => (supabaseConfigured() ? null : []));
@@ -65,14 +68,31 @@ export function MaterialPicker({ mode, edit, area, woodVendor, woodModel, onPick
       .limit(200)
       .then(async ({ data }) => {
         const rows = (data ?? []) as Row[];
-        // The palette (model_paints.sql); empty until that has been run.
-        const [brands, palette] = await Promise.all([
-          vendorBrands([...new Set(rows.map((r) => r.vendor_id))]).catch(() => []),
+        // The palette (model_paints.sql; empty until that has been run) and the vendors' wall paint colours, which can
+        // paint furniture too (priced per m² of painted surface).
+        const [palette, walls] = await Promise.all([
           supabase().from("paint_colors").select("id, name, hex").order("created_at").then(({ data: list }) => (list ?? []) as PaintColor[]),
+          supabase().from("paints").select("id, name, color, price, price_unit, vendor_id").eq("kind", "color").order("name").then(({ data: list }) => (list ?? []) as WallPaint[]),
         ]);
+        const brands = await vendorBrands([...new Set([...rows, ...walls].map((r) => r.vendor_id))]).catch(() => []);
         const of = new Map(brands.map((b) => [b.id, b]));
-        setColors(palette);
-        setLibrary(rows.map((r) => option({ ...r, vendors: of.get(r.vendor_id) ?? null }, new Map(palette.map((c) => [c.id, c])))));
+        // Paints are the vendors' own: Sha2ty's studio (the admins') sells none here.
+        const vendors = (r: { vendor_id: string }) => !of.get(r.vendor_id)?.platform;
+        // A wall paint in a palette colour is listed under that colour; another colour gets its own swatch.
+        const byHex = new Map(palette.map((c) => [c.hex.toLowerCase(), c]));
+        const extra: PaintColor[] = [];
+        const wallOptions = walls.filter((w) => vendors(w) && /^#[0-9a-f]{6}$/i.test(w.color ?? "")).map((w): PartMaterialOption => {
+          const hex = w.color!.toLowerCase();
+          let color = byHex.get(hex);
+          if (!color) {
+            color = { id: `wall-${hex}`, name: w.name, hex };
+            byHex.set(hex, color);
+            extra.push(color);
+          }
+          return { id: w.id, kind: "paint", name: w.name, url: "", tile: 1, price: w.price == null ? null : Number(w.price), unit: "m2", color, coverage_m2: 1, vendor: of.get(w.vendor_id) ?? null };
+        });
+        setColors([...palette, ...extra]);
+        setLibrary([...rows.filter((r) => r.kind !== "paint" || vendors(r)).map((r) => option({ ...r, vendors: of.get(r.vendor_id) ?? null }, new Map(palette.map((c) => [c.id, c])))), ...wallOptions]);
       });
   }, []);
   // A vendor's own model: only the woods that vendor works with (supabase/woods.sql vendor_woods). Sha2ty's models
@@ -119,7 +139,8 @@ export function MaterialPicker({ mode, edit, area, woodVendor, woodModel, onPick
   const byId = (id?: string) => library?.find((m) => m.id === id);
   const base = chosen?.kind === "wood" ? byId(chosen.id) : undefined;
 
-  // Paint: the colour comes from the palette; the paint (who sells it, per kg or litre) from the vendors in it.
+  // Paint: the colour comes from the palette (or a vendor's wall paint); the paint (who sells it, per kg, litre or m²)
+  // from the vendors in it.
   const paintsIn = (c: PaintColor) => (library ?? []).filter((m) => m.kind === "paint" && m.color?.id === c.id).sort((a, b) => (a.price ?? Infinity) - (b.price ?? Infinity));
   // Only colours someone sells (a vendor's paint, or Sha2ty's own from its studio).
   const sold = library === null ? null : colors?.filter((c) => paintsIn(c).length) ?? null;
@@ -127,7 +148,9 @@ export function MaterialPicker({ mode, edit, area, woodVendor, woodModel, onPick
   const pickPaint = (c: PaintColor, m?: PartMaterialOption) => {
     const product = m ?? paintsIn(c)[0];
     if (!product) return;
-    const material: PartMaterial = { id: product.id, kind: "paint", name: product.name, price: product.price, unit: product.unit, color: c.hex, color_name: c.name, coverage_m2: product.coverage_m2 ?? undefined };
+    // A wall paint is priced per m² of painted surface: one "coat" of one m² per m² (the area itself).
+    const perArea = product.unit === "m2";
+    const material: PartMaterial = { id: product.id, kind: "paint", name: product.name, price: product.price, unit: product.unit, color: c.hex, color_name: c.name, coverage_m2: perArea ? 1 : product.coverage_m2 ?? undefined, ...(perArea ? { coats: 1 } : {}) };
     onPick({ color: c.hex, roughness: 0.45, metalness: 0, material });
   };
 
@@ -269,7 +292,7 @@ export function MaterialPicker({ mode, edit, area, woodVendor, woodModel, onPick
                 )}
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-[13px] font-medium text-brand-navy">{m.name}</span>
-                  <span className="block truncate text-[11px] text-slate-500">{[m.vendor?.name, m.coverage_m2 ? t("{m2} m² per {unit}", { m2: String(m.coverage_m2), unit: t(UNIT_LABEL[m.unit]) }) : null].filter(Boolean).join(" · ")}</span>
+                  <span className="block truncate text-[11px] text-slate-500">{[m.vendor?.name, m.coverage_m2 && m.unit !== "m2" ? t("{m2} m² per {unit}", { m2: String(m.coverage_m2), unit: t(UNIT_LABEL[m.unit]) }) : null].filter(Boolean).join(" · ")}</span>
                 </span>
                 <span className="shrink-0 text-[12px] font-semibold tabular-nums text-brand-navy">{m.price == null ? t("Price on request") : `${formatPrice(m.price)} / ${t(UNIT_LABEL[m.unit])}`}</span>
               </button>
@@ -334,6 +357,24 @@ export function MaterialPicker({ mode, edit, area, woodVendor, woodModel, onPick
           <p className="mt-0.5 text-[11px] text-slate-400">
             {estimate.kind === "fabric" ? t("Estimate for a {width} m wide roll, with 10% for seams.", { width: ROLL_WIDTH_M }) : estimate.kind === "paint" ? t("Estimate for {coats} coats.", { coats: estimate.coats ?? PAINT_COATS }) : t("Estimate: boards from half the wooden parts' surface, with 15% for cutting waste.")}
           </p>
+          {/* Fabric and paint can be bought as estimated for this model (metres, litres / kg, or m²); a guest is asked to log in. */}
+          {(estimate.kind === "fabric" || estimate.kind === "paint") && estimate.quantity != null && (
+            <button
+              type="button"
+              onClick={() => {
+                const per = t(UNIT_LABEL[estimate.unit]);
+                const kind = estimate.kind as "fabric" | "paint";
+                void addToCart([{ key: `${kind}:${estimate.id}`, kind, refId: estimate.id, name: estimate.name, quantity: estimate.quantity!, unit: "item", per, price: estimate.price ?? null }]).then(
+                  () => setAdded(estimate.id),
+                  () => setAdded(null),
+                );
+              }}
+              className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-lg bg-brand-navy px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-brand-navy/90"
+            >
+              <ShoppingCart className="size-3.5" aria-hidden />
+              {added === estimate.id ? t("Added to cart · {qty} {unit}", { qty: String(estimate.quantity), unit: t(UNIT_LABEL[estimate.unit]) }) : t("Add to cart · {qty} {unit}", { qty: String(estimate.quantity), unit: t(UNIT_LABEL[estimate.unit]) })}
+            </button>
+          )}
         </div>
       )}
     </>
