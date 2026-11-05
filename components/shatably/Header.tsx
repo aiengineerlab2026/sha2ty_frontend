@@ -1,6 +1,6 @@
 "use client";
 
-import { CARPETS_ENABLED } from "@/lib/features";
+import { CARPETS_ENABLED, WINDOWS_ENABLED } from "@/lib/features";
 import { setLocale, useLocale, useT } from "@/lib/i18n";
 import { useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
@@ -27,7 +27,7 @@ const STUDIO_NAV: NavItem[] = [
   { href: "/vendor/fabrics", label: "Fabrics" },
   { href: "/vendor/woods", label: "Woods" },
   { href: "/vendor/furniture-paints", label: "Furniture paints" },
-  { href: "/vendor/windows", label: "Windows" },
+  ...(WINDOWS_ENABLED ? [{ href: "/vendor/windows", label: "Windows" }] : []),
   { href: "/plan", label: "Plan" },
   { href: "/vendor/tasks", label: "Requests" },
   { href: GET_APP, label: "Get the app" },
@@ -38,7 +38,7 @@ const CATALOG_NAV: NavItem[] = [
   { href: "/catalog/models", label: "Models" },
   { href: "/catalog/paints", label: "Paints" },
   ...(CARPETS_ENABLED ? [{ href: "/catalog/carpets", label: "Carpets" }] : []),
-  { href: "/catalog/windows", label: "Windows" },
+  ...(WINDOWS_ENABLED ? [{ href: "/catalog/windows", label: "Windows" }] : []),
   { href: "/plan", label: "Plan" },
   { href: "/tasks", label: "Requests" },
   { href: GET_APP, label: "Get the app" },

@@ -27,7 +27,7 @@ import { customisedModels, deleteDesign } from "@/lib/designs/api";
 import { Header } from "@/components/shatably/Header";
 import { PaintSwatch } from "@/components/vendor/PaintLibrary";
 import { fetchCatalog } from "@/lib/plan/api";
-import { CATEGORIES, categoryOf } from "@/lib/plan/categories";
+import { SHOWN_CATEGORIES, categoryOf } from "@/lib/plan/categories";
 import { formatPrice } from "@/lib/plan/pricing";
 import { tileLabel } from "@/lib/plan/roomMaterials";
 import type { CatalogModel } from "@/lib/plan/types";
@@ -122,7 +122,7 @@ export function HomePage({ only }: { only?: CatalogKind } = {}) {
   const colours = paints.filter((p) => (p.surface ?? "wall") === "wall");
   const floors = paints.filter((p) => p.surface === "floor");
   // One carousel per model type that has models (all empty: a single "Models" row says so).
-  const modelGroups = CATEGORIES.map((c) => ({
+  const modelGroups = SHOWN_CATEGORIES.map((c) => ({
     ...c,
     items: models.filter((m) => categoryOf(m.category) === c.id),
   })).filter((g) => g.items.length);

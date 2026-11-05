@@ -1,6 +1,6 @@
 "use client";
 
-import { CARPETS_ENABLED } from "@/lib/features";
+import { kindEnabled } from "@/lib/features";
 import { authSession } from "@/lib/auth/client";
 import { useT } from "@/lib/i18n";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -854,7 +854,7 @@ export function PlanLayout() {
               aria-label={t("Catalogue")}
               className="m-3 mb-0 grid shrink-0 grid-cols-2 gap-1.5"
               onKeyDown={(event) => {
-                const order = (["models", "paints", "carpets", "windows"] as const).filter((id) => CARPETS_ENABLED || id !== "carpets");
+                const order = (["models", "paints", "carpets", "windows"] as const).filter(kindEnabled);
                 const step = event.key === "ArrowRight" || event.key === "ArrowDown" ? 1 : event.key === "ArrowLeft" || event.key === "ArrowUp" ? -1 : 0;
                 if (!step) return;
                 event.preventDefault();
@@ -870,7 +870,7 @@ export function PlanLayout() {
                   ["carpets", "Carpets", RectangleHorizontal],
                   ["windows", "Windows", AppWindow],
                 ] as const
-              ).filter(([id]) => CARPETS_ENABLED || id !== "carpets").map(([id, label, Icon]) => {
+              ).filter(([id]) => kindEnabled(id)).map(([id, label, Icon]) => {
                 const on = tab === id;
                 return (
                   <button
