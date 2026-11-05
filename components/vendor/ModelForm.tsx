@@ -187,7 +187,7 @@ export function ModelForm() {
         setProgressLabel(t("Upload complete"));
       } else {
         if (!photo) throw new Error(t("Choose a photo to generate from."));
-        if (quota && quota[provider] <= 0) throw new Error(t("No {name} generations left on this account.", { name: { meshy: "Meshy", astra: "GPT Astra", sol: "GPT Sol" }[provider] }));
+        if (quota && quota[provider] <= 0) throw new Error(t("No 3D generations left on this account."));
         ({ glbUrl, reading: estimated, components, sourceGlbUrl } = await generateFromPhoto(
           photo,
           provider,
@@ -324,7 +324,8 @@ export function ModelForm() {
           <Dimensions width={width} height={height} depth={depth} onWidth={setWidth} onHeight={setHeight} onDepth={setDepth} labels={shape === "straight" ? undefined : ["Length on wall A m", "Height m", "Arm depth m"]} required={source !== "photo"} />
           {source === "photo" && <p className="-mt-2 text-xs text-slate-500">{t("Optional: sizes left empty are estimated from the photo.")}</p>}
           <CategoryPicker value={category} onChange={setCategory} />
-          {category === "furniture" && vendor && <WoodsField vendorId={vendor?.id} platform={vendor?.platform} value={woods} onChange={setWoods} />}
+          {/* Sha2ty's models (admins) come in every wood: the customer picks one when customising. */}
+          {category === "furniture" && vendor && !vendor.platform && <WoodsField vendorId={vendor?.id} platform={vendor?.platform} value={woods} onChange={setWoods} />}
           {category === "furniture" && source === "photo" && (
             <div className="space-y-1.5">
               <Label htmlFor="kind">{t("Furniture type")}</Label>

@@ -1,10 +1,10 @@
-import { API } from "@/lib/plan/api";
+import { apiFetch } from "@/lib/api";
 import type { Design, DesignData, DesignKind, DesignVersion, ItemEdits } from "./schema";
 
 async function call<T>(path: string, init: RequestInit = {}): Promise<T> {
   let response: Response;
   try {
-    response = await fetch(`${API}/api/designs${path}`, {
+    response = await apiFetch(`/api/designs${path}`, {
       ...init,
       headers: init.body ? { "Content-Type": "application/json" } : undefined,
     });

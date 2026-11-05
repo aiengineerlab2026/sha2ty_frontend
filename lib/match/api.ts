@@ -1,3 +1,4 @@
+import { apiFetch } from "@/lib/api";
 import { API } from "@/lib/plan/api";
 import { matchForm, splitLines, type MatchRequest, type MatchVariation } from "./match";
 
@@ -6,7 +7,7 @@ import { matchForm, splitLines, type MatchRequest, type MatchVariation } from ".
 export async function requestMatch(req: MatchRequest, signal?: AbortSignal, onProgress?: (percent: number) => void): Promise<{ variations: MatchVariation[]; warnings: string[] }> {
   let response: Response;
   try {
-    response = await fetch(`${API}/api/match`, { method: "POST", body: matchForm(req), signal });
+    response = await apiFetch(`/api/match`, { method: "POST", body: matchForm(req), signal });
   } catch (caught) {
     if (caught instanceof DOMException && caught.name === "AbortError") throw caught;
     throw new Error("Cannot reach the API. Is the backend running on port 8000?");

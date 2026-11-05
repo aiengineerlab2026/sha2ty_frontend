@@ -93,6 +93,8 @@ export function FabricLibrary({ kind = "fabric" }: { kind?: MaterialKind }) {
   // The row being edited: the form saves over it, keeping its photos unless new ones are chosen.
   const [editing, setEditing] = useState<Row | null>(null);
   const form = useRef<HTMLFormElement>(null);
+  // The Sha2ty account (admins): furniture paints are handled by vendors only, so it gets no paint library.
+  const [platform, setPlatform] = useState(false);
 
   useEffect(() => {
     if (!supabaseConfigured()) return;
@@ -103,6 +105,10 @@ export function FabricLibrary({ kind = "fabric" }: { kind?: MaterialKind }) {
       }
       const id = data.session.user.id;
       setVendorId(id);
+      if (kind === "paint") {
+        const me = await supabase().from("vendors").select("platform").eq("id", id).maybeSingle();
+        if ((me.data as { platform?: boolean } | null)?.platform) return setPlatform(true);
+      }
       const list = await supabase().from("fabrics").select("*").eq("vendor_id", id).eq("kind", kind).order("created_at", { ascending: false });
       if (list.error) setError(list.error.message);
       else setRows(list.data as Row[]);
@@ -253,6 +259,9 @@ export function FabricLibrary({ kind = "fabric" }: { kind?: MaterialKind }) {
           <h1 className="text-2xl font-semibold tracking-tight text-brand-navy">{t(copy.title)}</h1>
           <p className="mt-1 text-sm text-slate-500">{t(copy.intro)}</p>
         </div>
+        {platform ? (
+          <p className="rounded-2xl border border-slate-200 bg-white p-5 text-sm text-slate-600 shadow-sm">{t("Furniture paints are added and priced by vendors. The Sha2ty account doesn't sell paints.")}</p>
+        ) : (<>
         <form ref={form} onSubmit={add} className={`grid scroll-mt-20 gap-4 rounded-2xl border bg-white p-4 shadow-sm sm:grid-cols-[1fr_1fr] ${editing ? "border-brand-amber ring-2 ring-brand-amber/20" : "border-slate-200"}`}>
           {kind === "paint" ? (
             <fieldset className="space-y-2">
@@ -392,6 +401,7 @@ export function FabricLibrary({ kind = "fabric" }: { kind?: MaterialKind }) {
           ))}
         </div>
         {rows.length === 0 && !error && <p className="text-sm text-slate-500">{t(copy.empty)}</p>}
+        </>)}
       </main>
     </div>
   );

@@ -1,12 +1,12 @@
 "use client";
 
+import { apiFetch } from "@/lib/api";
 import { useT } from "@/lib/i18n";
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ArrowRight, Building2, Check, CircleAlert, CloudUpload, LoaderCircle, Lock, Mail, MapPin, MailCheck, UserRound, X } from "lucide-react";
 import { login, recoverFromLink, requestPasswordReset, updatePassword } from "@/lib/auth/client";
-import { API } from "@/lib/plan/api";
 import { supabase, supabaseConfigured } from "@/lib/supabase/client";
 import { uploadPublicFile } from "@/lib/vendor/storage";
 import { AuthInput } from "./AuthInput";
@@ -123,7 +123,7 @@ export function SignupForm() {
     if (Object.keys(next).length) return;
     setBusy(true);
     setError(null);
-    const created = await fetch(`${API}/api/vendor/register`, {
+    const created = await apiFetch(`/api/vendor/register`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({

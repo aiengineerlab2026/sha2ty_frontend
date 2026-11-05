@@ -1,5 +1,6 @@
 "use client";
 
+import { apiFetch } from "@/lib/api";
 import { CARPETS_ENABLED, WINDOWS_ENABLED } from "@/lib/features";
 import { setLocale, useLocale, useT } from "@/lib/i18n";
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
@@ -60,7 +61,8 @@ export function Header({ vendor, actions }: { vendor?: VendorProfile | null; act
   // Signed in without a vendor profile: a customer (or a vendor page still loading its profile).
   const [user, setUser] = useState<AuthUser | null>(null);
   // Requests are a signed-in feature: guests do not see the link (the page itself asks them to log in).
-  const nav = vendor ? STUDIO_NAV : CATALOG_NAV.filter((item) => user || item.href !== "/tasks");
+  // Furniture paints are the vendors' alone: the Sha2ty account (admins) has no library of them.
+  const nav = vendor ? STUDIO_NAV.filter((item) => !(vendor.platform && item.href === "/vendor/furniture-paints")) : CATALOG_NAV.filter((item) => user || item.href !== "/tasks");
   const current = activeHref(pathname, nav);
   // The links show whenever they fit beside the brand and the account controls (measured, so a desktop never gets the
   // menu button for links that would fit); the menu button only when they do not. With page actions (the plan
@@ -86,7 +88,7 @@ export function Header({ vendor, actions }: { vendor?: VendorProfile | null; act
     return onAuthChange(setUser);
   }, []);
   useEffect(() => {
-    void fetch("/api/auth/admin-me")
+    void apiFetch("/api/auth/admin-me")
       .then((res) => res.json())
       .then((body) => setAdmin(Boolean(body?.admin)))
       .catch(() => setAdmin(false));

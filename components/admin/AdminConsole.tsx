@@ -1,5 +1,6 @@
 "use client";
 
+import { apiFetch } from "@/lib/api";
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { Box, Check, Clock, Eye, LoaderCircle, Lock, LogOut, Mail, MapPin, Plus, Sparkles, UserRound, Wand2, X } from "lucide-react";
@@ -8,7 +9,6 @@ import { ReportButton } from "@/components/tasks/ReportButton";
 import { Logo } from "@/components/shatably/Logo";
 import { LanguageSwitch } from "@/components/shatably/Header";
 import { AuthInput } from "@/components/vendor/AuthInput";
-import { API } from "@/lib/plan/api";
 import { AdminWoods } from "./AdminWoods";
 import { AdminModels } from "./AdminModels";
 import { AdminPaintColors } from "./AdminPaintColors";
@@ -29,7 +29,7 @@ export function AdminLoginForm() {
     event.preventDefault();
     setBusy(true);
     setError(null);
-    const res = await fetch("/api/auth/admin-login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username, password }) }).catch(() => null);
+    const res = await apiFetch("/api/auth/admin-login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username, password }) }).catch(() => null);
     const body = await res?.json().catch(() => ({}));
     setBusy(false);
     if (!res?.ok) {
@@ -71,7 +71,7 @@ export function AdminRequests() {
   const [saving, setSaving] = useState<string | null>(null);
 
   const call = async (path: string, init?: RequestInit) => {
-    const res = await fetch(`${API}/api/admin${path}`, init);
+    const res = await apiFetch(`/api/admin${path}`, init);
     if (res.status === 401) {
       router.replace("/admin/login");
       return null;
@@ -102,7 +102,7 @@ export function AdminRequests() {
   };
 
   const signOut = async () => {
-    await fetch("/api/auth/admin-logout", { method: "POST" });
+    await apiFetch("/api/auth/admin-logout", { method: "POST" });
     router.push("/admin/login");
   };
 
@@ -379,7 +379,7 @@ function PlatformCatalog({ call }: { call: (path: string, init?: RequestInit) =>
   const enter = async (target: string) => {
     setOpening(target);
     setError(null);
-    const res = await fetch("/api/auth/admin-studio", { method: "POST" }).catch(() => null);
+    const res = await apiFetch("/api/auth/admin-studio", { method: "POST" }).catch(() => null);
     const body = res ? await res.json().catch(() => ({})) : {};
     if (!res?.ok) {
       setOpening(null);

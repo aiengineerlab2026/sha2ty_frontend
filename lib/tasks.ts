@@ -1,3 +1,4 @@
+import { apiFetch } from "@/lib/api";
 import type { PartMaterial } from "@/lib/designs/materials";
 import { supabase } from "@/lib/supabase/client";
 
@@ -126,7 +127,7 @@ export async function advanceTask(taskId: string, next: "cancelled" | "in_progre
 // ---- requests from customised models, bids, chat, reviews (supabase/marketplace.sql) ----
 
 async function backend<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const response = await fetch(path, { ...init, headers: init.body ? { "Content-Type": "application/json" } : undefined });
+  const response = await apiFetch(path, { ...init, headers: init.body ? { "Content-Type": "application/json" } : undefined });
   const json = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(typeof json.detail === "string" ? json.detail : `Request failed (${response.status}).`);
   return json as T;
@@ -205,7 +206,7 @@ export function onMessages(taskId: string | null, onMessage: (message: Message) 
   const client = supabase();
   let channel: ReturnType<typeof client.channel> | null = null;
   let closed = false;
-  void fetch("/api/auth/realtime", { cache: "no-store" })
+  void apiFetch("/api/auth/realtime", { cache: "no-store" })
     .then((r) => (r.ok ? r.json() : { token: null }))
     .then(async ({ token }: { token: string | null }) => {
       if (closed || !token) return;

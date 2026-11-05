@@ -1,14 +1,14 @@
+import { apiFetch } from "@/lib/api";
 import { splitLines } from "@/lib/match/match";
 import type { CompanyGroup, CorrectionState, PlanGeometry, SavedPlan } from "./types";
 
-/** The FastAPI backend, on this site's own origin (next.config forwards /api/* there); its session middleware turns
- * the httpOnly cookies into the user's token. Guests call it too, without one. */
-export const API = "";
+// The FastAPI backend (lib/api.ts): guests call it too, without a session.
+export { API } from "@/lib/api";
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   let response: Response;
   try {
-    response = await fetch(`${API}${path}`, {
+    response = await apiFetch(`${path}`, {
       ...init,
       headers: init.headers,
     });
@@ -42,7 +42,7 @@ export class PlanValidationError extends Error {
 async function publicGet<T>(path: string): Promise<T> {
   let response: Response;
   try {
-    response = await fetch(`${API}${path}`);
+    response = await apiFetch(`${path}`);
   } catch {
     throw new Error("Cannot reach the API. Is the backend running on port 8000?");
   }
@@ -83,7 +83,7 @@ export async function createRoomFromImage(file: File, height: number, onProgress
   data.append("debug", "true");
   let response: Response;
   try {
-    response = await fetch(`${API}/api/plans/convert-to-3d`, {
+    response = await apiFetch(`/api/plans/convert-to-3d`, {
       method: "POST",
       body: data,
     });
@@ -155,7 +155,7 @@ export function listPlans() {
 }
 
 export async function exportRoomGlb(id: string) {
-  const response = await fetch(`${API}/api/plans/${id}/export?format=glb`);
+  const response = await apiFetch(`/api/plans/${id}/export?format=glb`);
   if (!response.ok) {
     const json = await response.json().catch(() => ({}));
     throw new Error(typeof json.detail === "string" ? json.detail : "Export failed.");
@@ -172,7 +172,7 @@ export async function extractCarpet(image: Blob, widthM: number, lengthM: number
   form.append("noun", noun);
   let response: Response;
   try {
-    response = await fetch(`${API}/api/vendor/carpets/extract`, { method: "POST", body: form });
+    response = await apiFetch(`/api/vendor/carpets/extract`, { method: "POST", body: form });
   } catch {
     throw new Error("Cannot reach the API. Is the backend running on port 8000?");
   }
