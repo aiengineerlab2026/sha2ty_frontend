@@ -18,10 +18,13 @@ export async function asCatalogModel(design: Pick<Design, "id" | "title" | "thum
   const size = item?.dimensions ?? (item?.source.width_m && item.source.height_m ? { width: item.source.width_m, height: item.source.height_m, depth: item.source.depth_m ?? 0 } : null);
   if (!item || !size) return null;
   const listing = await fetchCatalogModel(item.source.model_id).catch(() => null);
+  const baked = Boolean(version.glb_url && (item.base_glb_url || (item.part_variants && Object.keys(item.part_variants).length)));
   return {
     ...(listing ?? { id: item.source.model_id, company_id: item.source.vendor_id ?? "", company: "", category: "furniture" }),
     title: design.title,
-    glb_url: item.source.glb_url, // the catalogue file; the version's edits are replayed on it (as in the editor)
+    // The catalogue file with the version's edits replayed on it (as in the editor). Parts swapped for variants
+    // exist only in the version's own file, which has every edit in it already: that file, nothing replayed.
+    glb_url: baked ? version.glb_url! : item.source.glb_url,
     width_m: size.width,
     height_m: size.height,
     depth_m: size.depth || null,
@@ -29,10 +32,8 @@ export async function asCatalogModel(design: Pick<Design, "id" | "title" | "thum
     design: {
       id: design.id,
       version: version.number,
-      materialEdits: item.material_edits as NonNullable<PlacedItem["materialEdits"]>,
-      partPoses: item.part_poses as PlacedItem["partPoses"],
-      partDocument: item.components,
-      removedParts: item.removed_parts,
+      materialEdits: (baked ? {} : item.material_edits) as NonNullable<PlacedItem["materialEdits"]>,
+      ...(baked ? {} : { partPoses: item.part_poses as PlacedItem["partPoses"], partDocument: item.components, removedParts: item.removed_parts }),
     },
   };
 }

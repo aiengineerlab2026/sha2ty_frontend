@@ -659,7 +659,13 @@ type UploadedModel = { id: string; title: string; width_m: number | null; height
 function MyUploadedRow({ grid }: { grid: boolean }) {
   const t = useT();
   const [rows, setRows] = useState<UploadedModel[] | null>(null);
+  // Its customisation is the same model: the card shows the latest saved picture of its design.
+  const [pictures, setPictures] = useState<Map<string, string>>(() => new Map());
   useEffect(() => {
+    customisedModels().then(
+      (list) => setPictures(new Map(list.flatMap((d) => { const item = d.current?.data.item; const image = d.current?.thumbnail_url || d.thumbnail_url; return item?.source.source_type === "user" && image ? [[item.source.model_id, image] as const] : []; }))),
+      () => undefined,
+    );
     if (!supabaseConfigured()) return;
     void supabase()
       .from("user_models")
@@ -673,7 +679,7 @@ function MyUploadedRow({ grid }: { grid: boolean }) {
   return (
     <Carousel loading={false} grid={grid} title={t("My uploaded models")} subtitle={t("Your own furniture, made from your photos. Only you see these.")} count={rows.length} empty="">
       {rows.map((m) => {
-        const image = m.thumbnail_url || m.source_image_url;
+        const image = pictures.get(m.id) || m.thumbnail_url || m.source_image_url;
         return (
           <Card key={m.id} href={`/designs/mine/${m.id}`} title={m.title || t("Model")} meta={sizeLabel(m) ?? t("Size not set")}>
             {image ? (
@@ -697,7 +703,7 @@ function MyCustomisedRow({ grid }: { grid: boolean }) {
   const load = useCallback(
     () =>
       customisedModels().then(
-        (list) => setRows(list),
+        (list) => setRows(list.filter((d) => d.current?.data.item?.source.source_type !== "user")), // those are shown as the uploaded model itself
         (e: Error) => setError(e.message),
       ),
     [],

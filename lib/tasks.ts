@@ -18,7 +18,8 @@ export interface DesignSpec {
   resize_mode?: "proportional" | "independent" | null;
   scale?: [number, number, number] | null;
   /** `requested`: the customer wants this part made (absent on requests from before part choice: all). */
-  parts: { id: string; name: string; requested?: boolean }[];
+  /** `variant`: the vendor's part variant the customer picked (its own shape file and price difference). */
+  parts: { id: string; name: string; requested?: boolean; variant?: { id: string; name: string; glb_url: string; price_delta?: number | null } }[];
   whole_model?: boolean;
   materials: { part: string; part_id: string; color?: string; mapUrl?: string; tile?: number; mapping?: string; roughness?: number; metalness?: number; material?: PartMaterial }[];
   /** The customer's estimate for the requested parts' materials; null when one is priced on request. */

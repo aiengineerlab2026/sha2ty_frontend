@@ -4,7 +4,10 @@ import type { PartMaterial } from "@/lib/designs/materials";
 
 /** Meshes that exist in the GLB. A one-mesh model has a single editable entry, not invented cushions. */
 /** `id` is stable; `name` is what the vendor sees (renamable). `naming`: how the name was found (part_names.py). */
-export type PartInfo = { id: string; name: string; editable: boolean; naming?: "file" | "geometry" | "ai" | "unidentified" | "vendor" };
+/** Another shape a vendor offers for one part (other legs, another headboard): its own GLB, fitted into the part's
+ * space when a customer picks it. `price_delta`: what it adds to (or takes off) the price, in EGP. */
+export type PartVariant = { id: string; name: string; glb_url: string; price_delta?: number | null };
+export type PartInfo = { id: string; name: string; editable: boolean; naming?: "file" | "geometry" | "ai" | "unidentified" | "vendor"; variants?: PartVariant[] };
 export type PartDocument = { modelType?: string; separated?: boolean; components: PartInfo[]; limits?: string | null };
 export type MaterialEdit = {
   color?: string;
@@ -31,6 +34,8 @@ export type PartEditorApi = {
   dirty: () => boolean;
   /** Parts removed from the model. */
   removedParts?: () => string[];
+  /** The variant picked for each part (part id → variant id); parts left as in the file are not listed. */
+  partVariants?: () => Record<string, string>;
   /** Parts shown in the view (the customer's choice of what to have made). */
   visibleParts?: () => string[];
   /** After a save: nothing unsaved until the next change. */

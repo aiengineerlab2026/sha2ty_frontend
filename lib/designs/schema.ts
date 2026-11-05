@@ -40,6 +40,10 @@ export interface ItemEdits {
   part_poses?: Record<string, PartPose>;
   /** Parts removed from the model (not in its GLB, thumbnail or requests). */
   removed_parts?: string[];
+  /** The vendor's part variant picked for a part (part id → variant id, from components[].variants). */
+  part_variants?: Record<string, string>;
+  /** The customer's own .glb the design is built on instead of the source's file. */
+  base_glb_url?: string;
 }
 
 export interface ItemDesign extends ItemEdits {

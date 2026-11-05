@@ -31,6 +31,7 @@ export function stepIndex(index: number, count: number, dir: 1 | -1) {
 
 export interface MatchRequest {
   modelId: string;
+  modelKind?: "model" | "design" | "user_model";
   matchType: MatchType;
   width?: number;
   height?: number;
@@ -46,7 +47,7 @@ export interface MatchRequest {
   modelDepth?: number;
   modelHeight?: number;
   /** Match with a cart / bought item instead of an upload (the backend reads its photo and size). */
-  otherKind?: "model" | "carpet" | "wall";
+  otherKind?: "model" | "design" | "user_model" | "carpet" | "wall";
   otherId?: string;
 }
 

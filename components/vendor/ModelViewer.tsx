@@ -1,8 +1,8 @@
 "use client";
 
 import { useT } from "@/lib/i18n";
-import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
-import { Download, Loader2, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen } from "lucide-react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type ComponentRef, type CSSProperties, type ReactNode } from "react";
+import { Download, Eye, EyeOff, Layers, Loader2, Paintbrush, Palette, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, RotateCcw, RotateCw, Ruler, SlidersHorizontal, X } from "lucide-react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { Bounds, ContactShadows, Environment, OrbitControls, useBounds, useGLTF } from "@react-three/drei";
 import { OutlinePass } from "three/examples/jsm/postprocessing/OutlinePass.js";
@@ -10,15 +10,17 @@ import { AmbientLight, Box3, BufferGeometry, Color, DirectionalLight, Euler, Gro
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 import { GLTFExporter } from "three/examples/jsm/exporters/GLTFExporter.js";
 import { measure, normalizeModel, type CatalogSize, type Dimensions, type NormalizationReport } from "@/lib/plan/modelNormalization";
-import type { MaterialEdit, PartDocument, PartEditorApi, PartInfo } from "@/lib/vendor/parts";
+import type { MaterialEdit, PartDocument, PartEditorApi, PartInfo, PartVariant } from "@/lib/vendor/parts";
+import { fitInto, loadVariant } from "@/lib/vendor/partVariant";
 import { quote } from "@/lib/designs/materials";
 import { boxProject, fabricNormals, inspectUv, seamlessFabric, splitSheetEdge, type Mapping } from "@/lib/vendor/tiling";
 import { PartControls, PartList, partLabel } from "./PartEditor";
 import { MaterialPicker } from "./MaterialPicker";
+import { PartVariants } from "./PartVariants";
 import { ResizeGizmo } from "@/components/designs/ResizeGizmo";
 import { MIN_SIZE, resized } from "@/lib/designs/resize";
 
-export type Slot = { id: string; name: string; naming?: PartInfo["naming"]; mesh: Mesh; materialIndex: number };
+export type Slot = { id: string; name: string; naming?: PartInfo["naming"]; variants?: PartVariant[]; mesh: Mesh; materialIndex: number };
 
 /** Extra transform on one mesh, relative to how the file was authored. Scale is a multiplier (1 = unchanged). */
 export type PartPose = {
@@ -193,6 +195,38 @@ const originals = new WeakMap<Mesh, Material[]>();
 const basePose = new WeakMap<Mesh, { position: Vector3; quaternion: Quaternion; scale: Vector3 }>();
 // Each mesh's geometry as loaded (its own copy): reset and re-projection start from it.
 const originalGeometry = new WeakMap<Mesh, BufferGeometry>();
+// The part as it is in the file, before a variant took its place (what "Original" puts back).
+const fileParts = new WeakMap<Mesh, { geometry: BufferGeometry; materials: Material[] }>();
+
+/** A part's own mesh can take a variant (one material: a part sharing its mesh with others cannot change alone). */
+export const takesVariants = (slot: Slot) => materials(slot.mesh).length === 1;
+
+/** Put a variant in this part's place (fitted into the file part's box), or the file's part back (`null`). It becomes
+ * the part's starting point: its material is what reset goes back to, and patterns lay out on its shape. Material
+ * edits are put back by the caller. */
+export async function setVariant(slot: Slot, variant: PartVariant | null) {
+  const mesh = slot.mesh;
+  if (!takesVariants(slot)) return;
+  let file = fileParts.get(mesh);
+  if (!file) {
+    file = { geometry: originalGeometry.get(mesh) ?? mesh.geometry, materials: originals.get(mesh) ?? materials(mesh) };
+    fileParts.set(mesh, file);
+  }
+  let geometry = file.geometry;
+  let base = file.materials;
+  if (variant) {
+    const loaded = await loadVariant(variant.glb_url);
+    file.geometry.computeBoundingBox();
+    geometry = fitInto(loaded.geometry, file.geometry.boundingBox!);
+    base = [loaded.material];
+  }
+  dropCore(mesh);
+  // ponytail: replaced variant geometries are left to the garbage collector (a few per session), not disposed.
+  originalGeometry.set(mesh, geometry);
+  originals.set(mesh, base.map((mat) => mat.clone()));
+  mesh.geometry = geometry;
+  mesh.material = base[0].clone();
+}
 let maxAnisotropy = 8; // the renderer's maximum, read when the model loads
 
 const DEFAULT_TILE = 0.3; // metres one pattern tile covers across
@@ -384,7 +418,7 @@ export function prepare(root: Object3D, server?: PartDocument | null): { slots: 
       while (used.has(id)) id = `${id}_${n}`;
       used.add(id);
       const name = from?.name || mesh.name || (meshes.length === 1 && list.length === 1 ? "Whole model" : `Part ${n + 1}`);
-      slots.push({ id, name, naming: from?.naming, mesh, materialIndex });
+      slots.push({ id, name, naming: from?.naming, ...(from?.variants?.length ? { variants: from.variants } : {}), mesh, materialIndex });
       n += 1;
     });
   }
@@ -577,6 +611,7 @@ const SELECT = "#f2a33a"; // Sha2ty orange
 const GRID = "editor-grid";
 const GUIDES_KEY = "sha2ty.showDimensions";
 type Tab = "parts" | "properties" | "actions";
+const TAB_ICON: Record<Tab, typeof Layers> = { parts: Layers, properties: Palette, actions: SlidersHorizontal };
 
 /** Blender-style selection: a screen-space silhouette with a soft glow around the selected mesh only (three's
  * OutlinePass). The scene renders as without it (same colours); the pass then draws only its overlay on top, so the
@@ -790,7 +825,11 @@ export function ModelViewer({
   onDesignSize,
   proportional = true,
   actions,
+  actionsLabel = "Save",
   removedParts,
+  partVariants: savedVariants = null,
+  onUploadVariant,
+  onVariantChange,
 }: {
   url: string;
   dimensions?: CatalogSize | null;
@@ -830,8 +869,17 @@ export function ModelViewer({
   woodModel?: string | null;
   /** The page's own controls (save, request…), in the properties column (their own tab on small screens). */
   actions?: ReactNode;
+  /** The phone tab that shows `actions` (it holds more than Save on some pages). */
+  actionsLabel?: string;
   /** Parts removed from the model (saved with the design). With it, the parts list can remove and restore parts. */
   removedParts?: string[] | null;
+  /** The customer's saved variant per part (part id → variant id), put in place on load. */
+  partVariants?: Record<string, string> | null;
+  /** Vendors and admins: stores a part variant's GLB and returns its URL. With it, variants are added and removed
+   * (saved in the part list); without it, a part's variants are offered to choose from. */
+  onUploadVariant?: (file: File) => Promise<string>;
+  /** A part variant was picked (part id → variant id, every choice). */
+  onVariantChange?: (choices: Record<string, string>) => void;
 }) {
   const t = useT();
   const [downloading, setDownloading] = useState(false);
@@ -880,6 +928,13 @@ export function ModelViewer({
   // Parts removed from the model: their meshes are switched off, so neither the export nor the thumbnail has them.
   const [removed, setRemoved] = useState<Set<string>>(() => new Set(removedParts ?? []));
   const removedRef = useRef(removed);
+  // The variant chosen per part, and the one each mesh shows now (so a re-render never swaps it again).
+  const [choices, setChoices] = useState<Record<string, string>>(() => savedVariants ?? {});
+  const choicesRef = useRef(choices);
+  const shownVariant = useRef(new WeakMap<Mesh, string>());
+  const [variantBusy, setVariantBusy] = useState<string | null>(null);
+  const [variantError, setVariantError] = useState<string | null>(null);
+  const [shapeTick, setShapeTick] = useState(0); // a part's shape changed: its area is measured again
   const toggle = (id: string, shown: boolean) =>
     setHidden((current) => {
       const next = new Set(current);
@@ -888,6 +943,23 @@ export function ModelViewer({
       return next;
     });
   const [tab, setTab] = useState<Tab>("parts");
+  // Phones (`fill`): the canvas fills the screen and the panels sit in a bottom sheet: peek (tabs only), half or full.
+  const [sheet, setSheet] = useState<"peek" | "half" | "full">("peek");
+  const [sizeOpen, setSizeOpen] = useState(false); // phones: the size toolbar opens from a small pill
+  const orbit = useRef<ComponentRef<typeof OrbitControls>>(null);
+  const [turned, setTurned] = useState(false); // the rotate hint goes after the first drag or turn
+  const turn = (dir: 1 | -1) => {
+    const controls = orbit.current;
+    if (!controls) return;
+    controls.setAzimuthalAngle(controls.getAzimuthalAngle() + (dir * Math.PI) / 4);
+    controls.update();
+    setTurned(true);
+  };
+  const sheetDrag = useRef<number | null>(null);
+  const openTab = (next: Tab) => {
+    setTab(next);
+    setSheet((s) => (s === "peek" ? "half" : s));
+  };
   // Studio layout below 1024 px: which side panel is open (tablet drawer / phone tab). Phones open on Details;
   // tablets start with both drawers closed. (Client-only component: matchMedia is safe here.)
   const [studioPanel, setStudioPanel] = useState<"details" | "materials" | null>(() =>
@@ -959,7 +1031,7 @@ export function ModelViewer({
   // Every selected part, the first-picked one first (its settings are the ones shown).
   const selection = useMemo(() => (slot ? [slot, ...slots.filter((item) => item.id !== slot.id && also.has(item.id))] : []), [slot, slots, also]);
   // Walks every triangle of the parts: only when the selection or the size changes, not on every render.
-  const area = useMemo(() => (selection.length ? selection.reduce((sum, item) => sum + partArea(item, factor), 0) : null), [selection, factor[0], factor[1], factor[2]]); // eslint-disable-line react-hooks/exhaustive-deps
+  const area = useMemo(() => (selection.length ? selection.reduce((sum, item) => sum + partArea(item, factor), 0) : null), [selection, factor[0], factor[1], factor[2], shapeTick]); // eslint-disable-line react-hooks/exhaustive-deps
   // The model's wood goes on its wooden parts: shown, not removed, not upholstered (a fabric chosen) and not soft
   // by name (mattress, pillows, bedding…).
   const woodParts = useMemo(
@@ -987,6 +1059,53 @@ export function ModelViewer({
       if (editOf.mapUrl) void track(loadMap(editOf.mapUrl, editOf).then((texture) => layPattern(item, texture, editOf)));
     }
   };
+
+  /** The part's saved colour and pattern on its (new) shape. */
+  const reapply = (item: Slot) => {
+    const editOf = editsRef.current[item.id];
+    if (!editOf) return;
+    paint(slotMaterial(item), editOf);
+    if (editOf.mapUrl) void track(loadMap(editOf.mapUrl, editOf).then((texture) => layPattern(item, texture, editOf)));
+  };
+  const showVariant = (item: Slot, variant: PartVariant | null) =>
+    track(setVariant(item, variant)).then(() => {
+      shownVariant.current.set(item.mesh, variant?.id ?? "");
+      reapply(item);
+      setShapeTick((n) => n + 1);
+    });
+  // Saved choices go in place once the parts are loaded (and again if the parts list is rebuilt).
+  useEffect(() => {
+    for (const item of slots) {
+      const variant = item.variants?.find((v) => v.id === choicesRef.current[item.id]) ?? null;
+      if ((shownVariant.current.get(item.mesh) ?? "") === (variant?.id ?? "")) continue;
+      void showVariant(item, variant).catch((error: Error) => setVariantError(error.message));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [slots]);
+  /** The customer picks a variant for the selected part (`null`: the original). Not an undo step. */
+  const chooseVariant = (item: Slot, variant: PartVariant | null) => {
+    setVariantBusy(variant?.id ?? "");
+    setVariantError(null);
+    showVariant(item, variant).then(
+      () => {
+        dirty.current = true; // the saved GLB carries the new shape
+        const next = { ...choicesRef.current };
+        if (variant) next[item.id] = variant.id;
+        else delete next[item.id];
+        choicesRef.current = next;
+        setChoices(next);
+        setVariantBusy(null);
+        onVariantChange?.(next);
+      },
+      (error: Error) => {
+        setVariantError(t("Could not load this variant: {error}", { error: error.message }));
+        setVariantBusy(null);
+      },
+    );
+  };
+  /** Vendors: the part's variant list changed (saved with the model's part list). */
+  const setPartVariants = (id: string, variants: PartVariant[]) =>
+    setSlots((current) => current.map((item) => (item.id === id ? { ...item, variants } : item)));
 
   /** A change to every selected part, in one undo step (`textures`: each part's own copy of a new pattern). */
   const changeSelected = (patch: MaterialEdit, textures?: Map<string, Texture>) => {
@@ -1085,7 +1204,7 @@ export function ModelViewer({
       document: () => ({
         modelType: server?.modelType,
         separated: slots.length > 1,
-        components: slots.map((item) => ({ id: item.id, name: item.name, editable: true, ...(item.naming ? { naming: item.naming } : {}) })),
+        components: slots.map((item) => ({ id: item.id, name: item.name, editable: true, ...(item.naming ? { naming: item.naming } : {}), ...(item.variants?.length ? { variants: item.variants } : {}) })),
         limits: slots.length > 1 ? null : WHOLE,
       }),
       // Material estimates at the size being saved (the customer may have resized since picking).
@@ -1108,6 +1227,7 @@ export function ModelViewer({
         }));
       },
       dirty: () => dirty.current,
+      partVariants: () => Object.fromEntries(Object.entries(choicesRef.current).filter(([id, variant]) => slots.some((item) => item.id === id && item.variants?.some((v) => v.id === variant)))),
       visibleParts: () => slots.filter((item) => !hiddenRef.current.has(item.id) && !removedRef.current.has(item.id)).map((item) => item.id),
       removedParts: () => [...removedRef.current].filter((id) => slots.some((item) => item.id === id)),
       markClean: () => {
@@ -1134,7 +1254,7 @@ export function ModelViewer({
     // A soft studio backdrop (CSS gradient behind a transparent canvas): the model is the only thing that stands out.
     <div
       className={`relative w-full overflow-hidden ${details !== undefined ? "" : "rounded-2xl border border-slate-200/80"} bg-[radial-gradient(ellipse_at_50%_35%,#ffffff_0%,#f1f5f9_55%,#e2e8f0_100%)] ${
-        edit ? (details !== undefined ? "h-full min-h-[280px] md:min-h-[420px]" : `h-[52vh] min-h-[320px] ${fill ? "lg:h-full lg:min-h-0" : "lg:h-[calc(100dvh-12.5rem)] lg:min-h-[520px]"}`) : "h-[min(70vh,640px)]"
+        edit ? (details !== undefined ? "h-full min-h-[280px] md:min-h-[420px]" : fill ? "h-full min-h-0 max-lg:rounded-none max-lg:border-0" : "h-[52vh] min-h-[320px] lg:h-[calc(100dvh-12.5rem)] lg:min-h-[520px]") : "h-[min(70vh,640px)]"
       }`}
     >
       <Canvas
@@ -1149,7 +1269,7 @@ export function ModelViewer({
         <Suspense fallback={null}>
           <Bounds fit clip observe margin={1.25}>
             <group ref={sizer} name={SIZER} scale={factor}>
-              <LoadedModel url={url} dimensions={dimensions} edit={edit} server={server} saved={saved} replay={replay} onReport={onLoaded} onSlots={onSlots} onPick={pick} track={track} />
+              <LoadedModel url={url} dimensions={dimensions} edit={edit} server={server} saved={saved} replay={replay} onReport={onLoaded} onSlots={onSlots} onPick={(id, add) => { pick(id, add); if (id) openTab("properties"); }} track={track} />
             </group>
             <FitOnSignal signal={resetView} />
           </Bounds>
@@ -1163,12 +1283,19 @@ export function ModelViewer({
         {edit && <SelectionOutline meshes={selection.map((item) => item.mesh)} />}
         {/* No grid: a soft contact shadow grounds the model on the backdrop. */}
         <ContactShadows name={GRID} position={[0, 0.001, 0]} scale={12} blur={2.4} far={4} opacity={0.35} resolution={1024} />
-        <OrbitControls makeDefault enableDamping autoRotate={autoRotate} autoRotateSpeed={1.2} />
+        {/* Never under the floor or upside down: a vertical drag stops just above the ground. */}
+        <OrbitControls ref={orbit} makeDefault enableDamping autoRotate={autoRotate} autoRotateSpeed={1.2} minPolarAngle={0.1} maxPolarAngle={Math.PI / 2 - 0.02} onStart={() => setTurned(true)} />
       </Canvas>
       {edit && designSize && onDesignSize && (
-        // Floating toolbar: typed sizes, the handles / dimensions switch and the unit.
+        // Floating toolbar: typed sizes, the handles / dimensions switch and the unit. Phones: a size pill opens it.
         <div className="absolute inset-x-3 top-3 flex justify-center">
-          <div className="flex max-w-full flex-wrap items-end gap-3 rounded-2xl border border-white/70 bg-white/80 px-3 py-2 shadow-lg shadow-slate-900/5 backdrop-blur-md">
+          {fill && !sizeOpen && (
+            <button type="button" onClick={() => setSizeOpen(true)} className="flex h-10 items-center gap-2 rounded-full border border-white/70 bg-white/90 px-4 text-xs font-semibold tabular-nums text-brand-navy shadow-lg shadow-slate-900/10 backdrop-blur-md lg:hidden">
+              <Ruler className="size-4 text-brand-amber" aria-hidden />
+              <bdi>{designSize.width.toFixed(2)} × {designSize.height.toFixed(2)} × {designSize.depth.toFixed(2)} m</bdi>
+            </button>
+          )}
+          <div className={`flex max-w-full flex-wrap items-end gap-3 rounded-2xl border border-white/70 bg-white/80 px-3 py-2 shadow-lg shadow-slate-900/5 backdrop-blur-md ${fill && !sizeOpen ? "max-lg:hidden" : ""}`}>
             <SizeInputs size={designSize} unit={guideUnit} proportional={proportional} onSize={onDesignSize} />
             <span className="hidden h-8 w-px bg-slate-200 sm:block" aria-hidden />
             <label className="flex cursor-pointer items-center gap-2 self-center text-xs font-medium text-slate-600">
@@ -1186,8 +1313,28 @@ export function ModelViewer({
                 </button>
               ))}
             </div>
+            {fill && (
+              <button type="button" onClick={() => setSizeOpen(false)} aria-label={t("Close")} className="flex size-9 items-center justify-center self-center rounded-full text-slate-500 hover:bg-slate-100 lg:hidden">
+                <X className="size-4" aria-hidden />
+              </button>
+            )}
           </div>
         </div>
+      )}
+      {edit && fill && loadedUrl === url && (
+        // Phones: turn the model by hand (a one-finger drag), or 45° at a time with these.
+        <>
+          {!turned && (
+            <p className="pointer-events-none absolute inset-x-0 bottom-16 mx-auto w-fit rounded-full bg-brand-navy/80 px-3 py-1.5 text-xs font-medium text-white backdrop-blur lg:hidden">{t("Drag to rotate · pinch to zoom")}</p>
+          )}
+          <div className="absolute bottom-3 end-3 flex gap-2 lg:hidden">
+            {([1, -1] as const).map((dir) => (
+              <button key={dir} type="button" onClick={() => turn(dir)} aria-label={t(dir === 1 ? "Rotate left" : "Rotate right")} className="flex size-11 items-center justify-center rounded-full border border-white/70 bg-white/90 text-brand-navy shadow-lg shadow-slate-900/10 backdrop-blur-md active:scale-95">
+                {dir === 1 ? <RotateCcw className="size-5" aria-hidden /> : <RotateCw className="size-5" aria-hidden />}
+              </button>
+            ))}
+          </div>
+        </>
       )}
       {loadedUrl !== url && (
         <div className="pointer-events-none absolute inset-0 grid place-items-center" role="status" aria-live="polite">
@@ -1197,9 +1344,9 @@ export function ModelViewer({
           </div>
         </div>
       )}
-      <div className={`pointer-events-none absolute inset-x-3 flex flex-col items-center gap-1 text-[11px] ${overlay ? "top-12" : "bottom-3"}`}>
-        {/* With the page's own overlay (studio) its size pill replaces this one. */}
-        <p className={`${overlay ? "hidden" : ""} rounded-full border border-white/70 bg-white/85 px-3 py-1 font-medium tabular-nums text-slate-700 shadow-sm backdrop-blur`}>
+      <div className={`pointer-events-none absolute inset-x-3 flex flex-col items-center gap-1 text-[11px] ${overlay ? "top-12" : "bottom-3"} ${fill ? "max-lg:bottom-auto max-lg:top-16" : ""}`}>
+        {/* With the page's own overlay (studio) its size pill replaces this one; on phones the size pill on top does. */}
+        <p className={`${overlay ? "hidden" : ""} ${fill ? "max-lg:hidden" : ""} rounded-full border border-white/70 bg-white/85 px-3 py-1 font-medium tabular-nums text-slate-700 shadow-sm backdrop-blur`}>
           {size
             ? `${designSize ? t("Your size") : dimensions ? t("Scaled to the catalogue size") : t("No catalogue size yet: authored size")} · ${size.width.toFixed(2)} × ${size.height.toFixed(2)} × ${size.depth.toFixed(2)} m (W × H × D)`
             : t("Loading…")}
@@ -1243,7 +1390,7 @@ export function ModelViewer({
   // The parts list takes the room left; download and the page's footer (e.g. "Have it made") stay under it.
   const partsPanel = (
     <div className="flex min-h-0 flex-1 flex-col gap-3">
-    <PartList parts={list} selected={selected} also={also} several={slots.length > 1 ? several : undefined} onSeveral={setSeveral} limits={slots.length > 1 ? null : WHOLE} onSelect={(id, add) => { pick(id, add); setTab("properties"); }} onRename={rename} hidden={hidden} onToggle={slots.length > 1 ? toggle : undefined}
+    <PartList parts={list} selected={selected} also={also} several={slots.length > 1 ? several : undefined} onSeveral={setSeveral} limits={slots.length > 1 ? null : WHOLE} onSelect={(id, add) => { pick(id, add); openTab("properties"); }} onRename={rename} hidden={hidden} onToggle={slots.length > 1 ? toggle : undefined}
       {...(removedParts !== undefined && slots.length > 1 ? { onRemove: removePart, canRemove: removable, removedCount: removed.size, onRestore: restoreParts } : {})} />
     <button type="button" onClick={() => void download()} disabled={downloading} className="flex w-full shrink-0 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-brand-navy shadow-sm hover:bg-slate-50 disabled:opacity-60">
       <Download className="size-4" aria-hidden />
@@ -1290,6 +1437,18 @@ export function ModelViewer({
           setFuture(0);
         }}
       />
+      {slot && selection.length === 1 && takesVariants(slot) && (onUploadVariant || slot.variants?.length) && (
+        <PartVariants
+          key={slot.id}
+          variants={slot.variants ?? []}
+          chosen={choices[slot.id] ?? null}
+          busy={variantBusy}
+          error={variantError}
+          onChoose={onUploadVariant ? undefined : (variant) => chooseVariant(slot, variant)}
+          onUpload={onUploadVariant}
+          onChange={(next) => setPartVariants(slot.id, next)}
+        />
+      )}
       {woodParts.length > 0 && (
         <div className="rounded-2xl border border-slate-200/80 bg-white p-3 text-sm shadow-sm">
           <MaterialPicker
@@ -1357,17 +1516,24 @@ export function ModelViewer({
       </div>
     );
   }
-  const TABS = [["parts", "Parts"], ["properties", "Properties"], ...(actions ? [["actions", "Save"]] : [])] as [Tab, string][];
+  const TABS = [["parts", "Parts"], ["properties", "Properties"], ...(actions ? [["actions", actionsLabel]] : [])] as [Tab, string][];
+  const SHEET = { peek: "", half: "max-lg:h-[52%]", full: "max-lg:h-[calc(100%-3.5rem)]" } as const;
+  const sheetStep = (dir: 1 | -1) => setSheet((s) => (["peek", "half", "full"] as const)[Math.min(2, Math.max(0, ["peek", "half", "full"].indexOf(s) + dir))]);
+  const chosen = selection.length > 1 ? t("{n} parts selected", { n: selection.length }) : slot?.name;
   return (
-    // Desktop: parts | canvas | properties (+ the page's actions), side panels collapsible. Below 1024 px: the canvas on
-    // top (sticky on phones) and one panel at a time under it, chosen with tabs.
+    // Desktop: parts | canvas | properties (+ the page's actions), side panels collapsible. Below 1024 px with `fill`
+    // (the editor pages, the app): the canvas fills the screen and the panels sit in a bottom sheet (peek / half /
+    // full; drag or tap its handle) with a floating toolbar for the selected part. Without `fill`: the canvas on top
+    // and one panel under it, chosen with tabs.
     <div
-      className={`flex flex-col gap-3 lg:grid lg:gap-4 lg:[grid-template-columns:var(--cols)] ${fill ? "lg:min-h-0 lg:flex-1 lg:grid-rows-[minmax(0,1fr)]" : "lg:items-start"}`}
+      className={`flex flex-col gap-3 lg:grid lg:gap-4 lg:[grid-template-columns:var(--cols)] ${fill ? "max-lg:relative max-lg:min-h-0 max-lg:flex-1 max-lg:gap-0 max-lg:overflow-hidden lg:min-h-0 lg:flex-1 lg:grid-rows-[minmax(0,1fr)]" : "lg:items-start"}`}
       style={{ "--cols": columns.replace(/_/g, " ") } as CSSProperties}
     >
       {/* Full height: no scroll of its own, only the parts list inside scrolls. */}
       <div className={`hidden ${fill ? "lg:flex lg:h-full lg:min-h-0 lg:flex-col lg:overflow-hidden" : `lg:block ${panel}`} ${leftOpen ? "" : "lg:invisible lg:w-0"}`}>{leftOpen && partsPanel}</div>
-      <div className={`relative max-lg:sticky max-lg:top-16 max-lg:z-10 ${fill ? "lg:h-full lg:min-h-0" : ""}`}>
+      {/* Phones: the 3D view ends where the sheet starts (full: stays above the half height), so the camera fits
+          the model into what is visible and a selected part is never under the sheet. */}
+      <div className={`relative ${fill ? `max-lg:absolute max-lg:inset-x-0 max-lg:top-0 max-lg:transition-[bottom] max-lg:duration-300 ${sheet === "peek" ? "max-lg:bottom-[5.5rem]" : "max-lg:bottom-[52%]"} lg:h-full lg:min-h-0` : "max-lg:sticky max-lg:top-16 max-lg:z-10"}`}>
         {canvas}
         <div className="absolute bottom-3 end-3 hidden gap-1.5 lg:flex">
           <button type="button" onClick={() => setLeftOpen((o) => !o)} title={leftOpen ? t("Hide parts") : t("Show parts")} className="rounded-lg border border-white/70 bg-white/85 p-1.5 text-slate-600 shadow-sm backdrop-blur transition hover:text-brand-navy">
@@ -1377,18 +1543,69 @@ export function ModelViewer({
             {rightOpen ? <PanelRightClose className="size-4 rtl:-scale-x-100" aria-hidden /> : <PanelRightOpen className="size-4 rtl:-scale-x-100" aria-hidden />}
           </button>
         </div>
+        {fill && chosen && (
+          // Phones: what is selected, with its quick actions, floating under the size pill (never under a thumb).
+          <div className="absolute inset-x-3 top-16 z-10 flex justify-center lg:hidden">
+            <div className="flex max-w-full items-center gap-1 rounded-full border border-white/70 bg-brand-navy/90 p-1 ps-4 text-white shadow-lg backdrop-blur-md">
+              <span className="min-w-0 truncate text-sm font-semibold">{chosen}</span>
+              <button type="button" onClick={() => openTab("properties")} className="flex h-9 shrink-0 items-center gap-1.5 rounded-full bg-brand-amber px-3 text-xs font-semibold text-brand-navy">
+                <Paintbrush className="size-3.5" aria-hidden /> {t("Materials")}
+              </button>
+              {slot && slots.length > 1 && selection.length === 1 && (
+                <button type="button" onClick={() => toggle(slot.id, hidden.has(slot.id))} aria-label={t(hidden.has(slot.id) ? "Show" : "Hide")} className="flex size-9 shrink-0 items-center justify-center rounded-full hover:bg-white/10">
+                  {hidden.has(slot.id) ? <Eye className="size-4" aria-hidden /> : <EyeOff className="size-4" aria-hidden />}
+                </button>
+              )}
+              <button type="button" onClick={() => pick(null)} aria-label={t("Clear selection")} className="flex size-9 shrink-0 items-center justify-center rounded-full hover:bg-white/10">
+                <X className="size-4" aria-hidden />
+              </button>
+            </div>
+          </div>
+        )}
       </div>
-      <div className="flex gap-1 rounded-xl border border-slate-200/80 bg-white p-1 shadow-sm lg:hidden" role="tablist">
-        {TABS.map(([id, label]) => (
-          <button key={id} type="button" role="tab" aria-selected={tab === id} onClick={() => setTab(id)} className={`flex-1 rounded-lg px-3 py-2 text-sm font-medium transition ${tab === id ? "bg-brand-navy text-white shadow-sm" : "text-slate-600 hover:bg-slate-50"}`}>
-            {t(label)}
+      {/* Phones with `fill`: the bottom sheet. Wide screens: its wrappers vanish (contents), so its panels are the grid's. */}
+      <div
+        className={fill ? `max-lg:absolute max-lg:inset-x-0 max-lg:bottom-0 max-lg:z-20 max-lg:flex max-lg:flex-col max-lg:rounded-t-3xl max-lg:border-t max-lg:border-slate-200/70 max-lg:bg-white/95 max-lg:shadow-[0_-12px_32px_-12px_rgba(15,23,42,0.25)] max-lg:backdrop-blur-xl max-lg:transition-[height] max-lg:duration-300 ${SHEET[sheet]} lg:contents` : "contents"}
+      >
+        {fill && (
+          <button
+            type="button"
+            onClick={() => sheetStep(sheet === "full" ? -1 : 1)}
+            onPointerDown={(e) => (sheetDrag.current = e.clientY)}
+            onPointerUp={(e) => {
+              const start = sheetDrag.current;
+              sheetDrag.current = null;
+              if (start !== null && Math.abs(e.clientY - start) > 30) {
+                e.preventDefault();
+                sheetStep(e.clientY < start ? 1 : -1);
+              }
+            }}
+            aria-label={t(sheet === "full" ? "Collapse panel" : "Expand panel")}
+            className="flex h-6 shrink-0 touch-none items-center justify-center lg:hidden"
+          >
+            <span className="h-1.5 w-10 rounded-full bg-slate-300" aria-hidden />
           </button>
-        ))}
-      </div>
-      <div className="lg:hidden">{tab === "parts" && partsPanel}</div>
-      <div className={`space-y-3 lg:block ${panel} ${tab === "parts" ? "max-lg:hidden" : ""} ${rightOpen ? "" : "lg:invisible lg:w-0"}`}>
-      <div className={`space-y-3 ${tab === "actions" ? "max-lg:hidden" : ""}`}>{controls}</div>
-      {actions && <div className={tab === "properties" ? "max-lg:hidden" : ""}>{actions}</div>}
+        )}
+        {/* Segmented control: a soft track, the open tab a raised white pill; icon + one-line label each. */}
+        <div className={`flex gap-1 rounded-2xl bg-slate-100 p-1 lg:hidden ${fill ? "mx-3 mb-3 shrink-0" : ""}`} role="tablist">
+          {TABS.map(([id, label]) => {
+            const Icon = TAB_ICON[id];
+            const on = tab === id;
+            return (
+              <button key={id} type="button" role="tab" aria-selected={on} onClick={() => (fill ? (on && sheet !== "peek" ? setSheet("peek") : openTab(id)) : setTab(id))} className={`flex h-11 flex-auto items-center justify-center gap-1.5 rounded-xl px-3 text-[13px] font-semibold transition ${on ? "bg-white text-brand-navy shadow-[0_1px_3px_rgba(15,23,42,0.12)]" : "text-slate-500 active:bg-white/60"}`}>
+                <Icon className={`size-4 shrink-0 ${on ? "text-brand-amber" : ""}`} aria-hidden />
+                <span className="whitespace-nowrap">{t(label)}</span>
+              </button>
+            );
+          })}
+        </div>
+        <div className={fill ? `max-lg:min-h-0 max-lg:flex-1 max-lg:overflow-y-auto max-lg:overscroll-contain max-lg:px-3 max-lg:pb-[max(1rem,env(safe-area-inset-bottom))] lg:contents ${sheet === "peek" ? "max-lg:hidden" : ""}` : "contents"}>
+          <div className="lg:hidden">{tab === "parts" && partsPanel}</div>
+          <div className={`space-y-3 lg:block ${panel} ${tab === "parts" ? "max-lg:hidden" : ""} ${rightOpen ? "" : "lg:invisible lg:w-0"}`}>
+          <div className={`space-y-3 ${tab === "actions" ? "max-lg:hidden" : ""}`}>{controls}</div>
+          {actions && <div className={tab === "properties" ? "max-lg:hidden" : ""}>{actions}</div>}
+          </div>
+        </div>
       </div>
     </div>
   );

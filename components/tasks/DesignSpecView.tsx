@@ -93,6 +93,13 @@ export function DesignSpecView({ spec, quantity = 1 }: { spec: DesignSpec; quant
                     {t(part.name)}
                     {part.requested === false && <span className="ms-1.5 text-xs font-normal text-slate-500">· {t("not requested")}</span>}
                   </span>
+                  {part.variant && (
+                    <span className="block text-xs font-medium text-amber-800">
+                      {t("Variant: {name}", { name: part.variant.name })}
+                      {part.variant.price_delta ? <bdi className="ms-1 tabular-nums">({part.variant.price_delta > 0 ? "+" : "−"}{formatPrice(Math.abs(part.variant.price_delta))})</bdi> : null}{" "}
+                      <a href={part.variant.glb_url} target="_blank" rel="noreferrer" className="underline">{t("3D file")}</a>
+                    </span>
+                  )}
                   {mat?.material && <span className="block text-xs text-slate-600">{materialLine(t, mat.material)}</span>}
                   <span className="block truncate text-xs text-slate-500">
                     {mat?.material ? null : mat ? [mat.mapUrl ? t("Pattern") : null, mat.color && !mat.mapUrl ? mat.color : null, mat.tile ? t("tile {cm} cm", { cm: Math.round(mat.tile * 100) }) : null].filter(Boolean).join(" · ") || t("Changed finish") : t("As in the catalogue model")}

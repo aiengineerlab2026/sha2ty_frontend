@@ -22,6 +22,8 @@ import type { PriceUnit } from "@/lib/vendor/types";
 import { RichText } from "./RichText";
 import { catalogDimensions } from "@/lib/plan/modelNormalization";
 import { customizedModelFields, updateModel, type PartEditorApi } from "@/lib/vendor/parts";
+import { uploadPublicFile } from "@/lib/vendor/storage";
+import { ReplaceGlb } from "./ReplaceGlb";
 
 const ModelViewer = dynamic(() => import("./ModelViewer").then((mod) => mod.ModelViewer), {
   ssr: false,
@@ -54,6 +56,9 @@ export function ModelDetail({ id }: { id: string }) {
   const [saved, setSaved] = useState(false);
   const [busy, setBusy] = useState(false);
   const editor = useRef<PartEditorApi | null>(null);
+  // A new 3D file uploaded but not saved yet: Save puts it on the listing (a fresh part list, look and picture).
+  const [replaced, setReplaced] = useState<string | null>(null);
+  const [fileKey, setFileKey] = useState(0); // the viewer starts over on a new file
 
   useEffect(() => {
     if (!supabaseConfigured()) return; // shown below, from the same check
@@ -100,8 +105,10 @@ export function ModelDetail({ id }: { id: string }) {
     setSaved(false);
     try {
       const materials = editor.current && vendor && model.glb_url
-        ? await customizedModelFields(vendor.id, model.id, model.glb_url, model.source_glb_url ?? null, editor.current, model.version ?? 1)
+        ? await customizedModelFields(vendor.id, model.id, replaced ?? model.glb_url, replaced ? null : model.source_glb_url ?? null, editor.current, model.version ?? 1)
         : null;
+      // Customers' designs keep the file they started from (their design stores it); new ones start from this file.
+      const newFile = replaced ? { glb_url: replaced, source_glb_url: replaced, components: null, material_edits: {} } : {};
       const updated = await updateModel(model.id, {
           title: title.trim() || model.title,
           description,
@@ -114,6 +121,7 @@ export function ModelDetail({ id }: { id: string }) {
           shape,
           length2_m: shape === "straight" ? null : numberOrNull(length2),
           updated_at: new Date().toISOString(),
+          ...newFile,
           ...(materials?.fields ?? {}),
           // Only when changed: saving keeps working before woods.sql adds the column.
           ...(JSON.stringify(woods) !== JSON.stringify(model.woods ?? null) ? { woods } : {}),
@@ -122,7 +130,8 @@ export function ModelDetail({ id }: { id: string }) {
         setError(updated.error.message);
         return;
       }
-      setModel({ ...model, ...(materials?.fields ?? {}), woods, title: title.trim() || model.title });
+      setModel({ ...model, ...newFile, ...(materials?.fields ?? {}), woods, title: title.trim() || model.title } as CatalogModel);
+      setReplaced(null);
       if (materials?.thumbnailError) {
         setError(t("Saved, but the model image could not be updated ({error}). The previous image is kept; save again to retry.", { error: materials.thumbnailError }));
         return;
@@ -207,6 +216,7 @@ export function ModelDetail({ id }: { id: string }) {
         </div>
       </div>
       {(error ?? (supabaseConfigured() ? null : t("Supabase is not configured."))) && <p className="shrink-0 border-b border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700">{error ?? t("Supabase is not configured.")}</p>}
+      {replaced && <p role="status" className="shrink-0 border-b border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-900">{t("New 3D file loaded. Save changes to put it on the listing.")}</p>}
 
       {model && !model.glb_url && (
         <div className="grid min-h-0 flex-1 gap-4 overflow-y-auto p-4 md:grid-cols-[minmax(18rem,24rem)_1fr]">
@@ -220,16 +230,19 @@ export function ModelDetail({ id }: { id: string }) {
       {model?.glb_url && (
         // The preview follows the fields as they are typed (the saved size until they form a valid one).
         <ModelViewer
+          key={fileKey}
           edit
           fill
           details={form}
-          parts={model.components}
-          edits={model.material_edits}
-          replay={!model.source_glb_url || model.source_glb_url === model.glb_url}
+          parts={replaced ? null : model.components}
+          edits={replaced ? {} : model.material_edits}
+          replay={Boolean(replaced) || !model.source_glb_url || model.source_glb_url === model.glb_url}
           onApi={(api) => { editor.current = api; }}
-          url={model.glb_url}
+          url={replaced ?? model.glb_url}
           woodVendor={vendor?.platform ? null : vendor?.id}
           woodModel={model.id}
+          // Other shapes for a part, offered to customers (saved in the part list with the model).
+          onUploadVariant={vendor ? (file) => uploadPublicFile(vendor.id, file, `${model.id}/part-variants`) : undefined}
           resetView={resetView}
           autoRotate={spin}
           dimensions={
@@ -254,6 +267,15 @@ export function ModelDetail({ id }: { id: string }) {
                     <a href={model.source_glb_url} target="_blank" rel="noreferrer" className={tool} title={t("Original GLB")} aria-label={t("Original GLB")}>
                       <FileBox className="size-4 sm:size-3.5" aria-hidden /> <span className={label}>{t("Original GLB")}</span>
                     </a>
+                  )}
+                  {vendor && (
+                    <ReplaceGlb
+                      upload={(file) => uploadPublicFile(vendor.id, file, `${model.id}/model`)}
+                      onReplaced={(url) => { setReplaced(url); setFileKey((k) => k + 1); editor.current = null; setSaved(false); setError(null); }}
+                      onError={setError}
+                      label={false}
+                      className={tool}
+                    />
                   )}
                   <span className="mx-0.5 h-5 w-px bg-slate-200" aria-hidden />
                   <button type="button" onClick={() => setResetView((n) => n + 1)} className={tool} title={t("Reset view")} aria-label={t("Reset view")}>

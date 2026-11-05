@@ -1,5 +1,5 @@
-import { PlanLayout } from "@/components/plan/PlanLayout";
+import { PlanGate } from "@/components/plan/PlanGate";
 
 export default function PlanPage() {
-  return <PlanLayout />;
+  return <PlanGate />;
 }

@@ -2,7 +2,7 @@
 
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
-import { Box, Check, Clock, Eye, LoaderCircle, Lock, LogOut, Mail, MapPin, Plus, UserRound, X } from "lucide-react";
+import { Box, Check, Clock, Eye, LoaderCircle, Lock, LogOut, Mail, MapPin, Plus, Sparkles, UserRound, Wand2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Logo } from "@/components/shatably/Logo";
 import { LanguageSwitch } from "@/components/shatably/Header";
@@ -129,6 +129,7 @@ export function AdminRequests() {
         <PlatformCatalog call={call} />
         <div className="mt-6"><VisionModelSetting call={call} /></div>
         <div className="mt-6"><GeneratorSetting call={call} /></div>
+        <div className="mt-6"><MatchModelSetting call={call} /></div>
         <div className="mt-6"><AdminWoods call={call} /></div>
         <div className="mt-6"><AdminPaintColors call={call} /></div>
         <div className="mt-6"><AdminModels call={call} /></div>
@@ -244,6 +245,11 @@ function GeneratorSetting({ call }: { call: (path: string, init?: RequestInit) =
   return <ServerChoice call={call} path="/generator" field="provider" icon={<Box className="size-5 text-brand-navy" aria-hidden />} title="3D generator" intro="Turns vendors' product photos into 3D models, on the web and in the app. Vendors do not choose it." />;
 }
 
+/** Which GPT combines the model's photo and the other item's photo into one room ("See how it looks with other items"). */
+function MatchModelSetting({ call }: { call: (path: string, init?: RequestInit) => Promise<Record<string, unknown> | null> }) {
+  return <ServerChoice call={call} path="/match-model" field="provider" icon={<Wand2 className="size-5 text-brand-navy" aria-hidden />} title="Image combining model" intro="Combines a model's photo with another item's photo into one room for “See how it looks with other items”. GPT Sol by default." />;
+}
+
 /** One server setting picked from a few options, each usable only with its API key on the server. */
 function ServerChoice({ call, path, field, icon, title, intro }: { call: (path: string, init?: RequestInit) => Promise<Record<string, unknown> | null>; path: string; field: string; icon: ReactNode; title: string; intro: string }) {
   const t = useT();
@@ -357,6 +363,9 @@ function PlatformCatalog({ call }: { call: (path: string, init?: RequestInit) =>
       <div className="flex flex-wrap gap-2">
         <Button type="button" disabled={opening !== null} onClick={() => void enter("/vendor/new")} className="bg-brand-amber text-brand-navy hover:bg-[#e8952a]">
           <Plus className="size-4" aria-hidden /> {t("Add a model")}
+        </Button>
+        <Button type="button" disabled={opening !== null} onClick={() => void enter("/vendor/generate")} className="bg-white text-brand-navy hover:bg-slate-100">
+          <Sparkles className="size-4" aria-hidden /> {opening === "/vendor/generate" ? t("Opening…") : t("Generate furniture")}
         </Button>
         <Button type="button" variant="outline" disabled={opening !== null} onClick={() => void enter("/vendor")} className="border-white/30 bg-transparent text-white hover:bg-white/10">
           {opening === "/vendor" ? t("Opening…") : t("Manage Sha2ty models")}

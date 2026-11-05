@@ -56,7 +56,7 @@ export function ProposalEditor({ taskId }: { taskId: string }) {
         const base = await proposalBase(taskId);
         setItem(base.item);
         setTitle(base.title);
-        setCurrent(base.glb_url ?? base.item.source.glb_url);
+        setCurrent(base.glb_url ?? base.item.base_glb_url ?? base.item.source.glb_url);
         setDims(base.item.dimensions ?? sizeOf(base.item));
       } catch (caught) {
         setError(caught instanceof Error ? caught.message : String(caught));
@@ -94,6 +94,7 @@ export function ProposalEditor({ taskId }: { taskId: string }) {
           material_edits: api.edits(),
           ...(item.part_poses ? { part_poses: item.part_poses } : {}),
           ...(api.removedParts?.().length ? { removed_parts: api.removedParts() } : {}),
+          ...(api.partVariants && Object.keys(api.partVariants()).length ? { part_variants: api.partVariants() } : {}),
           ...(resizedFromSource ? { resize_mode: proportional && dims && original && stretch(dims, original) < 1.001 ? "proportional" : "independent" } : {}),
         },
         glb_url: glbUrl,
@@ -117,7 +118,7 @@ export function ProposalEditor({ taskId }: { taskId: string }) {
       const url = await uploadPublicFile(userId, file, `proposals/${taskId}/version`);
       setModelUrl(url);
       // The new file has its own parts and look: start editing it from scratch (size kept).
-      setItem({ ...item, source: { ...item.source, glb_url: url, source_glb_url: null }, material_edits: {}, components: undefined, removed_parts: undefined, part_poses: undefined });
+      setItem({ ...item, source: { ...item.source, glb_url: url, source_glb_url: null }, material_edits: {}, components: undefined, removed_parts: undefined, part_poses: undefined, part_variants: undefined, base_glb_url: undefined });
       setViewKey((k) => k + 1);
       editor.current = null;
     } catch (caught) {
@@ -171,7 +172,7 @@ export function ProposalEditor({ taskId }: { taskId: string }) {
             key={viewKey}
             edit
             fill
-            url={item.source.glb_url}
+            url={item.base_glb_url ?? item.source.glb_url}
             parts={item.components ?? null}
             edits={item.material_edits}
             replay
@@ -180,6 +181,7 @@ export function ProposalEditor({ taskId }: { taskId: string }) {
             onDesignSize={setDims}
             proportional={proportional}
             removedParts={item.removed_parts ?? []}
+            partVariants={item.part_variants ?? null}
             onApi={(api) => { editor.current = api; }}
             woodVendor={userId}
             woodModel={item.source.model_id}
