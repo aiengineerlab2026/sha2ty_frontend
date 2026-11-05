@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * Browser auth. The session is two httpOnly cookies set by /api/auth (access JWT + refresh token),
+ * Browser auth. The session is two httpOnly cookies set by the backend's /api/auth (access JWT + refresh token),
  * so nothing here can read a token: it asks the server who is signed in, and every Supabase /
  * backend request goes through the same-origin proxies, which attach the token server-side.
  */

@@ -1,9 +1,9 @@
 import { splitLines } from "@/lib/match/match";
 import type { CompanyGroup, CorrectionState, PlanGeometry, SavedPlan } from "./types";
 
-/** The FastAPI backend, through the same-origin proxy that adds the user's JWT from the httpOnly
- * cookie (app/api/backend). Guests go through it too, without a token. */
-export const API = "/api/backend";
+/** The FastAPI backend, on this site's own origin (next.config forwards /api/* there); its session middleware turns
+ * the httpOnly cookies into the user's token. Guests call it too, without one. */
+export const API = "";
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   let response: Response;

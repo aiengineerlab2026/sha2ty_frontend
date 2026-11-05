@@ -1559,4 +1559,9 @@ export const AR: Record<string, string> = {
   "Select a part to see its variants and switch between them. The variant shown when you confirm becomes that part's default.": "اختر جزءًا لترى بدائله وتبدّل بينها. البديل الظاهر عند التأكيد يصبح الشكل الأساسي لهذا الجزء.",
   "The photos show an earlier version of the model. Regenerate them to match.": "الصور تُظهر نسخة سابقة من الموديل. أعد إنشاءها لتطابقه.",
   "Original design": "التصميم الأصلي",
+  "Download report (PDF)": "تنزيل التقرير (PDF)",
+  "Implementation requests": "طلبات التنفيذ",
+  "Customers' requests to have a model made. Download a one-page report of any of them.": "طلبات العملاء لتنفيذ موديل. نزّل تقريرًا من صفحة واحدة لأي منها.",
+  "No requests yet.": "لا توجد طلبات بعد.",
+  "{n} offers": "{n} عروض",
 };

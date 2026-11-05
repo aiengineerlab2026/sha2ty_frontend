@@ -126,7 +126,7 @@ export async function advanceTask(taskId: string, next: "cancelled" | "in_progre
 // ---- requests from customised models, bids, chat, reviews (supabase/marketplace.sql) ----
 
 async function backend<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const response = await fetch(`/api/backend${path}`, { ...init, headers: init.body ? { "Content-Type": "application/json" } : undefined });
+  const response = await fetch(path, { ...init, headers: init.body ? { "Content-Type": "application/json" } : undefined });
   const json = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(typeof json.detail === "string" ? json.detail : `Request failed (${response.status}).`);
   return json as T;
