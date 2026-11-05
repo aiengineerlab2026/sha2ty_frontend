@@ -124,7 +124,8 @@ export function VariantsEditor({
           </button>
         )}
       </div>
-      <ul className="grid grid-cols-4 gap-2 sm:grid-cols-6">
+      {/* Tiles sized to the card (it sits in a narrow side panel), not to the window. */}
+      <ul className="grid grid-cols-[repeat(auto-fill,minmax(4.5rem,1fr))] gap-2">
         {items.map((it) => (
           <li key={it.key} className="group relative aspect-square overflow-hidden rounded-lg bg-slate-100 ring-1 ring-slate-200">
             {it.src && (
@@ -136,16 +137,16 @@ export function VariantsEditor({
               aria-label={t("Remove this variant")}
               disabled={busy}
               onClick={it.onRemove}
-              className="absolute end-1 top-1 flex size-6 items-center justify-center rounded-full bg-white/95 text-slate-600 shadow transition-opacity hover:text-red-600 sm:opacity-0 sm:group-hover:opacity-100"
+              className="absolute end-1 top-1 flex size-5 items-center justify-center rounded-full bg-white/95 text-slate-600 shadow ring-1 ring-slate-200 transition hover:text-red-600 focus-visible:opacity-100 sm:opacity-0 sm:group-hover:opacity-100"
             >
-              <X className="size-3.5" />
+              <X className="size-3" aria-hidden />
             </button>
           </li>
         ))}
         <li>
-          <label className="flex aspect-square cursor-pointer flex-col items-center justify-center gap-1 rounded-lg border-2 border-dashed border-slate-200 bg-slate-50 text-[11px] text-slate-500 transition-colors hover:border-slate-300 hover:bg-white hover:text-brand-navy">
-            {busy ? <LoaderCircle className="size-4 animate-spin" aria-hidden /> : <ImagePlus className="size-4" aria-hidden />}
-            Add images
+          <label title={t("Add images")} className="flex aspect-square cursor-pointer items-center justify-center rounded-lg border-2 border-dashed border-slate-300 bg-slate-50 text-slate-500 transition-colors hover:border-brand-amber hover:bg-white hover:text-brand-navy has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-brand-amber">
+            {busy ? <LoaderCircle className="size-5 animate-spin" aria-hidden /> : <ImagePlus className="size-5" aria-hidden />}
+            <span className="sr-only">{t("Add images")}</span>
             <input
               type="file"
               accept="image/png,image/jpeg,image/webp"
