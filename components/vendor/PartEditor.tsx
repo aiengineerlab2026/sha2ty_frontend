@@ -16,6 +16,9 @@ export function partLabel(t: T, name: string): string {
 export function PartList({
   parts,
   selected,
+  also,
+  several,
+  onSeveral,
   limits,
   onSelect,
   onRename,
@@ -28,8 +31,14 @@ export function PartList({
 }: {
   parts: PartInfo[];
   selected: string | null;
+  /** More selected parts besides `selected`. */
+  also?: Set<string>;
+  /** With `onSeveral`: the "Select several" switch (each tap adds or removes a part; for touch screens). */
+  several?: boolean;
+  onSeveral?: (on: boolean) => void;
   limits?: string | null;
-  onSelect: (id: string) => void;
+  /** `add`: shift / ctrl / ⌘ held (add to the selection, or take out). */
+  onSelect: (id: string, add?: boolean) => void;
   onRename: (id: string, name: string) => void;
   /** With `onToggle`: a checkbox per part shows / hides it in the 3D view. */
   hidden?: Set<string>;
@@ -51,6 +60,13 @@ export function PartList({
         <p className="text-[13px] font-semibold tracking-tight text-brand-navy">{t("Parts")}</p>
         <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium tabular-nums text-slate-500">{parts.length}</span>
       </div>
+      {several !== undefined && onSeveral && (
+        <label className="mx-4 mb-2 flex cursor-pointer items-center gap-2 text-xs text-slate-600">
+          <input type="checkbox" checked={several} onChange={(e) => onSeveral(e.target.checked)} className="size-3.5 rounded accent-[#f2a33a]" />
+          {t("Select several")}
+          <span className="ms-auto text-[11px] text-slate-400">{t("or shift-click")}</span>
+        </label>
+      )}
       <div className="relative px-3">
         <Search className="pointer-events-none absolute start-5 top-1/2 size-4 -translate-y-1/2 text-slate-400" aria-hidden />
         <input
@@ -62,7 +78,7 @@ export function PartList({
       </div>
       <ul className="mt-2 min-h-0 flex-1 space-y-0.5 overflow-y-auto overscroll-contain px-2 pb-2 [scrollbar-width:thin]">
         {shown.map((part) => {
-          const active = selected === part.id;
+          const active = selected === part.id || Boolean(also?.has(part.id));
           const off = hidden?.has(part.id);
           return (
             <li key={part.id} className={`group flex items-center gap-2 rounded-lg px-2 transition-colors ${active ? "bg-brand-amber-soft/70 ring-1 ring-brand-amber/40" : "hover:bg-slate-50"}`}>
@@ -93,7 +109,7 @@ export function PartList({
               ) : (
                 <button
                   type="button"
-                  onClick={() => onSelect(part.id)}
+                  onClick={(e) => onSelect(part.id, e.shiftKey || e.ctrlKey || e.metaKey)}
                   onDoubleClick={() => setEditing(part.id)}
                   aria-current={active}
                   className={`min-w-0 flex-1 truncate py-2 text-start text-sm transition-colors ${active ? "font-semibold text-brand-navy" : "text-slate-700"} ${off ? "text-slate-400 line-through" : ""}`}

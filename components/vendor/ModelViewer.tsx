@@ -582,7 +582,10 @@ type Tab = "parts" | "properties" | "actions";
  * OutlinePass). The scene renders as without it (same colours); the pass then draws only its overlay on top, so the
  * outline is never in the model, the exported GLB or the thumbnail, and no material is touched. Built once;
  * selecting only swaps `selectedObjects`, so there is no flicker. */
-export function SelectionOutline({ mesh }: { mesh: Mesh | null }) {
+export function SelectionOutline({ mesh, meshes }: { mesh?: Mesh | null; meshes?: Mesh[] }) {
+  // Several selected parts are outlined together; the key keeps the effect from running for an equal list.
+  const outlined = meshes ?? (mesh ? [mesh] : []);
+  const key = outlined.map((m) => m.uuid).join(",");
   const { gl, scene, camera, size } = useThree();
   const pass = useRef<OutlinePass | null>(null);
   useEffect(() => {
@@ -622,8 +625,9 @@ export function SelectionOutline({ mesh }: { mesh: Mesh | null }) {
     pass.current?.setSize(size.width * dpr, size.height * dpr);
   }, [gl, scene, camera, size]);
   useEffect(() => {
-    if (pass.current) pass.current.selectedObjects = mesh ? [mesh] : [];
-  }, [scene, camera, mesh]);
+    if (pass.current) pass.current.selectedObjects = outlined;
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `key` names exactly the meshes in `outlined`
+  }, [scene, camera, key]);
   useFrame(() => {
     gl.render(scene, camera);
     const outline = pass.current;
@@ -720,7 +724,8 @@ function LoadedModel({
   replay: boolean;
   onReport: (report: NormalizationReport) => void;
   onSlots: (slots: Slot[], root: Object3D, cleaned: boolean) => void;
-  onPick: (id: string) => void;
+  /** `add`: shift / ctrl / ⌘ held, adds the part to the selection (or takes it out). */
+  onPick: (id: string, add?: boolean) => void;
   track: <T>(load: Promise<T>) => Promise<T>;
 }) {
   const { scene } = useGLTF(url);
@@ -751,14 +756,14 @@ function LoadedModel({
   return (
     <primitive
       object={object}
-      onClick={(event: { stopPropagation: () => void; object: Object3D; face?: { materialIndex?: number } | null }) => {
+      onClick={(event: { stopPropagation: () => void; object: Object3D; face?: { materialIndex?: number } | null; shiftKey?: boolean; ctrlKey?: boolean; metaKey?: boolean }) => {
         if (!edit) return;
         event.stopPropagation();
         const mesh = event.object as Mesh;
         if (!mesh.isMesh) return;
         const materialIndex = Array.isArray(mesh.material) ? event.face?.materialIndex ?? 0 : 0;
         const hit = slotHit(slotsRef.current, mesh, materialIndex);
-        if (hit) onPick(hit.id);
+        if (hit) onPick(hit.id, Boolean(event.shiftKey || event.ctrlKey || event.metaKey)); // shift / ctrl / ⌘: add or remove
       }}
     />
   );
@@ -839,6 +844,32 @@ export function ModelViewer({
   }, [url]);
   const [slots, setSlots] = useState<Slot[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
+  // More parts selected with it (shift / ctrl / ⌘ click, or "Select several" on touch screens): edits go to all of them.
+  const [also, setAlso] = useState<Set<string>>(() => new Set());
+  const [several, setSeveral] = useState(false);
+  /** Select a part: on its own, or (`add`, or "Select several" on) added to / taken out of the selection. */
+  const pick = (id: string | null, add = false) => {
+    if (!id) {
+      setSelected(null);
+      setAlso(new Set());
+      return;
+    }
+    if (!add && !several) {
+      setSelected(id);
+      setAlso(new Set());
+      return;
+    }
+    if (id === selected) {
+      const [first, ...rest] = [...also];
+      setSelected(first ?? null);
+      setAlso(new Set(rest));
+    } else if (also.has(id)) {
+      const next = new Set(also);
+      next.delete(id);
+      setAlso(next);
+    } else if (!selected) setSelected(id);
+    else setAlso(new Set(also).add(id));
+  };
   // Saved edits are the starting record: a save keeps them (not only this session's), reset and undo work on them.
   const [edits, setEdits] = useState<Record<string, MaterialEdit>>(() => saved ?? {});
   const [past, setPast] = useState(0);
@@ -893,6 +924,7 @@ export function ModelViewer({
     dirty.current = true;
     setRemoved((current) => new Set(current).add(id));
     setSelected((current) => (current === id ? null : current));
+    setAlso((current) => (current.has(id) ? new Set([...current].filter((x) => x !== id)) : current));
   };
   const restoreParts = () => {
     dirty.current = true;
@@ -924,8 +956,10 @@ export function ModelViewer({
   // The size group: customer size ÷ the size the model was normalised to.
   const factor: [number, number, number] = designSize && base ? [designSize.width / base.width, designSize.height / base.height, designSize.depth / base.depth] : [1, 1, 1];
   const slot = slots.find((item) => item.id === selected) ?? null;
-  // Walks every triangle of the part: only when the selection or the size changes, not on every render.
-  const area = useMemo(() => (slot ? partArea(slot, factor) : null), [slot, factor[0], factor[1], factor[2]]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Every selected part, the first-picked one first (its settings are the ones shown).
+  const selection = useMemo(() => (slot ? [slot, ...slots.filter((item) => item.id !== slot.id && also.has(item.id))] : []), [slot, slots, also]);
+  // Walks every triangle of the parts: only when the selection or the size changes, not on every render.
+  const area = useMemo(() => (selection.length ? selection.reduce((sum, item) => sum + partArea(item, factor), 0) : null), [selection, factor[0], factor[1], factor[2]]); // eslint-disable-line react-hooks/exhaustive-deps
   // The model's wood goes on its wooden parts: shown, not removed, not upholstered (a fabric chosen) and not soft
   // by name (mattress, pillows, bedding…).
   const woodParts = useMemo(
@@ -941,6 +975,7 @@ export function ModelViewer({
     setSlots(next);
     // Nothing is selected until the user picks a part (no outline or panel on load).
     setSelected((current) => (current && next.some((s) => s.id === current) ? current : null));
+    setAlso(new Set());
   }, []);
 
   const applyAll = (map: Record<string, MaterialEdit>) => {
@@ -953,21 +988,22 @@ export function ModelViewer({
     }
   };
 
-  const change = (id: string, patch: MaterialEdit, texture?: Texture) => {
+  /** A change to every selected part, in one undo step (`textures`: each part's own copy of a new pattern). */
+  const changeSelected = (patch: MaterialEdit, textures?: Map<string, Texture>) => {
+    if (!selection.length) return;
     history.current.push(editsRef.current);
     ahead.current = [];
     setPast(history.current.length);
     setFuture(0);
     dirty.current = true;
-    const next = { ...editsRef.current, [id]: { ...editsRef.current[id], ...patch } };
-    const item = slots.find((entry) => entry.id === id);
-    if (item) {
-      // A new pattern, or a new tile size for the current one: lay it out again (UVs or projection).
+    const next = { ...editsRef.current };
+    for (const item of selection) {
+      next[item.id] = { ...next[item.id], ...patch };
       const current = standard(slotMaterial(item))?.map;
-      const pattern = texture ?? (patch.tile != null && next[id].mapUrl ? current : null);
-      if (patch.material?.kind === "paint") dropCore(item.mesh); // paint covers the edge as well; a raw core is not a painted edge
-      if (pattern) next[id] = { ...next[id], mapping: layPattern(item, pattern, next[id]) };
-      else paint(slotMaterial(item), next[id]);
+      const pattern = textures?.get(item.id) ?? (patch.tile != null && next[item.id].mapUrl ? current : null);
+      if (patch.material?.kind === "paint") dropCore(item.mesh);
+      if (pattern) next[item.id] = { ...next[item.id], mapping: layPattern(item, pattern, next[item.id]) };
+      else paint(slotMaterial(item), next[item.id]);
     }
     setEdits(next);
   };
@@ -1105,7 +1141,7 @@ export function ModelViewer({
         camera={{ position: [2.4, 1.6, 3.2], fov: 45 }}
         gl={{ antialias: true, alpha: true, preserveDrawingBuffer: edit }}
         dpr={[1, 2]}
-        onPointerMissed={() => edit && setSelected(null)}
+        onPointerMissed={() => edit && pick(null)}
       >
         <ambientLight intensity={AMBIENT} />
         <directionalLight position={[6, 8, 4]} intensity={1.35} />
@@ -1113,7 +1149,7 @@ export function ModelViewer({
         <Suspense fallback={null}>
           <Bounds fit clip observe margin={1.25}>
             <group ref={sizer} name={SIZER} scale={factor}>
-              <LoadedModel url={url} dimensions={dimensions} edit={edit} server={server} saved={saved} replay={replay} onReport={onLoaded} onSlots={onSlots} onPick={setSelected} track={track} />
+              <LoadedModel url={url} dimensions={dimensions} edit={edit} server={server} saved={saved} replay={replay} onReport={onLoaded} onSlots={onSlots} onPick={pick} track={track} />
             </group>
             <FitOnSignal signal={resetView} />
           </Bounds>
@@ -1124,7 +1160,7 @@ export function ModelViewer({
         </Suspense>
         <ToneMapping />
         {/* Always mounted in the editor, not per selection: no flicker or colour shift on select. */}
-        {edit && <SelectionOutline mesh={slot?.mesh ?? null} />}
+        {edit && <SelectionOutline meshes={selection.map((item) => item.mesh)} />}
         {/* No grid: a soft contact shadow grounds the model on the backdrop. */}
         <ContactShadows name={GRID} position={[0, 0.001, 0]} scale={12} blur={2.4} far={4} opacity={0.35} resolution={1024} />
         <OrbitControls makeDefault enableDamping autoRotate={autoRotate} autoRotateSpeed={1.2} />
@@ -1207,7 +1243,7 @@ export function ModelViewer({
   // The parts list takes the room left; download and the page's footer (e.g. "Have it made") stay under it.
   const partsPanel = (
     <div className="flex min-h-0 flex-1 flex-col gap-3">
-    <PartList parts={list} selected={selected} limits={slots.length > 1 ? null : WHOLE} onSelect={(id) => { setSelected(id); setTab("properties"); }} onRename={rename} hidden={hidden} onToggle={slots.length > 1 ? toggle : undefined}
+    <PartList parts={list} selected={selected} also={also} several={slots.length > 1 ? several : undefined} onSeveral={setSeveral} limits={slots.length > 1 ? null : WHOLE} onSelect={(id, add) => { pick(id, add); setTab("properties"); }} onRename={rename} hidden={hidden} onToggle={slots.length > 1 ? toggle : undefined}
       {...(removedParts !== undefined && slots.length > 1 ? { onRemove: removePart, canRemove: removable, removedCount: removed.size, onRestore: restoreParts } : {})} />
     <button type="button" onClick={() => void download()} disabled={downloading} className="flex w-full shrink-0 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-brand-navy shadow-sm hover:bg-slate-50 disabled:opacity-60">
       <Download className="size-4" aria-hidden />
@@ -1222,7 +1258,7 @@ export function ModelViewer({
   const controls = (
     <>
       <PartControls
-        name={slot ? partLabel(t, slot.name) : null}
+        name={slot ? (selection.length > 1 ? t("{n} parts selected", { n: selection.length }) : partLabel(t, slot.name)) : null}
         edit={slot ? { color: `#${(standard(slotMaterial(slot))?.color.getHexString() ?? "cccccc")}`, roughness: standard(slotMaterial(slot))?.roughness, metalness: standard(slotMaterial(slot))?.metalness, ...edits[slot.id] } : null}
         mapping={slot ? edits[slot.id]?.mapping : undefined}
         area={area}
@@ -1233,20 +1269,21 @@ export function ModelViewer({
         onLibrary={(mapUrl, tile, picked) => {
           if (!slot) return;
           const next = { ...picked, mapUrl, color: "#ffffff", tile };
-          void track(loadMap(mapUrl, next).then((texture) => change(slot.id, next, texture)));
+          // Each selected part its own texture (its tiling is its own); the image is loaded and prepared once.
+          void track(Promise.all(selection.map((item) => loadMap(mapUrl, next).then((texture) => [item.id, texture] as const))).then((pairs) => changeSelected(next, new Map(pairs))));
         }}
-        onPaint={(picked) => slot && change(slot.id, { ...picked, mapUrl: undefined, normalUrl: undefined, mapping: undefined, tile: undefined, repeat: undefined })}
-        onRepeat={(repeat) => slot && change(slot.id, { repeat })}
-        onTile={(tile) => slot && change(slot.id, { tile })}
-        onRotation={(rotation) => slot && change(slot.id, { rotation })}
-        onOffset={(offset) => slot && change(slot.id, { offset })}
+        onPaint={(picked) => slot && changeSelected({ ...picked, mapUrl: undefined, normalUrl: undefined, mapping: undefined, tile: undefined, repeat: undefined })}
+        onRepeat={(repeat) => slot && changeSelected({ repeat })}
+        onTile={(tile) => slot && changeSelected({ tile })}
+        onRotation={(rotation) => slot && changeSelected({ rotation })}
+        onOffset={(offset) => slot && changeSelected({ offset })}
         onReset={() => {
           if (!slot) return;
           history.current.push(editsRef.current);
           ahead.current = [];
           dirty.current = true;
           const next = { ...editsRef.current };
-          delete next[slot.id];
+          for (const item of selection) delete next[item.id];
           applyAll(next);
           setEdits(next);
           setPast(history.current.length);
