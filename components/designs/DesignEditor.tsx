@@ -15,7 +15,6 @@ import { requestImplementation, requestTarget, type RequestTarget } from "@/lib/
 import { resized, stretch } from "@/lib/designs/resize";
 import type { Design, DesignData, DesignVersion, Dimensions, ItemEdits, SourceModel } from "@/lib/designs/schema";
 import { fetchCatalogModel } from "@/lib/plan/api";
-import { supabase, supabaseConfigured } from "@/lib/supabase/client";
 import type { PartDocument } from "@/lib/vendor/parts";
 import { uploadPublicFile } from "@/lib/vendor/storage";
 import { Section } from "@/components/vendor/PartEditor";
@@ -265,17 +264,13 @@ export function DesignEditor({ id, model }: { id: string; model?: string }) {
   const item = shown?.data.item;
   const listingId = item && item.source.source_type !== "user" ? item.source.model_id : null;
   useEffect(() => {
-    if (!shown || !listingId || !supabaseConfigured()) return; // the customer's own model: its variants are its own
+    if (!shown || !listingId) return; // the customer's own model: its variants are its own
     let live = true;
-    void supabase()
-      .from("models")
-      .select("components")
-      .eq("id", listingId)
-      .maybeSingle()
-      .then(
-        ({ data }) => live && setLiveParts((data?.components as PartDocument | null) ?? null),
-        () => live && setLiveParts(null),
-      );
+    // From the backend's catalogue (customers may not read the models table itself).
+    fetchCatalogModel(listingId).then(
+      (listing) => live && setLiveParts(listing?.components ?? null),
+      () => live && setLiveParts(null),
+    );
     return () => {
       live = false;
     };
@@ -427,7 +422,7 @@ export function DesignEditor({ id, model }: { id: string; model?: string }) {
         {error && <p className="shrink-0 rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700 max-lg:mx-3 max-lg:mt-2">{error}</p>}
         {notice && <p role="status" onClick={() => setNotice(null)} className="shrink-0 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm text-emerald-800 max-lg:mx-3 max-lg:mt-2">{notice}</p>}
         {!shown && !error && <p className="text-sm text-slate-500">{t("Loading…")}</p>}
-        {shown && item && (!listingId || !supabaseConfigured() || liveParts !== undefined) && (
+        {shown && item && (!listingId || liveParts !== undefined) && (
           // The catalogue original plus every saved edit: reset and undo always go back to the vendor's model.
           <ModelViewer
             key={viewKey}

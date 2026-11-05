@@ -246,6 +246,8 @@ export interface PlanGeometry {
 export interface CatalogModel {
   id: string;
   title: string;
+  /** Only when one model is fetched (fetchCatalogModel): its part list, with each part's variants. */
+  components?: import("@/lib/vendor/parts").PartDocument | null;
   /** Vendor's rich-text HTML: sanitise before rendering. */
   description?: string;
   price?: number | null;
