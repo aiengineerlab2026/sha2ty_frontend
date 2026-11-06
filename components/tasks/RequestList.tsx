@@ -28,7 +28,7 @@ const TONE: Record<TaskRow["status"], string> = {
   cancelled: "bg-slate-100 text-slate-500 ring-slate-200",
 };
 
-const FILTERS: (TaskRow["status"] | "all")[] = ["all", "published", "awarded", "in_progress", "completed", "cancelled"];
+const FILTERS: (TaskRow["status"] | "all")[] = ["all", "published", "awarded", "in_progress", "completed"];
 
 /** Requests: a customer's own (with how many bids came in), or for a vendor the open ones plus those they bid on. */
 export function RequestList({ as }: { as: "customer" | "vendor" }) {
@@ -59,7 +59,7 @@ export function RequestList({ as }: { as: "customer" | "vendor" }) {
         setError(tasks.error.message);
         return;
       }
-      const all = (tasks.data ?? []) as TaskRow[];
+      const all = ((tasks.data ?? []) as TaskRow[]).filter((x) => x.status !== "cancelled"); // cancelled ones are deleted
       setRows(as === "customer" ? all.filter((x) => x.customer_id === uid) : all.filter((x) => x.customer_id !== uid));
       setBids((visibleBids.data ?? []) as BidRow[]);
     });

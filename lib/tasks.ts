@@ -119,7 +119,16 @@ export async function acceptBid(bidId: string) {
   if (error) throw new Error(error.message);
 }
 
-export async function advanceTask(taskId: string, next: "cancelled" | "in_progress" | "completed") {
+/** Cancelling deletes the request (backend), with its bids and chat. */
+export async function cancelTask(taskId: string) {
+  const response = await apiFetch(`/api/tasks/${taskId}`, { method: "DELETE" });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new Error(typeof body.detail === "string" ? body.detail : `Request failed (${response.status}).`);
+  }
+}
+
+export async function advanceTask(taskId: string, next: "in_progress" | "completed") {
   const { error } = await supabase().rpc("advance_task", { task: taskId, next });
   if (error) throw new Error(error.message);
 }

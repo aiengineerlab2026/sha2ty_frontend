@@ -934,7 +934,7 @@ export const AR: Record<string, string> = {
   "Budget": "الميزانية",
   "Budget up to (EGP)": "الميزانية حتى (جنيه)",
   "Cancel request": "إلغاء الطلب",
-  "Cancel this request? Vendors can no longer bid.": "إلغاء هذا الطلب؟ لن يتمكن البائعون من تقديم عروض.",
+  "Cancel this request? It is deleted, with its offers and messages.": "إلغاء هذا الطلب؟ سيُحذف مع عروضه ورسائله.",
   "Cancelled": "ملغى",
   "Catalogue model “{title}”": "موديل الكتالوج «{title}»",
   "Changed finish": "تشطيب معدَّل",
