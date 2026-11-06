@@ -14,7 +14,7 @@ import { authSession } from "@/lib/auth/client";
 import { useT } from "@/lib/i18n";
 import { catalogDimensions } from "@/lib/plan/modelNormalization";
 import { supabase } from "@/lib/supabase/client";
-import { buildFurniture, furnitureParts, partOf, partOptions, type FurnitureKind, type FurnitureSpec } from "@/lib/vendor/furnitureBuilder";
+import { buildFurniture, furnitureParts, PART_AR, PARTS, partOf, partOptions, type FurnitureKind, type FurnitureSpec } from "@/lib/vendor/furnitureBuilder";
 import { furnitureGlb, renderFurniture } from "@/lib/vendor/furnitureRender";
 import { updateModel, type PartDocument, type PartEditorApi, type PartVariant } from "@/lib/vendor/parts";
 import { uploadPublicFile } from "@/lib/vendor/storage";
@@ -54,7 +54,7 @@ async function build(spec: FurnitureSpec): Promise<Built> {
   }
   // The viewer offers these in place of each part, as customers will see them.
   const parts = furnitureParts(spec.kind);
-  for (const part of parts.components) part.variants = (options[part.name] ?? []).map(({ id, name, url }) => ({ id, name, glb_url: url }));
+  parts.components.forEach((part, i) => { part.variants = (options[PARTS[spec.kind][i]] ?? []).map(({ id, name, url }) => ({ id, name, glb_url: url })); });
   return { glb, url: URL.createObjectURL(glb), render, renderUrl: URL.createObjectURL(render), options, parts };
 }
 
@@ -207,13 +207,14 @@ export function FurnitureGenerator() {
         // Each part's variants: that part rebuilt with another shape (or finish), at this size, as its own file. A part
         // shown as one of its variants keeps that as its own shape, and its original shape becomes a variant.
         const components = furnitureParts(spec.kind);
-        for (const part of components.components) {
+        for (const [i, part] of components.components.entries()) {
+          const en = PARTS[spec.kind][i]; // the design's own part name (options and dropped are keyed by it)
           const variants: PartVariant[] = [];
           const upload = async (glb: Blob, name: string, variantId: string) =>
             variants.push({ id: variantId, name, glb_url: await uploadPublicFile(owner, new File([glb], `${part.id}.glb`, { type: "model/gltf-binary" }), `${id}/part-variants`) });
-          if (chosen[part.id]) await upload(await furnitureGlb(partOf(spec, part.name)), "Original design", crypto.randomUUID());
-          for (const option of built.options[part.name] ?? []) {
-            if (option.id !== chosen[part.id] && !dropped.has(`${part.name}/${option.name}`)) await upload(option.glb, option.name, option.id);
+          if (chosen[part.id]) await upload(await furnitureGlb(partOf(spec, en)), "التصميم الأصلي", crypto.randomUUID());
+          for (const option of built.options[en] ?? []) {
+            if (option.id !== chosen[part.id] && !dropped.has(`${en}/${option.name}`)) await upload(option.glb, option.name, option.id);
           }
           if (variants.length) part.variants = variants;
         }
@@ -285,7 +286,7 @@ export function FurnitureGenerator() {
                 <ul className="mt-3 space-y-2">
                   {Object.entries(partOptions(spec)).map(([part, list]) => (
                     <li key={part} className="flex flex-wrap items-center gap-1.5 text-xs">
-                      <span className="me-1 font-semibold text-slate-700" dir="ltr">{part}</span>
+                      <span className="me-1 font-semibold text-slate-700">{PART_AR[part]}</span>
                       {list.map(({ name }) => {
                         const key = `${part}/${name}`;
                         const off = dropped.has(key);
@@ -293,7 +294,7 @@ export function FurnitureGenerator() {
                           <button key={key} type="button" aria-pressed={!off} disabled={busy === "save"}
                             onClick={() => setDropped((was) => { const next = new Set(was); if (off) next.delete(key); else next.add(key); return next; })}
                             className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 ${off ? "border-dashed border-slate-300 text-slate-400 line-through" : "border-brand-amber/50 bg-amber-50 text-brand-navy"}`}>
-                            <span dir="ltr">{name}</span> {off ? null : <X className="size-3" aria-hidden />}
+                            <span>{name}</span> {off ? null : <X className="size-3" aria-hidden />}
                           </button>
                         );
                       })}
