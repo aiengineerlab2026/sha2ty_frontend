@@ -1566,4 +1566,5 @@ export const AR: Record<string, string> = {
   "No 3D generations left on this account.": "لم يتبقَّ رصيد توليد ثلاثي الأبعاد على هذا الحساب.",
   "Furniture paints are added and priced by vendors. The Sha2ty account doesn't sell paints.": "دهانات الأثاث يضيفها البائعون ويسعّرونها. حساب شطبلي لا يبيع دهانات.",
   "Add images": "إضافة صور",
+  "Could not download the report.": "تعذر تنزيل التقرير.",
 };
