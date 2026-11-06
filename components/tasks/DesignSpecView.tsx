@@ -3,7 +3,8 @@
 import { useT, type T } from "@/lib/i18n";
 import { woodType, type PartMaterial } from "@/lib/designs/materials";
 import dynamic from "next/dynamic";
-import { useState } from "react";
+import { useMemo, useState } from "react";
+import type { PartSize } from "@/lib/vendor/partSizes";
 import type { DesignSpec } from "@/lib/tasks";
 
 const ModelViewer = dynamic(() => import("@/components/vendor/ModelViewer").then((mod) => mod.ModelViewer), {
@@ -20,6 +21,9 @@ const m = (v: number | null | undefined) => (v == null ? "—" : `${(v * 100).to
 export function DesignSpecView({ spec, download = false }: { spec: DesignSpec; quantity?: number; download?: boolean }) {
   const t = useT();
   const [sizes, setSizes] = useState(false); // each part's W × H × D on the model, for the workshop
+  const [rows, setRows] = useState<({ name: string } & PartSize)[] | null>(null); // the same sizes, as a table
+  const names = useMemo(() => spec.parts.map((p) => ({ id: p.id, name: t(p.name) })), [spec.parts, t]);
+  const partSizes = useMemo(() => ({ names, show: sizes, onSizes: setRows }), [names, sizes]);
   const d = spec.dimensions;
   const s = spec.source;
   const stretched = spec.resize_mode === "independent";
@@ -42,7 +46,7 @@ export function DesignSpecView({ spec, download = false }: { spec: DesignSpec; q
         </label>
       )}
       {spec.glb_url ? (
-        <ModelViewer url={spec.glb_url} dimensions={d} partSizes={sizes ? spec.parts.map((p) => ({ id: p.id, name: t(p.name) })) : null} />
+        <ModelViewer url={spec.glb_url} dimensions={d} partSizes={partSizes} />
       ) : (
         spec.thumbnail_url && (
           // eslint-disable-next-line @next/next/no-img-element
@@ -78,6 +82,34 @@ export function DesignSpecView({ spec, download = false }: { spec: DesignSpec; q
           </tbody>
         </table>
       </div>
+      {rows && rows.length > 0 && (
+        // Each part's own size (as built, at the requested size); repeated pieces once, with how many.
+        <div className="overflow-hidden rounded-xl border border-slate-200">
+          <table className="w-full text-sm">
+            <thead className="bg-slate-50 text-xs text-slate-500">
+              <tr>
+                <th className="px-3 py-2 text-start font-medium">{t("Part")}</th>
+                <th className="px-3 py-2 text-start font-medium">{t("Width")}</th>
+                <th className="px-3 py-2 text-start font-medium">{t("Height")}</th>
+                <th className="px-3 py-2 text-start font-medium">{t("Depth")}</th>
+                <th className="px-3 py-2 text-start font-medium">{t("Pieces")}</th>
+              </tr>
+            </thead>
+            <tbody className="tabular-nums">
+              {rows.map((r, i) => (
+                <tr key={`${r.name}-${i}`} className="border-t border-slate-100">
+                  <td className="px-3 py-2 font-medium text-brand-navy">{r.name}</td>
+                  <td className="px-3 py-2">{m(r.width)}</td>
+                  <td className="px-3 py-2">{m(r.height)}</td>
+                  <td className="px-3 py-2">{m(r.depth)}</td>
+                  <td className="px-3 py-2">{r.count}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <p className="border-t border-slate-100 bg-slate-50 px-3 py-1.5 text-[11px] text-slate-500">{t("Sizes of one piece; pillows, the mattress and bedding are not included.")}</p>
+        </div>
+      )}
       {stretched && <p className="text-xs text-amber-800">{t("The customer changed width, height and depth separately: parts were scaled with the model, so check proportions of cushions, legs and frame.")}</p>}
 
       {wood && (

@@ -44,8 +44,14 @@ export function pieces(mesh: Mesh): Box3[] {
   return [...boxes.values()];
 }
 
+/** Soft furnishings the workshop does not make (pillows, the mattress, bedding): no size is given for them. */
+const SOFT = /pillow|mattress|duvet|blanket|throw|bedding|bed ?sheet|quilt|وساد|مخد|مرتب|فرش|لحاف|بطانية|ملاية|غطاء السرير/i;
+export const isSoft = (name: string) => SOFT.test(name);
+
+export type PartSize = { width: number; height: number; depth: number; count: number };
+
 /** "4 × 41 × 4 cm (×4)" for repeated pieces of the same size (one of them, and how many), else the part's own "52 × 41 × 4 cm" (W × H × D). */
-export function sizeText(boxes: Box3[]): { text: string; box: Box3 } {
+export function sizeText(boxes: Box3[]): { text: string; box: Box3; size: PartSize } {
   const all = boxes.reduce((acc, b) => acc.union(b), new Box3());
   const size = (b: Box3) => b.getSize(new Vector3());
   const biggest = Math.max(...boxes.map((b) => size(b).length()));
@@ -56,7 +62,8 @@ export function sizeText(boxes: Box3[]): { text: string; box: Box3 } {
     return Math.abs(s.x - first.x) <= first.x * 0.15 + 0.005 && Math.abs(s.y - first.y) <= first.y * 0.15 + 0.005 && Math.abs(s.z - first.z) <= first.z * 0.15 + 0.005;
   });
   const s = alike ? first : size(all);
-  return { text: `${cm(s.x)} × ${cm(s.y)} × ${cm(s.z)} cm${alike ? ` (×${main.length})` : ""}`, box: all };
+  const count = alike ? main.length : 1;
+  return { text: `${cm(s.x)} × ${cm(s.y)} × ${cm(s.z)} cm${count > 1 ? ` (×${count})` : ""}`, box: all, size: { width: s.x, height: s.y, depth: s.z, count } };
 }
 
 /** A point on the part itself to pin its label to: its highest vertex nearest the middle of its box (on the part's

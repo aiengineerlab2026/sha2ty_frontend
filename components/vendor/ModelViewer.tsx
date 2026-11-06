@@ -882,8 +882,9 @@ export function ModelViewer({
   onUploadVariant?: (file: File) => Promise<string>;
   /** A part variant was picked (part id → variant id, every choice). */
   onVariantChange?: (choices: Record<string, string>) => void;
-  /** Each part's name and size shown on the model (the parts in mesh order); null hides them. */
-  partSizes?: { id: string; name: string }[] | null;
+  /** Each part measured (the parts in mesh order, by id): `show` puts their sizes on the model, `onSizes` gets the
+   * table (soft furnishings like pillows and the mattress are left out). */
+  partSizes?: { names: { id: string; name: string }[]; show: boolean; onSizes?: (rows: ({ name: string } & import("@/lib/vendor/partSizes").PartSize)[]) => void } | null;
 }) {
   const t = useT();
   const [downloading, setDownloading] = useState(false);
@@ -1277,7 +1278,7 @@ export function ModelViewer({
             </group>
             <FitOnSignal signal={resetView} />
           </Bounds>
-          {partSizes && <PartSizes target={sizer} names={partSizes} signal={`${url}|${factor}`} />}
+          {partSizes && <PartSizes target={sizer} names={partSizes.names} show={partSizes.show} onSizes={partSizes.onSizes} signal={`${url}|${factor}`} />}
           {edit && guides && designSize && onDesignSize && base && (
             <ResizeGizmo target={sizer} size={designSize} proportional={proportional} guides={guides} unit={guideUnit} onSize={onDesignSize} onDrag={() => undefined} />
           )}

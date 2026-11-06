@@ -56,3 +56,9 @@ test("a label is pinned on its part: on a bed's hollow sides it sits on the rail
   const onRail = Math.abs(Math.abs(at.x) - 0.86) < 0.06 || Math.abs(at.z - 1.06) < 0.06 || Math.abs(at.z + 1.0) < 0.12;
   assert.ok(Math.abs(at.y - box.max.y) < 0.02 && onRail, `${at.x.toFixed(2)} ${at.y.toFixed(2)} ${at.z.toFixed(2)}`);
 });
+
+test("pillows, the mattress and bedding get no size; the parts a workshop makes do", async () => {
+  const { isSoft } = await import("../../vendor/partSizes");
+  for (const name of ["Pillow", "Mattress", "Duvet", "Throw blanket", "وسادة", "مرتبة"]) assert.ok(isSoft(name), name);
+  for (const name of ["Headboard", "Frame", "Legs", "Sofa Back Upholstery", "Seat cushions"]) assert.ok(!isSoft(name), name);
+});
