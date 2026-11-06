@@ -1567,4 +1567,6 @@ export const AR: Record<string, string> = {
   "Furniture paints are added and priced by vendors. The Sha2ty account doesn't sell paints.": "دهانات الأثاث يضيفها البائعون ويسعّرونها. حساب شطبلي لا يبيع دهانات.",
   "Add images": "إضافة صور",
   "Could not download the report.": "تعذر تنزيل التقرير.",
+  "Edit customised model": "تعديل الموديل المخصص",
+  "Changes you save there don't change this request: it keeps the version you sent.": "التغييرات التي تحفظها هناك لا تغيّر هذا الطلب: يحتفظ بالنسخة التي أرسلتها.",
 };

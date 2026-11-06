@@ -134,7 +134,15 @@ export function TaskDetail({ id }: { id: string }) {
                       ? t("Only for {vendor}", { vendor: task.spec.vendor?.name || name(task.exclusive_vendor_id ?? "") })
                       : t("Open to all vendors")}
                   </span>
-                  <ReportButton taskId={task.id} className="ms-auto" />
+                  <span className="ms-auto flex flex-wrap items-start gap-2">
+                    {/* The customer's own design (vendors edit theirs as a proposal, below). The request keeps the version it was sent with. */}
+                    {mine && task.design_id && (
+                      <Link href={`/designs/${task.design_id}`} title={t("Changes you save there don't change this request: it keeps the version you sent.")} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-brand-navy shadow-sm transition hover:bg-slate-50">
+                        <PencilRuler className="size-4" aria-hidden /> {t("Edit customised model")}
+                      </Link>
+                    )}
+                    <ReportButton taskId={task.id} />
+                  </span>
                 </div>
                 <dl className="mt-3 grid grid-cols-2 gap-3 text-sm sm:grid-cols-4 lg:grid-cols-5">
                   {[
