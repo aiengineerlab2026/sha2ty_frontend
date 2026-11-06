@@ -7,7 +7,7 @@ import { Edges, Html, useGLTF } from "@react-three/drei";
 import { normalizeModel, type Dimensions, type NormalizationReport } from "@/lib/plan/modelNormalization";
 import type { PlacedItem } from "@/lib/plan/types";
 import type { PartInfo } from "@/lib/vendor/parts";
-import { applyPoses, partBox, prepare, replayEdits, reseat, SelectionOutline, slotHit, type Slot } from "@/components/vendor/ModelViewer";
+import { applyPoses, DRAG, partBox, prepare, replayEdits, reseat, SelectionOutline, slotHit, type Slot } from "@/components/vendor/ModelViewer";
 
 const DEV = process.env.NODE_ENV !== "production";
 
@@ -141,7 +141,8 @@ export function FurnitureObject({
           object={object}
           onClick={
             editing
-              ? (event: { stopPropagation: () => void; object: Object3D; face?: { materialIndex?: number } | null }) => {
+              ? (event: { stopPropagation: () => void; object: Object3D; delta: number; face?: { materialIndex?: number } | null }) => {
+                  if (event.delta > DRAG) return; // turning the view is not a click
                   event.stopPropagation();
                   const mesh = event.object as Mesh;
                   if (!mesh.isMesh) return;

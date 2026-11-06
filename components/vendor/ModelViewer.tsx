@@ -609,6 +609,8 @@ async function renderThumbnail(object: Object3D, scale?: Vector3): Promise<Blob>
 }
 
 const SELECT = "#f2a33a"; // Sha2ty orange
+/** Pixels the pointer may move between press and release and still pick a part (more is a drag of the view). */
+export const DRAG = 4;
 const GRID = "editor-grid";
 const GUIDES_KEY = "sha2ty.showDimensions";
 type Tab = "parts" | "properties" | "actions";
@@ -785,8 +787,8 @@ function LoadedModel({
   return (
     <primitive
       object={object}
-      onClick={(event: { stopPropagation: () => void; object: Object3D; face?: { materialIndex?: number } | null; shiftKey?: boolean; ctrlKey?: boolean; metaKey?: boolean }) => {
-        if (!edit) return;
+      onClick={(event: { stopPropagation: () => void; object: Object3D; delta: number; face?: { materialIndex?: number } | null; shiftKey?: boolean; ctrlKey?: boolean; metaKey?: boolean }) => {
+        if (!edit || event.delta > DRAG) return; // turning or panning the view is not a click
         event.stopPropagation();
         const mesh = event.object as Mesh;
         if (!mesh.isMesh) return;
