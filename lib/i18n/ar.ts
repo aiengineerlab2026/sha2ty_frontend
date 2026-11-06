@@ -1573,4 +1573,5 @@ export const AR: Record<string, string> = {
   "The model's wood": "خشب الموديل",
   "The 3D model can be downloaded once the customer accepts your offer.": "يمكن تنزيل الموديل ثلاثي الأبعاد بعد أن يقبل العميل عرضك.",
   "Changes you save there update this request too.": "التغييرات التي تحفظها هناك تُحدّث هذا الطلب أيضًا.",
+  "Show each part's size on the model": "إظهار مقاس كل جزء على الموديل",
 };

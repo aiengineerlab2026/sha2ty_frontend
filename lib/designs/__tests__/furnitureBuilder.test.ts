@@ -37,3 +37,12 @@ test("a modern upholstered bed: channel headboard, box base, still its five part
   const size = new Box3().setFromObject(group).getSize(new Vector3());
   assert.ok(Math.abs(size.y - 1.3) < 0.05 && Math.abs(size.z - 2.2) < 0.05 && size.x - 1.8 < 0.16, `${size.x} ${size.y} ${size.z}`);
 });
+
+test("part sizes: four legs in one mesh read as one leg × 4, a panel with buttons as the panel", async () => {
+  const { pieces, sizeText } = await import("../../vendor/partSizes");
+  const chair = buildFurniture({ ...spec("chair", 0.5, 0.55, 0.9), leg_shape: "square", tufted: true, back_shape: "straight" });
+  const legs = chair.children.find((m) => m.name === "legs") as import("three").Mesh;
+  assert.equal(sizeText(pieces(legs)).text, "5 × 39 × 5 cm (×4)"); // one leg (5 cm square, 39 cm long), four of them
+  const back = chair.children.find((m) => m.name === "chair_back") as import("three").Mesh;
+  assert.doesNotMatch(sizeText(pieces(back)).text, /\(×\d+\)/); // the buttons are not counted as pieces
+});
