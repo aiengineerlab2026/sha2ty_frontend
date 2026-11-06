@@ -46,3 +46,13 @@ test("part sizes: four legs in one mesh read as one leg × 4, a panel with butto
   const back = chair.children.find((m) => m.name === "chair_back") as import("three").Mesh;
   assert.doesNotMatch(sizeText(pieces(back)).text, /\(×\d+\)/); // the buttons are not counted as pieces
 });
+
+test("a label is pinned on its part: on a bed's hollow sides it sits on the rails, not in the air above them", async () => {
+  const { anchor, pieces, sizeText } = await import("../../vendor/partSizes");
+  const bed = buildFurniture({ ...spec("bed", 1.8, 2.2, 1.2), bed_base: "box" });
+  const sides = bed.children.find((m) => m.name === "sides") as import("three").Mesh;
+  const box = sizeText(pieces(sides)).box;
+  const at = anchor(sides, box);
+  const onRail = Math.abs(Math.abs(at.x) - 0.86) < 0.06 || Math.abs(at.z - 1.06) < 0.06 || Math.abs(at.z + 1.0) < 0.12;
+  assert.ok(Math.abs(at.y - box.max.y) < 0.02 && onRail, `${at.x.toFixed(2)} ${at.y.toFixed(2)} ${at.z.toFixed(2)}`);
+});
