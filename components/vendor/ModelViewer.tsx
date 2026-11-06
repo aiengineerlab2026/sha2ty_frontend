@@ -17,6 +17,7 @@ import { boxProject, fabricNormals, inspectUv, seamlessFabric, splitSheetEdge, t
 import { PartControls, PartList, partLabel } from "./PartEditor";
 import { MaterialPicker } from "./MaterialPicker";
 import { PartVariants } from "./PartVariants";
+import { PartSizes } from "./PartSizes";
 import { ResizeGizmo } from "@/components/designs/ResizeGizmo";
 import { MIN_SIZE, resized } from "@/lib/designs/resize";
 
@@ -830,6 +831,7 @@ export function ModelViewer({
   partVariants: savedVariants = null,
   onUploadVariant,
   onVariantChange,
+  partSizes = null,
 }: {
   url: string;
   dimensions?: CatalogSize | null;
@@ -880,6 +882,8 @@ export function ModelViewer({
   onUploadVariant?: (file: File) => Promise<string>;
   /** A part variant was picked (part id → variant id, every choice). */
   onVariantChange?: (choices: Record<string, string>) => void;
+  /** Each part's name and size shown on the model (the parts in mesh order); null hides them. */
+  partSizes?: { id: string; name: string }[] | null;
 }) {
   const t = useT();
   const [downloading, setDownloading] = useState(false);
@@ -1273,6 +1277,7 @@ export function ModelViewer({
             </group>
             <FitOnSignal signal={resetView} />
           </Bounds>
+          {partSizes && <PartSizes target={sizer} names={partSizes} signal={`${url}|${factor}`} />}
           {edit && guides && designSize && onDesignSize && base && (
             <ResizeGizmo target={sizer} size={designSize} proportional={proportional} guides={guides} unit={guideUnit} onSize={onDesignSize} onDrag={() => undefined} />
           )}

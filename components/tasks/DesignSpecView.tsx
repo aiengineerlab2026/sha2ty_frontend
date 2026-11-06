@@ -3,6 +3,7 @@
 import { useT, type T } from "@/lib/i18n";
 import { woodType, type PartMaterial } from "@/lib/designs/materials";
 import dynamic from "next/dynamic";
+import { useState } from "react";
 import type { DesignSpec } from "@/lib/tasks";
 
 const ModelViewer = dynamic(() => import("@/components/vendor/ModelViewer").then((mod) => mod.ModelViewer), {
@@ -18,6 +19,7 @@ const m = (v: number | null | undefined) => (v == null ? "—" : `${(v * 100).to
 /** `download`: the 3D file can be downloaded (the customer; a vendor once the customer accepted their bid). */
 export function DesignSpecView({ spec, download = false }: { spec: DesignSpec; quantity?: number; download?: boolean }) {
   const t = useT();
+  const [sizes, setSizes] = useState(false); // each part's W × H × D on the model, for the workshop
   const d = spec.dimensions;
   const s = spec.source;
   const stretched = spec.resize_mode === "independent";
@@ -33,8 +35,14 @@ export function DesignSpecView({ spec, download = false }: { spec: DesignSpec; q
         <h2 className="font-semibold text-brand-navy">{t("The model to make")}</h2>
         <span className="text-xs text-slate-500">{t("{title} · as saved for this request", { title: spec.title })}</span>
       </div>
+      {spec.glb_url && (
+        <label className="flex w-fit cursor-pointer items-center gap-2 text-sm text-slate-700">
+          <input type="checkbox" checked={sizes} onChange={(e) => setSizes(e.target.checked)} className="size-4 accent-brand-amber" />
+          {t("Show each part's size on the model")}
+        </label>
+      )}
       {spec.glb_url ? (
-        <ModelViewer url={spec.glb_url} dimensions={d} />
+        <ModelViewer url={spec.glb_url} dimensions={d} partSizes={sizes ? spec.parts.map((p) => ({ id: p.id, name: t(p.name) })) : null} />
       ) : (
         spec.thumbnail_url && (
           // eslint-disable-next-line @next/next/no-img-element
