@@ -884,7 +884,14 @@ export function ModelViewer({
   onVariantChange?: (choices: Record<string, string>) => void;
   /** Each part measured (the parts in mesh order, by id): `show` puts their sizes on the model, `onSizes` gets the
    * table (soft furnishings like pillows and the mattress are left out). */
-  partSizes?: { names: { id: string; name: string }[]; show: boolean; onSizes?: (rows: ({ name: string } & import("@/lib/vendor/partSizes").PartSize)[]) => void } | null;
+  partSizes?: {
+    names: { id: string; name: string; skip?: boolean }[];
+    show: boolean;
+    onSizes?: (rows: ({ key: string; name: string } & import("@/lib/vendor/partSizes").PartSize)[]) => void;
+    /** The part lit up on the model (a key from `onSizes`), and who lights one (a label click). */
+    lit?: string | null;
+    onLit?: (key: string | null) => void;
+  } | null;
 }) {
   const t = useT();
   const [downloading, setDownloading] = useState(false);
@@ -1278,7 +1285,7 @@ export function ModelViewer({
             </group>
             <FitOnSignal signal={resetView} />
           </Bounds>
-          {partSizes && <PartSizes target={sizer} names={partSizes.names} show={partSizes.show} onSizes={partSizes.onSizes} signal={`${url}|${factor}`} />}
+          {partSizes && <PartSizes target={sizer} names={partSizes.names} show={partSizes.show} onSizes={partSizes.onSizes} lit={partSizes.lit} onLit={partSizes.onLit} signal={`${url}|${factor}`} />}
           {edit && guides && designSize && onDesignSize && base && (
             <ResizeGizmo target={sizer} size={designSize} proportional={proportional} guides={guides} unit={guideUnit} onSize={onDesignSize} onDrag={() => undefined} />
           )}

@@ -81,12 +81,22 @@ export function AdminRequests() {
     return body;
   };
 
+  // Admins only: the page opens once the backend confirms a valid admin session; anyone else goes to the admin sign-in.
+  const [allowed, setAllowed] = useState(false);
   useEffect(() => {
+    void apiFetch("/api/auth/admin-me", { cache: "no-store" })
+      .then((res) => res.json())
+      .then((body) => (body?.admin ? setAllowed(true) : router.replace("/admin/login")))
+      .catch(() => router.replace("/admin/login"));
+  }, [router]);
+
+  useEffect(() => {
+    if (!allowed) return;
     call("/vendors")
       .then((body) => body && setVendors(body.vendors))
       .catch((caught: Error) => setError(caught.message));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [allowed]);
 
   const setStatus = async (id: string, status: Status) => {
     setSaving(id);
@@ -111,6 +121,8 @@ export function AdminRequests() {
   // The Sha2ty catalogue vendor is managed above, not approved or suspended here.
   const shown = (vendors ?? []).filter((v) => !v.platform && (tab === "all" || statusOf(v) === tab));
   const date = new Intl.DateTimeFormat(locale === "ar" ? "ar-EG" : "en-GB", { dateStyle: "medium", timeStyle: "short" });
+
+  if (!allowed) return <div className="min-h-dvh bg-slate-50" aria-busy="true" />; // checking, or on the way to sign-in
 
   return (
     <div className="min-h-dvh bg-slate-50">
