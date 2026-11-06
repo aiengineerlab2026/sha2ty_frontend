@@ -3,14 +3,14 @@
 import { useT } from "@/lib/i18n";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { ArrowLeft, CalendarClock, CalendarDays, Check, Clock, Gavel, History, MapPin, MessageSquare, MessagesSquare, Package, PencilRuler, Star, StickyNote, Users, Wallet } from "lucide-react";
 import { Header } from "@/components/shatably/Header";
 import { authSession } from "@/lib/auth/client";
 import { formatPrice } from "@/lib/plan/pricing";
 import { supabase } from "@/lib/supabase/client";
 import {
-  acceptBid, advanceTask, decideProposal, listProposals, loadTask, myReview, onMessages, placeBid, reviewVendor, reviseBid, taskMessages, vendorProfile,
+  acceptBid, advanceTask, cancelTask, decideProposal, listProposals, loadTask, myReview, onMessages, placeBid, reviewVendor, reviseBid, taskMessages, vendorProfile,
   type BidRow, type Message, type Proposal, type TaskRow, type VendorProfileData,
 } from "@/lib/tasks";
 import type { VendorProfile } from "@/lib/vendor/types";
@@ -84,6 +84,7 @@ export function TaskDetail({ id }: { id: string }) {
   // Live: messages of this task arrive as they are sent (each user only receives what they may read).
   useEffect(() => onMessages(id, (m) => setMessages((list) => (list.some((x) => x.id === m.id) ? list : [...list, m]))), [id]);
 
+  const router = useRouter();
   const act = async (work: () => Promise<unknown>) => {
     setBusy(true);
     setError(null);
@@ -317,7 +318,7 @@ export function TaskDetail({ id }: { id: string }) {
                     })}
                     <div className="flex flex-wrap gap-2">
                       {open && (
-                        <button type="button" disabled={busy} onClick={() => window.confirm(t("Cancel this request? Vendors can no longer bid.")) && void act(() => advanceTask(task.id, "cancelled"))} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 transition hover:border-red-200 hover:text-red-600">
+                        <button type="button" disabled={busy} onClick={() => window.confirm(t("Cancel this request? It is deleted, with its offers and messages.")) && void act(async () => { await cancelTask(task.id); router.replace("/tasks"); })} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 transition hover:border-red-200 hover:text-red-600">
                           {t("Cancel request")}
                         </button>
                       )}
