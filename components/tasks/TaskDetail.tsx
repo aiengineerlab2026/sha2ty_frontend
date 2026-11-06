@@ -137,7 +137,7 @@ export function TaskDetail({ id }: { id: string }) {
                   <span className="ms-auto flex flex-wrap items-start gap-2">
                     {/* The customer's own design (vendors edit theirs as a proposal, below). The request keeps the version it was sent with. */}
                     {mine && task.design_id && (
-                      <Link href={`/designs/${task.design_id}`} title={t("Changes you save there don't change this request: it keeps the version you sent.")} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-brand-navy shadow-sm transition hover:bg-slate-50">
+                      <Link href={`/designs/${task.design_id}`} title={t("Changes you save there update this request too.")} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-brand-navy shadow-sm transition hover:bg-slate-50">
                         <PencilRuler className="size-4" aria-hidden /> {t("Edit customised model")}
                       </Link>
                     )}
@@ -162,7 +162,7 @@ export function TaskDetail({ id }: { id: string }) {
               </div>
 
               {task.spec.design ? (
-                <DesignSpecView spec={task.spec.design} quantity={task.spec.quantity ?? 1} />
+                <DesignSpecView spec={task.spec.design} quantity={task.spec.quantity ?? 1} download={mine || Boolean(hired && hired.vendor_id === me)} />
               ) : (
                 <ul className="divide-y divide-slate-100 rounded-2xl border border-slate-200 bg-white">
                   {(task.spec.lines ?? []).map((line) => (
@@ -370,7 +370,7 @@ function ProposalCard({ proposal, vendorName, open, onToggle, children }: { prop
         </button>
         {children}
       </div>
-      {open && <DesignSpecView spec={proposal.spec} />}
+      {open && <DesignSpecView spec={proposal.spec} download />}
     </div>
   );
 }

@@ -1569,4 +1569,8 @@ export const AR: Record<string, string> = {
   "Could not download the report.": "تعذر تنزيل التقرير.",
   "Edit customised model": "تعديل الموديل المخصص",
   "Changes you save there don't change this request: it keeps the version you sent.": "التغييرات التي تحفظها هناك لا تغيّر هذا الطلب: يحتفظ بالنسخة التي أرسلتها.",
+  "Wood (the whole model)": "الخشب (للموديل بالكامل)",
+  "The model's wood": "خشب الموديل",
+  "The 3D model can be downloaded once the customer accepts your offer.": "يمكن تنزيل الموديل ثلاثي الأبعاد بعد أن يقبل العميل عرضك.",
+  "Changes you save there update this request too.": "التغييرات التي تحفظها هناك تُحدّث هذا الطلب أيضًا.",
 };
