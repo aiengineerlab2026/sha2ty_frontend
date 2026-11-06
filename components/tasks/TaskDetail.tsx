@@ -193,7 +193,7 @@ export function TaskDetail({ id }: { id: string }) {
                 )}
 
                 {task.spec.design ? (
-                  <DesignSpecView spec={task.spec.design} quantity={task.spec.quantity ?? 1} download={mine || Boolean(hired && hired.vendor_id === me)} />
+                  <DesignSpecView spec={task.spec.design} quantity={task.spec.quantity ?? 1} download={mine || Boolean(hired && hired.vendor_id === me)} camera={!mine} />
                 ) : (
                   <ul className={`${card} divide-y divide-slate-100`}>
                     {(task.spec.lines ?? []).map((line) => (

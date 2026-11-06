@@ -1,6 +1,7 @@
 "use client";
 
 import { useT, type T } from "@/lib/i18n";
+import { ViewInCamera } from "./ViewInCamera";
 import { Download, Focus, Layers, Maximize2, Ruler, Undo2 } from "lucide-react";
 import { woodType, type PartMaterial } from "@/lib/designs/materials";
 import dynamic from "next/dynamic";
@@ -18,8 +19,9 @@ const m = (v: number | null | undefined) => (v == null ? "—" : `${(v * 100).to
 /** The customised model exactly as requested (the frozen version): the 3D model at its size, the overall dimensions
  * against the catalogue's, the one wood of the whole model and each part's material on it (what is used, no costs). */
 // ponytail: `quantity` is accepted but no longer shown (no costs here); the page shows the pieces count itself.
-/** `download`: the 3D file can be downloaded (the customer; a vendor once the customer accepted their bid). */
-export function DesignSpecView({ spec, download = false }: { spec: DesignSpec; quantity?: number; download?: boolean }) {
+/** `download`: the 3D file can be downloaded (the customer; a vendor once the customer accepted their bid).
+ * `camera`: a "View in camera" button (vendors and admins; the customer has it in the design editor). */
+export function DesignSpecView({ spec, download = false, camera = false }: { spec: DesignSpec; quantity?: number; download?: boolean; camera?: boolean }) {
   const t = useT();
   const [sizes, setSizes] = useState(false); // each part's W × H × D on the model, for the workshop
   const [rows, setRows] = useState<({ key: string; name: string } & PartSize)[] | null>(null); // the same sizes, as a table
@@ -73,11 +75,14 @@ export function DesignSpecView({ spec, download = false }: { spec: DesignSpec; q
             <h2 className="font-semibold text-brand-navy">{t("The model to make")}</h2>
             <p className="truncate text-xs text-slate-500">{t("{title} · as saved for this request", { title: spec.title })}</p>
           </div>
+          <div className="flex flex-wrap items-center gap-2">
+          {spec.glb_url && camera && <ViewInCamera glb={spec.glb_url} title={spec.title} size={spec.dimensions} />}
           {spec.glb_url && download && (
             <a href={spec.glb_url} download className="inline-flex h-9 items-center gap-1.5 rounded-xl bg-brand-navy px-3.5 text-xs font-semibold text-white transition hover:bg-brand-navy/90">
               <Download className="size-4" aria-hidden /> {t("Download 3D model (.glb)")}
             </a>
           )}
+          </div>
         </div>
         {spec.glb_url ? (
           <div ref={viewer} className="relative scroll-mt-20 bg-white p-3 [&:fullscreen]:flex [&:fullscreen]:items-center [&:fullscreen]:p-6">
