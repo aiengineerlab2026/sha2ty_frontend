@@ -58,3 +58,24 @@ export function sizeText(boxes: Box3[]): { text: string; box: Box3 } {
   const s = alike ? first : size(all);
   return { text: `${cm(s.x)} × ${cm(s.y)} × ${cm(s.z)} cm${alike ? ` (×${main.length})` : ""}`, box: all };
 }
+
+/** A point on the part itself to pin its label to: its highest vertex nearest the middle of its box (on the part's
+ * top surface, not in the air above a hollow part like a bed frame). */
+export function anchor(mesh: Mesh, box: Box3): Vector3 {
+  const pos = mesh.geometry.attributes.position;
+  const center = box.getCenter(new Vector3());
+  const top = box.max.y, height = Math.max(box.max.y - box.min.y, 1e-6);
+  const v = new Vector3();
+  let best: Vector3 | null = null;
+  let score = Infinity;
+  const step = Math.max(1, Math.floor((pos?.count ?? 0) / 20_000)); // ponytail: sampled on very dense meshes
+  for (let i = 0; i < (pos?.count ?? 0); i += step) {
+    v.fromBufferAttribute(pos, i).applyMatrix4(mesh.matrixWorld);
+    const s = Math.hypot(v.x - center.x, v.z - center.z) + ((top - v.y) / height) * 2; // near the middle, near the top
+    if (s < score) {
+      score = s;
+      best = v.clone();
+    }
+  }
+  return best ?? center.setY(top);
+}
