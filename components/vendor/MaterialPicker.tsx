@@ -2,7 +2,7 @@
 
 import { useT } from "@/lib/i18n";
 import { useEffect, useMemo, useState } from "react";
-import { Search, ShoppingCart, X } from "lucide-react";
+import { Search, ShoppingCart } from "lucide-react";
 import { supabase, supabaseConfigured } from "@/lib/supabase/client";
 import { vendorBrands } from "@/lib/tasks";
 import { addToCart } from "@/lib/cart";
@@ -134,8 +134,8 @@ export function MaterialPicker({ mode, edit, area, woodVendor, woodModel, onPick
     const q = search.trim().toLowerCase();
     return (library ?? []).filter((m) => m.kind === "wood" && (!offered || offered.has(m.id)) && (!q || [m.name, m.description, t(woodType(m.wood_type)?.name ?? ""), woodType(m.wood_type)?.name].some((x) => x?.toLowerCase().includes(q))));
   }, [library, search, t, offered]);
+  // Surface finishes (veneers) and thicknesses are not offered to customers: the material only, at its default thickness.
   const structural = woods.filter((m) => woodType(m.wood_type)?.class !== "finish");
-  const finishes = woods.filter((m) => woodType(m.wood_type)?.class === "finish");
   const byId = (id?: string) => library?.find((m) => m.id === id);
   const base = chosen?.kind === "wood" ? byId(chosen.id) : undefined;
 
@@ -169,9 +169,6 @@ export function MaterialPicker({ mode, edit, area, woodVendor, woodModel, onPick
     const clear = keep?.wood_type === "lacquer";
     const look = patch(material, keep && !clear ? keep : m);
     onPick(clear ? { ...look, roughness: keep.roughness ?? 0.22 } : look);
-  };
-  const pickFinish = (f: PartMaterialOption | null) => {
-    if (base) pickWood(base, undefined, f);
   };
 
   // Woods and finishes as a compact grid of swatches (name under each): the whole list fits the panel, so it never
@@ -308,34 +305,12 @@ export function MaterialPicker({ mode, edit, area, woodVendor, woodModel, onPick
           <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t("Search oak, MDF, veneer…")} aria-label={t("Search woods")} className="h-8 w-full rounded-lg border border-slate-200 ps-7 pe-2 text-xs outline-none focus:border-brand-amber" />
         </label>
         {library === null && <p className="text-xs text-slate-500">{t("Loading…")}</p>}
-        {library && !structural.length && !finishes.length && <p className="text-xs text-slate-500">{search ? t("No woods match.") : woodVendor || woodModel ? t("No woods are offered for this model yet.") : t("No woods yet.")}</p>}
+        {library && !structural.length && <p className="text-xs text-slate-500">{search ? t("No woods match.") : woodVendor || woodModel ? t("No woods are offered for this model yet.") : t("No woods yet.")}</p>}
         {!!structural.length && (
           <div className="space-y-1.5">
             <p className="text-[11px] text-slate-500">{t("Material")}</p>
             <div className="grid grid-cols-4 gap-2">{structural.map((m) => swatch(m, base?.id === m.id, () => pickWood(m)))}</div>
             {detail(base)}
-          </div>
-        )}
-        {base && !!base.thicknesses_mm?.length && (
-          <label className="block text-xs text-slate-600">{t("Thickness")}
-            <select value={chosen?.thickness_mm ?? ""} onChange={(e) => pickWood(base, Number(e.target.value))} className="mt-1 h-8 w-full rounded-lg border border-slate-200 bg-white px-2 text-sm">
-              {base.thicknesses_mm.map((mm) => <option key={mm} value={mm}>{mm} {t("mm")}</option>)}
-            </select>
-          </label>
-        )}
-        {!!finishes.length && (
-          <div className="space-y-1.5">
-            <p className="flex items-center justify-between text-[11px] text-slate-500">
-              {t("Finish (surface on the material)")}
-              {chosen?.finish && (
-                <button type="button" onClick={() => pickFinish(null)} className="inline-flex items-center gap-0.5 text-slate-500 hover:text-brand-navy">
-                  <X className="size-3" aria-hidden /> {t("No finish")}
-                </button>
-              )}
-            </p>
-            {!base && <p className="text-[11px] text-slate-400">{t("Choose the material first, then a finish for it.")}</p>}
-            <div className="grid grid-cols-4 gap-2">{finishes.map((m) => swatch(m, chosen?.finish?.id === m.id, () => pickFinish(m), !base))}</div>
-            {detail(chosen?.finish ? byId(chosen.finish.id) : undefined)}
           </div>
         )}
       </Section>}
