@@ -1576,7 +1576,6 @@ export const AR: Record<string, string> = {
   "Show each part's size on the model": "إظهار مقاس كل جزء على الموديل",
   "Sizes of one piece; pillows, the mattress and bedding are not included.": "المقاسات لقطعة واحدة؛ الوسائد والمرتبة والمفروشات غير مشمولة.",
   "Click a part to see it on the model.": "اضغط على جزء لتراه على الموديل.",
-  "Sizes of one piece, for the parts not covered in fabric (pillows, the mattress and bedding are not included).": "المقاسات لقطعة واحدة، للأجزاء غير المغطاة بالقماش (الوسائد والمرتبة والمفروشات غير مشمولة).",
   "Back to requests": "العودة إلى الطلبات",
   "Customer notes": "ملاحظات العميل",
   "Messages": "الرسائل",
@@ -1590,7 +1589,7 @@ export const AR: Record<string, string> = {
   "Model tools": "أدوات الموديل",
   "Show dimensions on the model": "إظهار الأبعاد على الموديل",
   "Full screen": "ملء الشاشة",
-  "Showing only: {part}": "يظهر فقط: {part}",
+  "Highlighted: {part}": "الجزء المحدد: {part}",
+  "Click a part to highlight it on the model.": "اضغط على جزء لتمييزه على الموديل.",
   "Show all": "إظهار الكل",
-  "Click a part to see it alone on the model.": "اضغط على جزء لتراه وحده على الموديل.",
 };

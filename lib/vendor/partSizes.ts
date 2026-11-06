@@ -48,12 +48,8 @@ export function pieces(mesh: Mesh): Box3[] {
 const SOFT = /pillow|mattress|duvet|blanket|throw|bedding|bed ?sheet|quilt|وساد|مخد|مرتب|فرش|لحاف|بطانية|ملاية|غطاء السرير/i;
 export const isSoft = (name: string) => SOFT.test(name);
 
-/** Upholstered by name (the fabric goes over it, so the workshop sizes its frame, not the cover). */
-const UPHOLSTERED = /upholster|cushion|fabric|تنجيد|منجد|قماش|وسائد/i;
-
-/** Parts that get no size: soft furnishings, and parts covered in fabric (chosen by the customer, or by name). */
-export const sized = (part: { name: string; material?: { kind?: string } | null }) =>
-  !isSoft(part.name) && !UPHOLSTERED.test(part.name) && part.material?.kind !== "fabric";
+/** Parts that get a size: all but soft furnishings (fabric-covered parts too). */
+export const sized = (part: { name: string; material?: { kind?: string } | null }) => !isSoft(part.name);
 
 export type PartSize = { width: number; height: number; depth: number; count: number };
 

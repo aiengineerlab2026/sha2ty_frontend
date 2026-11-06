@@ -3,7 +3,7 @@
 import { useEffect, useState, type RefObject } from "react";
 import { useFrame } from "@react-three/fiber";
 import { Html } from "@react-three/drei";
-import type { Mesh, MeshStandardMaterial, Object3D } from "three";
+import type { Material, Mesh, MeshStandardMaterial, Object3D } from "three";
 import { anchor, isSoft, pieces, sizeText, type PartSize } from "@/lib/vendor/partSizes";
 
 type Label = { key: string; mesh: Mesh; name: string; text: string; at: [number, number, number] };
@@ -27,10 +27,10 @@ function glow(mesh: Mesh, on: boolean) {
 }
 
 /** Each part's name and size (W × H × D), pinned to a point on the part with a short line; tapping a label (or the
- * page's row for it) shows that part alone, lit up; tapping it again shows the whole model. `names`: the parts in mesh order (the part list), by id. */
+ * page's row for it) lights that part up and fades the rest; tapping it again shows the whole model. `names`: the parts in mesh order (the part list), by id. */
 export function PartSizes({ target, names, signal, show = true, onSizes, lit: litOutside, onLit }: {
   target: RefObject<Object3D | null>;
-  /** The parts in mesh order; `skip` ones get no size (fabric-covered, soft furnishings). */
+  /** The parts in mesh order; `skip` ones get no size (soft furnishings). */
   names: { id: string; name: string; skip?: boolean }[];
   signal: unknown;
   show?: boolean;
@@ -67,21 +67,26 @@ export function PartSizes({ target, names, signal, show = true, onSizes, lit: li
     onSizes?.(measuredParts.map(({ mesh, name, size }) => ({ key: mesh.uuid, name, ...size })));
     setMeasured(signal);
   });
-  // The chosen part alone: every other mesh is hidden (and shown again when it is chosen again, or another is).
+  // The chosen part stands out: every other mesh fades (a see-through copy of its material, so a material shared
+  // with the chosen part stays solid there), restored when it is chosen again, or another is.
   useEffect(() => {
     const mesh = labels?.find((l) => l.key === lit)?.mesh;
     if (!mesh) return;
     glow(mesh, true);
-    const hidden: Object3D[] = [];
+    const faded: [Mesh, Mesh["material"]][] = [];
     target.current?.traverse((node) => {
-      if ((node as Mesh).isMesh && node !== mesh && node.visible) {
-        node.visible = false;
-        hidden.push(node);
-      }
+      const other = node as Mesh;
+      if (!other.isMesh || other === mesh || !other.visible) return;
+      faded.push([other, other.material]);
+      const fade = (m: Material) => Object.assign(m.clone(), { transparent: true, opacity: 0.15, depthWrite: false });
+      other.material = Array.isArray(other.material) ? other.material.map(fade) : fade(other.material);
     });
     return () => {
       glow(mesh, false);
-      for (const node of hidden) node.visible = true;
+      for (const [other, material] of faded) {
+        for (const m of Array.isArray(other.material) ? other.material : [other.material]) m.dispose();
+        other.material = material;
+      }
     };
   }, [lit, labels, target]);
   // Labels lower down on the model are pinned with longer lines, so labels of parts at one spot do not stack.

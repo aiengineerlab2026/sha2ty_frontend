@@ -26,7 +26,7 @@ export function DesignSpecView({ spec, download = false }: { spec: DesignSpec; q
   // The part lit up on the model: from its label, its row in the table or its card in the part list.
   const [lit, setLit] = useState<string | null>(null);
   const viewer = useRef<HTMLDivElement>(null);
-  // Sizes only for parts not covered in fabric (and not pillows, the mattress or bedding).
+  // Sizes for every part but pillows, the mattress and bedding.
   const names = useMemo(
     () => spec.parts.map((p) => ({ id: p.id, name: t(p.name), skip: !sized({ name: p.name, material: spec.materials.find((x) => x.part_id === p.id)?.material }) })),
     [spec.parts, spec.materials, t],
@@ -105,7 +105,7 @@ export function DesignSpecView({ spec, download = false }: { spec: DesignSpec; q
             </div>
             {lit && (
               <div className="absolute start-6 top-6 z-10 flex items-center gap-2 rounded-xl bg-brand-navy px-3 py-1.5 text-xs font-medium text-white shadow-lg">
-                {t("Showing only: {part}", { part: litName ?? "" })}
+                {t("Highlighted: {part}", { part: litName ?? "" })}
                 <button type="button" onClick={() => choose(null)} className="rounded-md bg-white/15 px-1.5 py-0.5 font-semibold hover:bg-white/25">{t("Show all")}</button>
               </div>
             )}
@@ -119,7 +119,7 @@ export function DesignSpecView({ spec, download = false }: { spec: DesignSpec; q
         {spec.glb_url && !download && <p className="border-t border-slate-100 px-5 py-2.5 text-xs text-slate-500">{t("The 3D model can be downloaded once the customer accepts your offer.")}</p>}
       </section>
 
-      {/* Sizes: the whole model, then each part (click one to see it alone on the model). */}
+      {/* Sizes: the whole model, then each part (click one to highlight it on the model). */}
       <section className={`${card} overflow-hidden`}>
         <div className="flex items-center gap-2 border-b border-slate-100 px-5 py-3.5">
           <Ruler className="size-4 text-slate-400" aria-hidden />
@@ -190,7 +190,7 @@ export function DesignSpecView({ spec, download = false }: { spec: DesignSpec; q
                   </tbody>
                 </table>
               </div>
-              <p className="border-t border-slate-100 bg-slate-50 px-4 py-2 text-[11px] text-slate-500">{t("Sizes of one piece, for the parts not covered in fabric (pillows, the mattress and bedding are not included).")} {t("Click a part to see it alone on the model.")}</p>
+              <p className="border-t border-slate-100 bg-slate-50 px-4 py-2 text-[11px] text-slate-500">{t("Sizes of one piece; pillows, the mattress and bedding are not included.")} {t("Click a part to highlight it on the model.")}</p>
             </div>
           )}
         </div>

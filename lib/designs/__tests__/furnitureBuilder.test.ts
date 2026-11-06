@@ -63,9 +63,9 @@ test("pillows, the mattress and bedding get no size; the parts a workshop makes 
   for (const name of ["Headboard", "Frame", "Legs", "Sofa Back Upholstery", "Seat cushions"]) assert.ok(!isSoft(name), name);
 });
 
-test("parts covered in fabric get no size; wooden and painted ones do", async () => {
+test("every part gets a size, fabric-covered ones too; soft furnishings do not", async () => {
   const { sized } = await import("../../vendor/partSizes");
-  assert.ok(!sized({ name: "Headboard", material: { kind: "fabric" } }));
-  assert.ok(!sized({ name: "Headboard Upholstery" }) && !sized({ name: "Seat cushions" }) && !sized({ name: "Mattress" }));
+  assert.ok(sized({ name: "Headboard", material: { kind: "fabric" } }) && sized({ name: "Headboard Upholstery" }) && sized({ name: "Seat cushions" }));
+  assert.ok(!sized({ name: "Mattress" }) && !sized({ name: "وسادة" }));
   assert.ok(sized({ name: "Legs", material: { kind: "wood" } }) && sized({ name: "Frame", material: { kind: "paint" } }) && sized({ name: "Sides" }));
 });

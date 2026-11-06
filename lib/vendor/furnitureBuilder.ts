@@ -40,6 +40,13 @@ export const PARTS: Record<FurnitureKind, string[]> = {
   sofa: ["Sofa Base", "Sofa Legs", "Sofa Back", "Sofa Back Upholstery"],
 };
 
+/** The parts' names as saved with the model and shown to customers (PARTS stay the keys of the design's looks). */
+export const PART_AR: Record<string, string> = {
+  Headboard: "لوح الرأس", Mattress: "المرتبة", Legs: "الأرجل", Sides: "الجوانب", "Headboard Upholstery": "تنجيد لوح الرأس",
+  "Table Head": "سطح الطاولة", "Chair Base": "قاعدة الكرسي", "Chair Back": "ظهر الكرسي",
+  "Sofa Base": "قاعدة الكنبة", "Sofa Legs": "أرجل الكنبة", "Sofa Back": "ظهر الكنبة", "Sofa Back Upholstery": "تنجيد ظهر الكنبة",
+};
+
 /** How each material catches light (glTF PBR + sheen / clearcoat, kept by the exported file and the viewer). */
 const FINISH: Record<MaterialKind, { roughness: number; metalness: number; sheen?: number; clearcoat?: number }> = {
   fabric: { roughness: 0.92, metalness: 0, sheen: 0.4 }, velvet: { roughness: 0.75, metalness: 0, sheen: 1 },
@@ -213,55 +220,58 @@ export function buildFurniture(spec: FurnitureSpec): Group {
   return group;
 }
 
-/** The part list saved with the model (ids = mesh names; vendor-named, so the names are kept as they are). */
+/** The part list saved with the model (ids = mesh names; Arabic names, vendor-named so they are kept as they are). */
 export function furnitureParts(kind: FurnitureKind): PartDocument {
-  return { modelType: kind, separated: true, components: PARTS[kind].map((name) => ({ id: partId(name), name, editable: true, naming: "vendor" })) };
+  return { modelType: kind, separated: true, components: PARTS[kind].map((name) => ({ id: partId(name), name: PART_AR[name], editable: true, naming: "vendor" })) };
 }
 
 const LEGS = ["square", "round", "tapered", "splayed"] as const;
 const BACKS = ["straight", "rounded", "curved"] as const;
 const TOPS = ["rectangle", "rounded", "oval"] as const;
-const cap = (word: string) => word[0].toUpperCase() + word.slice(1);
 const MAX_VARIANTS = 3;
+const SHAPE_AR: Record<string, string> = {
+  square: "مربعة", round: "دائرية", tapered: "مدببة", splayed: "مائلة", straight: "مستقيم", rounded: "مستدير", curved: "منحني",
+  rectangle: "مستطيل", oval: "بيضاوي",
+};
 
 /** Other shapes offered to customers for each part, as designs that differ only where that part changes: built and
- * cut out with partOf(). Parts without a shape choice get another finish (a look from the same design). */
+ * cut out with partOf(). Parts without a shape choice get another finish (a look from the same design). Named in Arabic. */
 export function partOptions(spec: FurnitureSpec): Record<string, { name: string; spec: FurnitureSpec }[]> {
   const other = <T extends string>(all: readonly T[], now: T) => all.filter((v) => v !== now);
-  const legs = other(LEGS, spec.leg_shape).map((leg_shape) => ({ name: `${cap(leg_shape)} legs`, spec: { ...spec, leg_shape } }));
-  const backs = (part: string) => other(BACKS, spec.back_shape).map((back_shape) => ({ name: `${cap(back_shape)} ${part.toLowerCase()}`, spec: { ...spec, back_shape } }));
+  const legs = other(LEGS, spec.leg_shape).map((leg_shape) => ({ name: `أرجل ${SHAPE_AR[leg_shape]}`, spec: { ...spec, leg_shape } }));
+  const backs = (part: string) => other(BACKS, spec.back_shape).map((back_shape) => ({ name: `${PART_AR[part]}: ${SHAPE_AR[back_shape]}`, spec: { ...spec, back_shape } }));
   // The other upholstery styles: plain, button-tufted, channel-tufted.
   const now = spec.channels ? "channels" : spec.tufted ? "buttons" : "plain";
-  const STYLE = { plain: ["Plain", { tufted: false, channels: false }], buttons: ["Button-tufted", { tufted: true, channels: false }], channels: ["Channel-tufted", { tufted: false, channels: true }] } as const;
+  const STYLE = { plain: ["سادة", { tufted: false, channels: false }], buttons: ["كابيتونيه بأزرار", { tufted: true, channels: false }], channels: ["خطوط طولية", { tufted: false, channels: true }] } as const;
   const tufting = (part: string) => (Object.keys(STYLE) as (keyof typeof STYLE)[]).filter((k) => k !== now)
-    .map((k) => ({ name: `${STYLE[k][0]} ${part.toLowerCase()}`, spec: { ...spec, ...STYLE[k][1], back_shape: "straight" as const } }));
+    .map((k) => ({ name: `${PART_AR[part]}: ${STYLE[k][0]}`, spec: { ...spec, ...STYLE[k][1], back_shape: "straight" as const } }));
   // ponytail: a finish variant reuses another part's look from the same design; add a palette when more are wanted.
   const finish = (part: string, from: string, label: string) => [{ name: label, spec: { ...spec, looks: { ...spec.looks, [part]: spec.looks[from] ?? spec.looks[part] } } }];
   const options: Record<FurnitureKind, Record<string, { name: string; spec: FurnitureSpec }[]>> = {
     bed: {
       Headboard: backs("Headboard"),
-      Mattress: [{ name: "Ivory mattress", spec: { ...spec, looks: { ...spec.looks, Mattress: { color: "#f1ede4", material: "fabric" } } } }],
+      Mattress: [{ name: "مرتبة عاجية", spec: { ...spec, looks: { ...spec.looks, Mattress: { color: "#f1ede4", material: "fabric" } } } }],
       Legs: legs,
-      Sides: finish("Sides", "Headboard Upholstery", "Upholstered sides"),
-      "Headboard Upholstery": [...backs("Upholstery"), ...tufting("Upholstery")],
+      Sides: finish("Sides", "Headboard Upholstery", "جوانب منجدة"),
+      "Headboard Upholstery": [...backs("Headboard Upholstery"), ...tufting("Headboard Upholstery")],
     },
     dining_table: {
-      "Table Head": other(TOPS, spec.top_shape).map((top_shape) => ({ name: `${cap(top_shape)} top`, spec: { ...spec, top_shape } })),
+      "Table Head": other(TOPS, spec.top_shape).map((top_shape) => ({ name: `سطح ${top_shape === "rounded" ? "بحواف مستديرة" : SHAPE_AR[top_shape]}`, spec: { ...spec, top_shape } })),
       Legs: legs,
     },
     chair: {
-      "Chair Base": finish("Chair Base", "Legs", "Wooden seat"),
+      "Chair Base": finish("Chair Base", "Legs", "مقعد خشبي"),
       Legs: legs,
-      "Chair Back": [...backs("Back"), ...tufting("Back")],
+      "Chair Back": [...backs("Chair Back"), ...tufting("Chair Back")],
     },
     sofa: {
       "Sofa Base": [
-        ...other(["square", "rounded", "none"] as const, spec.arms).map((arms) => ({ name: arms === "none" ? "No arms" : `${cap(arms)} arms`, spec: { ...spec, arms } })),
-        ...[2, 3, 4].filter((n) => n !== Math.round(spec.cushions)).map((cushions) => ({ name: `${cushions} seat cushions`, spec: { ...spec, cushions } })),
+        ...other(["square", "rounded", "none"] as const, spec.arms).map((arms) => ({ name: arms === "none" ? "بدون مساند" : `مساند ${arms === "square" ? "مربعة" : "مستديرة"}`, spec: { ...spec, arms } })),
+        ...[2, 3, 4].filter((n) => n !== Math.round(spec.cushions)).map((cushions) => ({ name: `${cushions} وسائد للمقعد`, spec: { ...spec, cushions } })),
       ],
       "Sofa Legs": legs,
-      "Sofa Back": backs("Back"),
-      "Sofa Back Upholstery": [...tufting("Cushions"), ...[2, 3, 4].filter((n) => n !== Math.round(spec.cushions)).map((cushions) => ({ name: `${cushions} back cushions`, spec: { ...spec, cushions } }))],
+      "Sofa Back": backs("Sofa Back"),
+      "Sofa Back Upholstery": [...tufting("Sofa Back Upholstery"), ...[2, 3, 4].filter((n) => n !== Math.round(spec.cushions)).map((cushions) => ({ name: `${cushions} وسائد للظهر`, spec: { ...spec, cushions } }))],
     },
   };
   return Object.fromEntries(Object.entries(options[spec.kind]).map(([part, list]) => [part, list.slice(0, MAX_VARIANTS)]));
