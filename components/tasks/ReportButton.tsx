@@ -40,7 +40,7 @@ export function ReportButton({ taskId, className = "" }: { taskId: string; class
         type="button"
         disabled={busy}
         onClick={() => void download()}
-        className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-brand-navy shadow-sm transition hover:bg-slate-50 disabled:opacity-60"
+        className="inline-flex h-10 items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-brand-navy shadow-sm transition hover:bg-slate-50 disabled:opacity-60"
       >
         {busy ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <FileDown className="size-4" aria-hidden />} {t("Download report (PDF)")}
       </button>

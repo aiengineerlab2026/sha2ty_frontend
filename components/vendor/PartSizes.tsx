@@ -26,37 +26,66 @@ function glow(mesh: Mesh, on: boolean) {
   }
 }
 
-/** Each part's name and size (W × H × D), pinned to a point on the part with a short line; hovering (or tapping) a
- * label lights its part up. `names`: the parts in mesh order (the part list), by id. */
-export function PartSizes({ target, names, signal, show = true, onSizes }: { target: RefObject<Object3D | null>; names: { id: string; name: string }[]; signal: unknown; show?: boolean; onSizes?: (rows: ({ name: string } & PartSize)[]) => void }) {
+/** Each part's name and size (W × H × D), pinned to a point on the part with a short line; tapping a label (or the
+ * page's row for it) shows that part alone, lit up; tapping it again shows the whole model. `names`: the parts in mesh order (the part list), by id. */
+export function PartSizes({ target, names, signal, show = true, onSizes, lit: litOutside, onLit }: {
+  target: RefObject<Object3D | null>;
+  /** The parts in mesh order; `skip` ones get no size (fabric-covered, soft furnishings). */
+  names: { id: string; name: string; skip?: boolean }[];
+  signal: unknown;
+  show?: boolean;
+  onSizes?: (rows: ({ key: string; name: string } & PartSize)[]) => void;
+  /** The part lit up (its key from `onSizes`), when the page controls it (its table and part list light parts too). */
+  lit?: string | null;
+  onLit?: (key: string | null) => void;
+}) {
   const [labels, setLabels] = useState<Label[] | null>(null);
   const [measured, setMeasured] = useState<unknown>(undefined);
-  const [lit, setLit] = useState<string | null>(null);
+  const [litInside, setLitInside] = useState<string | null>(null);
+  const lit = onLit ? litOutside ?? null : litInside;
+  const setLit = (next: string | null | ((was: string | null) => string | null)) => {
+    const value = typeof next === "function" ? next(lit) : next;
+    if (onLit) onLit(value);
+    else setLitInside(value);
+  };
   useFrame(() => {
     if (measured === signal && labels) return;
     const meshes: Mesh[] = [];
     target.current?.traverse((node) => (node as Mesh).isMesh && node.visible && meshes.push(node as Mesh));
     if (!meshes.length) return; // not loaded yet
-    const byId = new Map(names.map((p) => [p.id, p.name]));
+    const byId = new Map(names.map((p) => [p.id, p]));
     const measuredParts = meshes
-      .map((mesh, i) => ({ mesh, name: byId.get(mesh.name) ?? names[i]?.name ?? mesh.name }))
-      .filter(({ mesh, name }) => !isSoft(name) && !isSoft(mesh.name))
+      .map((mesh, i) => ({ mesh, part: byId.get(mesh.name) ?? names[i] }))
+      .filter(({ mesh, part }) => !part?.skip && !isSoft(mesh.name))
+      .map(({ mesh, part }) => ({ mesh, name: part?.name ?? mesh.name }))
+      .filter(({ name }) => !isSoft(name))
       .map(({ mesh, name }) => ({ mesh, name, ...sizeText(pieces(mesh)) }));
     setLabels(measuredParts.map(({ mesh, name, text, box }) => {
       const at = anchor(mesh, box);
       return { key: mesh.uuid, mesh, name, text, at: [at.x, at.y, at.z] };
     }));
-    onSizes?.(measuredParts.map(({ name, size }) => ({ name, ...size })));
+    onSizes?.(measuredParts.map(({ mesh, name, size }) => ({ key: mesh.uuid, name, ...size })));
     setMeasured(signal);
   });
+  // The chosen part alone: every other mesh is hidden (and shown again when it is chosen again, or another is).
   useEffect(() => {
     const mesh = labels?.find((l) => l.key === lit)?.mesh;
     if (!mesh) return;
     glow(mesh, true);
-    return () => glow(mesh, false);
-  }, [lit, labels]);
+    const hidden: Object3D[] = [];
+    target.current?.traverse((node) => {
+      if ((node as Mesh).isMesh && node !== mesh && node.visible) {
+        node.visible = false;
+        hidden.push(node);
+      }
+    });
+    return () => {
+      glow(mesh, false);
+      for (const node of hidden) node.visible = true;
+    };
+  }, [lit, labels, target]);
   // Labels lower down on the model are pinned with longer lines, so labels of parts at one spot do not stack.
-  const order = show ? [...(labels ?? [])].sort((a, b) => b.at[1] - a.at[1]) : [];
+  const order = show ? [...(labels ?? [])].filter((l) => !lit || l.key === lit).sort((a, b) => b.at[1] - a.at[1]) : [];
   return (
     <>
       {order.map((l, i) => (
@@ -64,8 +93,6 @@ export function PartSizes({ target, names, signal, show = true, onSizes }: { tar
           <div className="flex -translate-x-1/2 -translate-y-full flex-col items-center" style={{ paddingBottom: 0 }}>
             <button
               type="button"
-              onPointerEnter={() => setLit(l.key)}
-              onPointerLeave={() => setLit((was) => (was === l.key ? null : was))}
               onClick={() => setLit((was) => (was === l.key ? null : l.key))}
               className={`pointer-events-auto whitespace-nowrap rounded-md border px-1.5 py-0.5 text-[10px] leading-tight shadow-sm backdrop-blur transition ${lit === l.key ? "border-brand-amber bg-brand-amber text-brand-navy" : "border-white/70 bg-white/90 text-slate-700"}`}
             >
