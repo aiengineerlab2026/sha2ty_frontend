@@ -4,7 +4,7 @@ import { useEffect, useState, type RefObject } from "react";
 import { useFrame } from "@react-three/fiber";
 import { Html } from "@react-three/drei";
 import type { Mesh, MeshStandardMaterial, Object3D } from "three";
-import { anchor, pieces, sizeText } from "@/lib/vendor/partSizes";
+import { anchor, isSoft, pieces, sizeText, type PartSize } from "@/lib/vendor/partSizes";
 
 type Label = { key: string; mesh: Mesh; name: string; text: string; at: [number, number, number] };
 
@@ -28,7 +28,7 @@ function glow(mesh: Mesh, on: boolean) {
 
 /** Each part's name and size (W × H × D), pinned to a point on the part with a short line; hovering (or tapping) a
  * label lights its part up. `names`: the parts in mesh order (the part list), by id. */
-export function PartSizes({ target, names, signal }: { target: RefObject<Object3D | null>; names: { id: string; name: string }[]; signal: unknown }) {
+export function PartSizes({ target, names, signal, show = true, onSizes }: { target: RefObject<Object3D | null>; names: { id: string; name: string }[]; signal: unknown; show?: boolean; onSizes?: (rows: ({ name: string } & PartSize)[]) => void }) {
   const [labels, setLabels] = useState<Label[] | null>(null);
   const [measured, setMeasured] = useState<unknown>(undefined);
   const [lit, setLit] = useState<string | null>(null);
@@ -38,11 +38,15 @@ export function PartSizes({ target, names, signal }: { target: RefObject<Object3
     target.current?.traverse((node) => (node as Mesh).isMesh && node.visible && meshes.push(node as Mesh));
     if (!meshes.length) return; // not loaded yet
     const byId = new Map(names.map((p) => [p.id, p.name]));
-    setLabels(meshes.map((mesh, i) => {
-      const { text, box } = sizeText(pieces(mesh));
+    const measuredParts = meshes
+      .map((mesh, i) => ({ mesh, name: byId.get(mesh.name) ?? names[i]?.name ?? mesh.name }))
+      .filter(({ mesh, name }) => !isSoft(name) && !isSoft(mesh.name))
+      .map(({ mesh, name }) => ({ mesh, name, ...sizeText(pieces(mesh)) }));
+    setLabels(measuredParts.map(({ mesh, name, text, box }) => {
       const at = anchor(mesh, box);
-      return { key: mesh.uuid, mesh, name: byId.get(mesh.name) ?? names[i]?.name ?? mesh.name, text, at: [at.x, at.y, at.z] };
+      return { key: mesh.uuid, mesh, name, text, at: [at.x, at.y, at.z] };
     }));
+    onSizes?.(measuredParts.map(({ name, size }) => ({ name, ...size })));
     setMeasured(signal);
   });
   useEffect(() => {
@@ -52,7 +56,7 @@ export function PartSizes({ target, names, signal }: { target: RefObject<Object3
     return () => glow(mesh, false);
   }, [lit, labels]);
   // Labels lower down on the model are pinned with longer lines, so labels of parts at one spot do not stack.
-  const order = [...(labels ?? [])].sort((a, b) => b.at[1] - a.at[1]);
+  const order = show ? [...(labels ?? [])].sort((a, b) => b.at[1] - a.at[1]) : [];
   return (
     <>
       {order.map((l, i) => (
