@@ -628,7 +628,9 @@ export function SelectionOutline({ mesh, meshes }: { mesh?: Mesh | null; meshes?
     const outline = new OutlinePass(new Vector2(256, 256), scene, camera);
     // The overlay writes its colour straight to the screen (no sRGB conversion): stored as the sRGB values.
     outline.visibleEdgeColor.setStyle(SELECT, LinearSRGBColorSpace);
-    outline.hiddenEdgeColor.set(0x000000); // behind other parts: transparent below, so hidden edges are not drawn
+    // The whole part is outlined from every angle: edges behind other parts (a headboard behind its upholstery and
+    // pillows) in a fainter orange (the overlay's alpha follows its brightness).
+    outline.hiddenEdgeColor.setStyle(SELECT, LinearSRGBColorSpace).multiplyScalar(0.55);
     outline.edgeStrength = 6;
     outline.edgeThickness = 1;
     outline.edgeGlow = 1.2;
@@ -641,15 +643,6 @@ export function SelectionOutline({ mesh, meshes }: { mesh?: Mesh | null; meshes?
     );
     overlay.blending = NormalBlending;
     overlay.needsUpdate = true;
-    // Blender-style: outline what is seen of the part. The pass outlines the whole projected silhouette and hides the
-    // stretches behind other parts, so where generated parts overlap (a cushion under its neighbour) the seen
-    // boundary had no outline. Occluded pixels of the part are masked out instead: the edge runs along the visible
-    // region and hidden edges are never drawn. 1% (+5 mm) depth slack: parts flush with the frame still count as seen.
-    const mask = outline.prepareMaskMaterial;
-    mask.fragmentShader = mask.fragmentShader
-      .replace("(-vPosition.z > viewZ)", "(-vPosition.z > viewZ * 1.01 + 0.005)")
-      .replace("gl_FragColor = vec4(0.0, depthTest, 1.0, 1.0);", "gl_FragColor = depthTest > 0.5 ? vec4(1.0) : vec4(0.0, 0.0, 1.0, 1.0);");
-    mask.needsUpdate = true;
     pass.current = outline;
     return () => {
       outline.dispose();
