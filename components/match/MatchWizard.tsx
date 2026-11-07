@@ -36,8 +36,9 @@ const POSITIONS: { id: MatchPosition; label: string }[] = [
 ];
 
 
-/** The item shown with the other one: a catalogue model, or (in the 3D editor) the shopper's saved design or own model. */
-export type MatchItem = { [K in "id" | "title" | "thumbnail" | "width_m" | "height_m" | "depth_m"]: CatalogModel[K] } & { kind?: "model" | "design" | "user_model" };
+/** The item shown with the other one: a catalogue model, or (in the 3D editor) the shopper's saved design or own model.
+ * `snapshot`: the editor's picture of the model as it is now (unsaved edits included), sent with its current size. */
+export type MatchItem = { [K in "id" | "title" | "thumbnail" | "width_m" | "height_m" | "depth_m"]: CatalogModel[K] } & { kind?: "model" | "design" | "user_model"; snapshot?: () => Promise<Blob | null> };
 
 /** "Match" on a model's page or in the 3D editor: wizard → backend compositing → full-screen results (kept for
  * reopening). `canOpen` may refuse (unsaved edits: the backend only sees the saved design). */
@@ -51,7 +52,7 @@ export function MatchButton({ model, canOpen, compact = false }: { model: MatchI
   const [index, setIndex] = useState(0);
   const [selectedId, setSelectedId] = useState<string>();
 
-  if (!model.thumbnail) return null; // nothing to match against
+  if (!model.thumbnail && !model.snapshot) return null; // nothing to match against
   return (
     <>
       {/* `compact`: icon buttons for a toolbar (the editor's top bar on phones). */}
@@ -153,10 +154,14 @@ function MatchWizard({ open, onOpenChange, model, onDone }: { open: boolean; onO
     setError(null);
     abort.current = new AbortController();
     try {
+      const picture = model.snapshot ? await model.snapshot() : null;
+      if (model.snapshot && !picture) throw new Error("Could not take a picture of the model. Try again.");
+      const inUnit = (m: number | null) => (m ? (unit === "m" ? m : m * 100) : undefined); // the snapshot's size, metres → the form's unit
       const result = await requestMatch(
         {
           modelId: model.id,
-          modelKind: model.kind,
+          modelKind: picture ? "snapshot" : model.kind,
+          modelImage: picture && new File([picture], `model.${picture.type === "image/webp" ? "webp" : "png"}`, { type: picture.type }),
           matchType: type,
           width: picked ? undefined : num(width),
           height: picked ? undefined : num(height),
@@ -169,9 +174,9 @@ function MatchWizard({ open, onOpenChange, model, onDone }: { open: boolean; onO
           uploadedImage: picked || (type === "wall_paint" && useColor) ? null : file,
           color: type === "wall_paint" && useColor ? color : undefined,
           tileSize: type === "wall_paint" && !useColor ? num(tile) : undefined,
-          modelWidth: missing.w ? num(modelDims.w) : undefined,
-          modelDepth: missing.d ? num(modelDims.d) : undefined,
-          modelHeight: missing.h ? num(modelDims.h) : undefined,
+          modelWidth: picture ? inUnit(model.width_m) : missing.w ? num(modelDims.w) : undefined,
+          modelDepth: picture ? inUnit(model.depth_m) : missing.d ? num(modelDims.d) : undefined,
+          modelHeight: picture ? inUnit(model.height_m) : missing.h ? num(modelDims.h) : undefined,
         },
         abort.current.signal,
         (p) => setPercent((cur) => Math.max(cur, p)), // never step backwards

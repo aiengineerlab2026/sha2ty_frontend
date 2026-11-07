@@ -1457,7 +1457,7 @@ export const AR: Record<string, string> = {
   Show: "إظهار",
   Hide: "إخفاء",
   "Save your changes first, so the camera shows the model as it is now.": "احفظ تغييراتك أولًا، لتعرض الكاميرا الموديل كما هو الآن.",
-  "Save your changes first, so the picture shows the model as it is now.": "احفظ تغييراتك أولًا، لتظهر الصورة الموديل كما هو الآن.",
+  "Could not take a picture of the model. Try again.": "تعذّر التقاط صورة للموديل. حاول مرة أخرى.",
   "An admin reviews every new studio. Once {name} is approved you can add models and paints here.": "يراجع المسؤول كل استوديو جديد. بعد اعتماد {name} يمكنك إضافة الموديلات والدهانات هنا.",
   "Your company profile, shown with your models and paints.": "ملف شركتك، يظهر مع موديلاتك ودهاناتك.",
   "Paints and floors priced per m\u00b2": "دهانات وأرضيات بسعر المتر المربع",

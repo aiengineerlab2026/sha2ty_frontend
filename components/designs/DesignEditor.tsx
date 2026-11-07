@@ -319,14 +319,11 @@ export function DesignEditor({ id, model }: { id: string; model?: string }) {
     </div>
   );
 
-  // "See how it looks with other items" with the saved design (its thumbnail and size): the backend reads it, so
-  // unsaved edits are saved first.
-  const matchPicture = shown?.thumbnail_url || design?.thumbnail_url;
-  const matchSize = shown?.data.item ? (shown.data.item.dimensions ?? sourceSize(shown.data.item.source)) : null;
-  const match = design?.kind === "item" && matchPicture ? (
+  // "See how it looks with other items": a picture of the model as it is now, at its current size, so it works
+  // before the first save and with unsaved edits.
+  const match = kind === "item" && shown?.data.item ? (
     <MatchButton
-      model={{ kind: "design", id: design.id, title: design.title, thumbnail: matchPicture, width_m: matchSize?.width ?? null, height_m: matchSize?.height ?? null, depth_m: matchSize?.depth ?? null }}
-      canOpen={() => !unsaved() || (setNotice(t("Save your changes first, so the picture shows the model as it is now.")), false)}
+      model={{ id: design?.id ?? "unsaved", title: design?.title ?? title, thumbnail: null, width_m: dims?.width ?? null, height_m: dims?.height ?? null, depth_m: dims?.depth ?? null, snapshot: async () => (await editor.current?.thumbnail()) ?? null }}
     />
   ) : null;
 
