@@ -2,7 +2,7 @@
 
 import { useT } from "@/lib/i18n";
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type ComponentRef, type CSSProperties, type ReactNode } from "react";
-import { Download, Eye, EyeOff, Layers, Loader2, Paintbrush, Palette, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, RotateCcw, RotateCw, Ruler, SlidersHorizontal, X } from "lucide-react";
+import { Download, Layers, Loader2, Palette, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, RotateCcw, RotateCw, SlidersHorizontal } from "lucide-react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { Bounds, ContactShadows, Environment, OrbitControls, useBounds, useGLTF } from "@react-three/drei";
 import { OutlinePass } from "three/examples/jsm/postprocessing/OutlinePass.js";
@@ -952,7 +952,6 @@ export function ModelViewer({
   const [tab, setTab] = useState<Tab>("parts");
   // Phones (`fill`): the canvas fills the screen and the panels sit in a bottom sheet: peek (tabs only), half or full.
   const [sheet, setSheet] = useState<"peek" | "half" | "full">("peek");
-  const [sizeOpen, setSizeOpen] = useState(false); // phones: the size toolbar opens from a small pill
   const orbit = useRef<ComponentRef<typeof OrbitControls>>(null);
   const [turned, setTurned] = useState(false); // the rotate hint goes after the first drag or turn
   const turn = (dir: 1 | -1) => {
@@ -1295,15 +1294,9 @@ export function ModelViewer({
         <OrbitControls ref={orbit} makeDefault enableDamping autoRotate={autoRotate} autoRotateSpeed={1.2} minPolarAngle={0.1} maxPolarAngle={Math.PI / 2 - 0.02} onStart={() => setTurned(true)} />
       </Canvas>
       {edit && designSize && onDesignSize && (
-        // Floating toolbar: typed sizes, the handles / dimensions switch and the unit. Phones: a size pill opens it.
-        <div className="absolute inset-x-3 top-3 flex justify-center">
-          {fill && !sizeOpen && (
-            <button type="button" onClick={() => setSizeOpen(true)} className="flex h-10 items-center gap-2 rounded-full border border-white/70 bg-white/90 px-4 text-xs font-semibold tabular-nums text-brand-navy shadow-lg shadow-slate-900/10 backdrop-blur-md lg:hidden">
-              <Ruler className="size-4 text-brand-amber" aria-hidden />
-              <bdi>{designSize.width.toFixed(2)} × {designSize.height.toFixed(2)} × {designSize.depth.toFixed(2)} m</bdi>
-            </button>
-          )}
-          <div className={`flex max-w-full flex-wrap items-end gap-3 rounded-2xl border border-white/70 bg-white/80 px-3 py-2 shadow-lg shadow-slate-900/5 backdrop-blur-md ${fill && !sizeOpen ? "max-lg:hidden" : ""}`}>
+        // Floating toolbar: typed sizes, the handles / dimensions switch and the unit. Phones: none (the sizes are in "Size & more").
+        <div className={`absolute inset-x-3 top-3 flex justify-center ${fill ? "max-lg:hidden" : ""}`}>
+          <div className="flex max-w-full flex-wrap items-end gap-3 rounded-2xl border border-white/70 bg-white/80 px-3 py-2 shadow-lg shadow-slate-900/5 backdrop-blur-md">
             <SizeInputs size={designSize} unit={guideUnit} proportional={proportional} onSize={onDesignSize} />
             <span className="hidden h-8 w-px bg-slate-200 sm:block" aria-hidden />
             <label className="flex cursor-pointer items-center gap-2 self-center text-xs font-medium text-slate-600">
@@ -1321,11 +1314,6 @@ export function ModelViewer({
                 </button>
               ))}
             </div>
-            {fill && (
-              <button type="button" onClick={() => setSizeOpen(false)} aria-label={t("Close")} className="flex size-9 items-center justify-center self-center rounded-full text-slate-500 hover:bg-slate-100 lg:hidden">
-                <X className="size-4" aria-hidden />
-              </button>
-            )}
           </div>
         </div>
       )}
@@ -1527,7 +1515,6 @@ export function ModelViewer({
   const TABS = [["parts", "Parts"], ["properties", "Properties"], ...(actions ? [["actions", actionsLabel]] : [])] as [Tab, string][];
   const SHEET = { peek: "", half: "max-lg:h-[52%]", full: "max-lg:h-[calc(100%-3.5rem)]" } as const;
   const sheetStep = (dir: 1 | -1) => setSheet((s) => (["peek", "half", "full"] as const)[Math.min(2, Math.max(0, ["peek", "half", "full"].indexOf(s) + dir))]);
-  const chosen = selection.length > 1 ? t("{n} parts selected", { n: selection.length }) : slot?.name;
   return (
     // Desktop: parts | canvas | properties (+ the page's actions), side panels collapsible. Below 1024 px with `fill`
     // (the editor pages, the app): the canvas fills the screen and the panels sit in a bottom sheet (peek / half /
@@ -1551,25 +1538,6 @@ export function ModelViewer({
             {rightOpen ? <PanelRightClose className="size-4 rtl:-scale-x-100" aria-hidden /> : <PanelRightOpen className="size-4 rtl:-scale-x-100" aria-hidden />}
           </button>
         </div>
-        {fill && chosen && (
-          // Phones: what is selected, with its quick actions, floating under the size pill (never under a thumb).
-          <div className="absolute inset-x-3 top-16 z-10 flex justify-center lg:hidden">
-            <div className="flex max-w-full items-center gap-1 rounded-full border border-white/70 bg-brand-navy/90 p-1 ps-4 text-white shadow-lg backdrop-blur-md">
-              <span className="min-w-0 truncate text-sm font-semibold">{chosen}</span>
-              <button type="button" onClick={() => openTab("properties")} className="flex h-9 shrink-0 items-center gap-1.5 rounded-full bg-brand-amber px-3 text-xs font-semibold text-brand-navy">
-                <Paintbrush className="size-3.5" aria-hidden /> {t("Materials")}
-              </button>
-              {slot && slots.length > 1 && selection.length === 1 && (
-                <button type="button" onClick={() => toggle(slot.id, hidden.has(slot.id))} aria-label={t(hidden.has(slot.id) ? "Show" : "Hide")} className="flex size-9 shrink-0 items-center justify-center rounded-full hover:bg-white/10">
-                  {hidden.has(slot.id) ? <Eye className="size-4" aria-hidden /> : <EyeOff className="size-4" aria-hidden />}
-                </button>
-              )}
-              <button type="button" onClick={() => pick(null)} aria-label={t("Clear selection")} className="flex size-9 shrink-0 items-center justify-center rounded-full hover:bg-white/10">
-                <X className="size-4" aria-hidden />
-              </button>
-            </div>
-          </div>
-        )}
       </div>
       {/* Phones with `fill`: the bottom sheet. Wide screens: its wrappers vanish (contents), so its panels are the grid's. */}
       <div
