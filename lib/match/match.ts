@@ -31,7 +31,9 @@ export function stepIndex(index: number, count: number, dir: 1 | -1) {
 
 export interface MatchRequest {
   modelId: string;
-  modelKind?: "model" | "design" | "user_model";
+  modelKind?: "model" | "design" | "user_model" | "snapshot";
+  /** With modelKind "snapshot": the editor's picture of the model as it is now. */
+  modelImage?: File | null;
   matchType: MatchType;
   width?: number;
   height?: number;
