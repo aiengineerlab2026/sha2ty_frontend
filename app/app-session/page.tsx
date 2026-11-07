@@ -16,7 +16,6 @@ export default function AppSession() {
     void apiFetch("/api/auth/session", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      credentials: "same-origin",
       body: JSON.stringify({ access_token: params.get("access_token"), refresh_token: params.get("refresh_token"), expires_in: Number(params.get("expires_in")) || 3600 }),
     }).then((res) => (res.ok ? window.location.replace(safe) : setError("Your session could not be opened. Sign in again in the app.")), () => setError("Cannot reach the server."));
   }, []);
