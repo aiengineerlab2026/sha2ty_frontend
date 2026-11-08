@@ -377,14 +377,21 @@ export function DesignEditor({ id, model }: { id: string; model?: string }) {
               {/* Mobile app: the image matching shortcut beside View in camera. */}
               {inApp && match && <MatchButton {...match.props} compact />}
               {inApp && shown?.data.item && (
-                // Mobile app only: AR shows the saved design (its GLB and size), so edits are saved first.
+                // Mobile app only: AR shows the model as it is now. Saved: the design itself. Unsaved edits (or a new model):
+                // the editor's model is exported and uploaded as a preview, opened at its current size.
+                // ponytail: previews stay in storage (designs/previews); clean them up if storage use matters.
                 <button
                   type="button"
                   disabled={busy}
                   onClick={() =>
-                    !design || unsaved()
-                      ? setNotice(t("Save your changes first, so the camera shows the model as it is now."))
-                      : appView()?.postMessage(JSON.stringify({ type: "ar", model: shown.data.item!.source.model_id, design: design.id }))
+                    design && !unsaved()
+                      ? appView()?.postMessage(JSON.stringify({ type: "ar", model: shown.data.item!.source.model_id, design: design.id }))
+                      : void run(async () => {
+                          const blob = await editor.current?.exportGlb();
+                          if (!blob || !userId) return t("Could not prepare the model for the camera. Try again.");
+                          const glb = await uploadPublicFile(userId, new File([blob], "preview.glb", { type: "model/gltf-binary" }), "designs/previews");
+                          appView()?.postMessage(JSON.stringify({ type: "ar", glb, title: design?.title ?? title, w: dims?.width, h: dims?.height, d: dims?.depth }));
+                        })
                   }
                   aria-label={t("View in camera")}
                   className="inline-flex shrink-0 items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-brand-navy shadow-sm transition hover:bg-slate-50 disabled:opacity-60 max-lg:h-10 max-lg:px-3"
