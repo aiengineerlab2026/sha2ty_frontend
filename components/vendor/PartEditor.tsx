@@ -231,7 +231,7 @@ export function PartControls({
       )}
       {name && (
         <>
-          <MaterialPicker mode="fabric" edit={edit} area={area} onPick={(next) => onLibrary(next.mapUrl!, next.tile ?? 0.3, next)} />
+          <MaterialPicker mode="fabric" edit={edit} area={area} onPick={(next) => onLibrary(next.mapUrl!, next.tile ?? 0.3, next)} onClear={onReset} />
           {onPaint && <MaterialPicker mode="paint" edit={edit} area={area} onPick={onPaint} />}
           <button type="button" onClick={onReset} className="inline-flex items-center gap-1.5 text-xs text-slate-500 transition hover:text-brand-navy">
             <RotateCcw className="size-3.5" aria-hidden /> {t("Reset material")}

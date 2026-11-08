@@ -8,8 +8,15 @@ import { useEffect, useState } from "react";
  * (/api/auth/session), and the page moves on to `next` (a path on this site only). */
 export default function AppSession() {
   const [error, setError] = useState<string | null>(null);
+  // Tell the app (it retries with a fresh session), and show it.
+  const fail = (message: string) => {
+    (window as { ReactNativeWebView?: { postMessage: (m: string) => void } }).ReactNativeWebView?.postMessage("session-failed");
+    setError(message);
+  };
   useEffect(() => {
     const params = new URLSearchParams(window.location.hash.slice(1));
+    // Already handed over: React runs this twice in development, and the first run removed the tokens.
+    if (!params.get("access_token")) return;
     const next = params.get("next") ?? "/";
     const safe = next.startsWith("/") && !next.startsWith("//") ? next : "/";
     history.replaceState(null, "", window.location.pathname); // drop the tokens from the address bar
@@ -17,7 +24,10 @@ export default function AppSession() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ access_token: params.get("access_token"), refresh_token: params.get("refresh_token"), expires_in: Number(params.get("expires_in")) || 3600 }),
-    }).then((res) => (res.ok ? window.location.replace(safe) : setError("Your session could not be opened. Sign in again in the app.")), () => setError("Cannot reach the server."));
+    }).then(
+      (res) => (res.ok ? window.location.replace(safe) : fail("Your session could not be opened. Sign in again in the app.")),
+      () => fail("Cannot reach the server."),
+    );
   }, []);
   return <p className="p-6 text-center text-sm text-slate-500">{error ?? "…"}</p>;
 }

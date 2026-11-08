@@ -1275,7 +1275,16 @@ export function ModelViewer({
         <Suspense fallback={null}>
           <Bounds fit clip observe margin={1.25}>
             <group ref={sizer} name={SIZER} scale={factor}>
-              <LoadedModel url={url} dimensions={dimensions} edit={edit} server={server} saved={saved} replay={replay} onReport={onLoaded} onSlots={onSlots} onPick={(id, add) => { pick(id, add); if (id) openTab("properties"); }} track={track} />
+              <LoadedModel url={url} dimensions={dimensions} edit={edit} server={server} saved={saved} replay={replay} onReport={onLoaded} onSlots={onSlots} onPick={(id, add) => {
+                // Phones: tapping the selected part again while its properties show deselects it and lowers the sheet.
+                if (fill && id === selected && !add && !several && also.size === 0 && sheet !== "peek" && window.matchMedia("(max-width: 1023px)").matches) {
+                  pick(null);
+                  setSheet("peek");
+                  return;
+                }
+                pick(id, add);
+                if (id) openTab("properties");
+              }} track={track} />
             </group>
             <FitOnSignal signal={resetView} />
           </Bounds>

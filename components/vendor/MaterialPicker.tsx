@@ -51,7 +51,7 @@ function patch(material: PartMaterial, shown: PartMaterialOption): MaterialEdit 
  * the selected part; "wood", what the whole model is made of (`area`: the surface of all its wooden parts); "paint",
  * a colour from the admins' palette for the selected part, with the vendors' paints in it (supabase/model_paints.sql).
  * Picking calls `onPick` with the material edit. */
-export function MaterialPicker({ mode, edit, area, woodVendor, woodModel, onPick }: { mode: "fabric" | "wood" | "paint"; edit: MaterialEdit | null; area?: number | null; woodVendor?: string | null; woodModel?: string | null; onPick: (patch: MaterialEdit) => void }) {
+export function MaterialPicker({ mode, edit, area, woodVendor, woodModel, onPick, onClear }: { mode: "fabric" | "wood" | "paint"; edit: MaterialEdit | null; area?: number | null; woodVendor?: string | null; woodModel?: string | null; onPick: (patch: MaterialEdit) => void; /** The chosen fabric tapped again: back to the part's own material. */ onClear?: () => void }) {
   const t = useT();
   const [added, setAdded] = useState<string | null>(null); // the material last added to the cart (button says so)
   const [library, setLibrary] = useState<PartMaterialOption[] | null>(() => (supabaseConfigured() ? null : []));
@@ -207,18 +207,22 @@ export function MaterialPicker({ mode, edit, area, woodVendor, woodModel, onPick
         {fabrics?.length === 0 && <p className="text-xs text-slate-500">{t("No upholstery fabrics yet. Vendors add them in their studio.")}</p>}
         {!!fabrics?.length && (
           <div className="grid grid-cols-5 gap-1.5 p-0.5">
-            {fabrics.map((m) => (
+            {fabrics.map((m) => {
+              const on = chosen?.id === m.id || (!chosen && edit?.mapUrl === m.url);
+              return (
               <button
                 key={m.id}
                 type="button"
+                aria-pressed={on}
                 title={m.price == null ? m.name : `${m.name} · ${formatPrice(m.price)} / ${t("m")}`}
-                onClick={() => pickFabric(m)}
-                className={`aspect-square overflow-hidden rounded-lg border transition hover:shadow-md ${chosen?.id === m.id || (!chosen && edit?.mapUrl === m.url) ? "border-brand-amber ring-2 ring-brand-amber/40" : "border-slate-200"}`}
+                onClick={() => (on && onClear ? onClear() : pickFabric(m))}
+                className={`aspect-square overflow-hidden rounded-lg border transition hover:shadow-md ${on ? "border-brand-amber ring-2 ring-brand-amber/40" : "border-slate-200"}`}
               >
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img src={m.url} alt={m.name} className="size-full object-cover" loading="lazy" />
               </button>
-            ))}
+              );
+            })}
           </div>
         )}
         {(() => {
