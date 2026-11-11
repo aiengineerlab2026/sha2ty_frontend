@@ -6,7 +6,7 @@ import { Download, Layers, Loader2, Palette, PanelLeftClose, PanelLeftOpen, Pane
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { Bounds, ContactShadows, Environment, OrbitControls, useBounds, useGLTF } from "@react-three/drei";
 import { OutlinePass } from "three/examples/jsm/postprocessing/OutlinePass.js";
-import { AmbientLight, Box3, BufferGeometry, Color, DirectionalLight, Euler, Group, LinearSRGBColorSpace, Matrix4, Mesh, MeshStandardMaterial, NeutralToneMapping, NormalBlending, Object3D, PerspectiveCamera, PMREMGenerator, Quaternion, RepeatWrapping, Scene, Sphere, SRGBColorSpace, Texture, Vector2, Vector3, WebGLRenderer, type Material } from "three";
+import { Box3, BufferGeometry, Color, DirectionalLight, Euler, Group, LinearSRGBColorSpace, Matrix4, Mesh, MeshStandardMaterial, NeutralToneMapping, NormalBlending, Object3D, PerspectiveCamera, PMREMGenerator, Quaternion, RepeatWrapping, Scene, Sphere, SRGBColorSpace, Texture, Vector2, Vector3, WebGLRenderer, type Material } from "three";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 import { GLTFExporter } from "three/examples/jsm/exporters/GLTFExporter.js";
 import { measure, normalizeModel, type CatalogSize, type Dimensions, type NormalizationReport } from "@/lib/plan/modelNormalization";
@@ -237,6 +237,8 @@ const DEFAULT_TILE = 0.3; // metres one pattern tile covers across
 // A little flat light only: the room environment and the key light shade the model. More flattened every surface
 // (wood grain and fabric weave read washed out).
 const AMBIENT = 0.25;
+/** The thumbnail's light (room environment strength, key and fill lights): see the calibration where it is used. */
+const THUMB_LIGHT = { environment: 0.7, key: 0.5, fill: 0.15 };
 
 const RELIEF: Record<string, number> = { oak: 0.7, ash: 0.7, walnut: 0.65, teak: 0.55, mahogany: 0.5, pine: 0.5, beech: 0.45, veneer: 0.5, plywood: 0.35, blockboard: 0.35, particleboard: 0.08, mdf: 0.08, hdf: 0.06, laminate: 0.12, melamine: 0.06 };
 const LACQUER_FILL = 0.4;
@@ -582,10 +584,13 @@ async function renderThumbnail(object: Object3D, scale?: Vector3): Promise<Blob>
     const scene = new Scene();
     const environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
     scene.environment = environment;
-    scene.add(new AmbientLight(0xffffff, AMBIENT));
-    const key = new DirectionalLight(0xffffff, 1.35);
+    // Calibrated so a front-facing matte colour renders as itself (#a9b99c sage → #aabb9c; #e8b7c0 → #e9b7c0). The
+    // editor's lights on top of the full room environment turned pastels nearly white (sage → #d3e6c2) in every
+    // catalogue picture. No ambient light: the environment already lights every side.
+    scene.environmentIntensity = THUMB_LIGHT.environment;
+    const key = new DirectionalLight(0xffffff, THUMB_LIGHT.key);
     key.position.set(6, 8, 4);
-    const fill = new DirectionalLight(0xffffff, 0.35);
+    const fill = new DirectionalLight(0xffffff, THUMB_LIGHT.fill);
     fill.position.set(-4, 2, -3);
     scene.add(key, fill);
     const model = object.clone(true); // shares geometry and materials: nothing is copied or changed

@@ -9,7 +9,9 @@ import type { PartMaterial } from "@/lib/designs/materials";
 export type PartVariant = { id: string; name: string; glb_url: string; price_delta?: number | null };
 export type PartInfo = { id: string; name: string; editable: boolean; naming?: "file" | "geometry" | "ai" | "unidentified" | "vendor"; variants?: PartVariant[] };
 /** The backend's check before saving (services/model_check.py): errors are visible damage, warnings worth a look. */
-export type ModelValidation = { ok: boolean; errors: string[]; warnings: string[]; parts: number };
+export type Swatch = { hex: string; share: number };
+/** `appearance`: the model's front view against the photo's colours (the main colours of each, largest share first). */
+export type ModelValidation = { ok: boolean; errors: string[]; warnings: string[]; parts: number; appearance?: { ok: boolean; issues: string[]; reference?: Swatch[]; model?: Swatch[] } };
 export type PartDocument = { modelType?: string; separated?: boolean; components: PartInfo[]; limits?: string | null; method?: string; validation?: ModelValidation };
 export type MaterialEdit = {
   color?: string;
