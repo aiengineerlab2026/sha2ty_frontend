@@ -28,7 +28,17 @@ import { RichText } from "./RichText";
 import { ModelViewer } from "./ModelViewer";
 import { customizedModelFields, updateModel, type PartDocument, type PartEditorApi } from "@/lib/vendor/parts";
 
+/**
+ * cacheComponents keeps this route alive but hidden (React Activity) after leaving it, so coming back would show the
+ * last model's review. Hiding runs effect cleanups: bump the key there so every visit starts a blank form.
+ */
 export function ModelForm() {
+  const [visit, setVisit] = useState(0);
+  useEffect(() => () => setVisit((n) => n + 1), []);
+  return <ModelFormBody key={visit} />;
+}
+
+function ModelFormBody() {
   const t = useT();
   const locale = useLocale();
   const router = useRouter();
