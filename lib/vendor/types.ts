@@ -58,7 +58,19 @@ export interface CatalogModel {
   model_variants: ModelVariant[];
   /** Woods customers can choose for this model (supabase/woods.sql); null: all the vendor works with. */
   woods?: string[] | null;
+  /** Other states of this one product (supabase/model_states.sql): the row itself is the closed state. */
+  states?: ModelStates | null;
 }
+
+export type ModelStateName = "closed" | "open";
+/** One more state of a product: its own GLB, photo, part list and the vendor's edits (the same part ids). */
+export type ModelState = {
+  glb_url: string;
+  source_image_url?: string | null;
+  components?: import("./parts").PartDocument | null;
+  material_edits?: Record<string, import("./parts").MaterialEdit> | null;
+};
+export type ModelStates = { open?: ModelState };
 
 export type PaintKind = "color" | "texture";
 export type PaintSurface = "wall" | "floor";

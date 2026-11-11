@@ -25,6 +25,9 @@ export async function asCatalogModel(design: Pick<Design, "id" | "title" | "thum
     // The catalogue file with the version's edits replayed on it (as in the editor). Parts swapped for variants
     // exist only in the version's own file, which has every edit in it already: that file, nothing replayed.
     glb_url: baked ? version.glb_url! : item.source.glb_url,
+    // The open state is the catalogue's open file with the version's edits replayed by part id. A baked version (parts
+    // swapped for variants) exists only closed: its open look cannot be made from the catalogue file.
+    open_glb_url: baked ? null : listing?.open_glb_url ?? null,
     width_m: size.width,
     height_m: size.height,
     depth_m: size.depth || null,

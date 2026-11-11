@@ -9,7 +9,7 @@ import { OutlinePass } from "three/examples/jsm/postprocessing/OutlinePass.js";
 import { Box3, BufferGeometry, Color, DirectionalLight, Euler, Group, LinearSRGBColorSpace, Matrix4, Mesh, MeshStandardMaterial, NeutralToneMapping, NormalBlending, Object3D, PerspectiveCamera, PMREMGenerator, Quaternion, RepeatWrapping, Scene, Sphere, SRGBColorSpace, Texture, Vector2, Vector3, WebGLRenderer, type Material } from "three";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 import { GLTFExporter } from "three/examples/jsm/exporters/GLTFExporter.js";
-import { measure, normalizeModel, type CatalogSize, type Dimensions, type NormalizationReport } from "@/lib/plan/modelNormalization";
+import { alignLike, measure, normalizeModel, type CatalogSize, type Dimensions, type NormalizationReport } from "@/lib/plan/modelNormalization";
 import type { MaterialEdit, PartDocument, PartEditorApi, PartInfo, PartVariant } from "@/lib/vendor/parts";
 import { fitInto, loadVariant } from "@/lib/vendor/partVariant";
 import { quote } from "@/lib/designs/materials";
@@ -746,6 +746,7 @@ export function authored(root: Object3D): Object3D {
 
 function LoadedModel({
   url,
+  frameUrl,
   dimensions,
   edit,
   server,
@@ -757,6 +758,8 @@ function LoadedModel({
   track,
 }: {
   url: string;
+  /** Another state's file (the closed wardrobe) whose fit this one takes: see alignLike. */
+  frameUrl?: string;
   dimensions: CatalogSize | null;
   edit: boolean;
   server?: PartDocument | null;
@@ -769,6 +772,7 @@ function LoadedModel({
   track: <T>(load: Promise<T>) => Promise<T>;
 }) {
   const { scene } = useGLTF(url);
+  const { scene: frame } = useGLTF(frameUrl ?? url); // the same file (already loaded) when there is no frame
   const gl = useThree((state) => state.gl);
   useEffect(() => {
     maxAnisotropy = gl.capabilities.getMaxAnisotropy();
@@ -777,7 +781,12 @@ function LoadedModel({
   const h = dimensions?.height;
   const d = dimensions?.depth;
   const slotsRef = useRef<Slot[]>([]);
-  const { object, report } = useMemo(() => normalizeModel(scene, w && h ? { width: w, height: h, ...(d ? { depth: d } : {}) } : null, url), [scene, w, h, d, url]);
+  const { object, report } = useMemo(() => {
+    const target = w && h ? { width: w, height: h, ...(d ? { depth: d } : {}) } : null;
+    if (!frameUrl) return normalizeModel(scene, target, url);
+    const reference = normalizeModel(frame, target, frameUrl);
+    return { object: alignLike(scene, reference.object), report: reference.report };
+  }, [scene, frame, frameUrl, w, h, d, url]);
   useEffect(() => onReport(report), [onReport, report]);
   useEffect(() => {
     if (!edit) return;
@@ -811,6 +820,7 @@ function LoadedModel({
 
 export function ModelViewer({
   url,
+  frameUrl,
   dimensions = null,
   edit = false,
   parts: server = null,
@@ -838,6 +848,8 @@ export function ModelViewer({
   partSizes = null,
 }: {
   url: string;
+  /** Show `url` as another state of `frameUrl`'s product (an open wardrobe): placed exactly like that file. */
+  frameUrl?: string;
   dimensions?: CatalogSize | null;
   edit?: boolean;
   parts?: PartDocument | null;
@@ -1284,7 +1296,7 @@ export function ModelViewer({
         <Suspense fallback={null}>
           <Bounds fit clip observe margin={1.25}>
             <group ref={sizer} name={SIZER} scale={factor}>
-              <LoadedModel url={url} dimensions={dimensions} edit={edit} server={server} saved={saved} replay={replay} onReport={onLoaded} onSlots={onSlots} onPick={(id, add) => {
+              <LoadedModel url={url} frameUrl={frameUrl} dimensions={dimensions} edit={edit} server={server} saved={saved} replay={replay} onReport={onLoaded} onSlots={onSlots} onPick={(id, add) => {
                 // Phones: tapping the selected part again while its properties show deselects it and lowers the sheet.
                 if (fill && id === selected && !add && !several && also.size === 0 && sheet !== "peek" && window.matchMedia("(max-width: 1023px)").matches) {
                   pick(null);

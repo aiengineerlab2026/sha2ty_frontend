@@ -11,6 +11,7 @@ import { Header } from "@/components/shatably/Header";
 import { safeHtml } from "@/components/plan/ModelDetails";
 import { tileLabel } from "@/lib/plan/roomMaterials";
 import { ModelViewer } from "@/components/vendor/ModelViewer";
+import { StateToggle } from "@/components/vendor/StateToggle";
 import { PaintSwatch } from "@/components/vendor/PaintLibrary";
 import { fetchCatalogModel } from "@/lib/plan/api";
 import { formatPrice, type PriceUnit } from "@/lib/plan/pricing";
@@ -83,6 +84,7 @@ function ModelView({ model, signedIn }: { model: CatalogModel; signedIn: boolean
   const t = useT();
   const photos = useMemo(() => [...new Set([model.thumbnail, ...(model.variants ?? [])].filter((u): u is string => Boolean(u)))], [model]);
   const [shown, setShown] = useState<"3d" | number>(photos.length || !model.glb_url ? 0 : "3d");
+  const [state, setState] = useState<"closed" | "open">("closed"); // a wardrobe with two states: shown closed first
   const description = useMemo(() => safeHtml(model.description ?? ""), [model.description]);
   const dims = model.width_m && model.height_m ? { width: model.width_m, height: model.height_m, ...(model.depth_m ? { depth: model.depth_m } : {}) } : null;
 
@@ -91,7 +93,16 @@ function ModelView({ model, signedIn }: { model: CatalogModel; signedIn: boolean
       signedIn={signedIn}
       media={
         <div className="space-y-3">
-          {shown === "3d" ? <ModelViewer url={model.glb_url} dimensions={dims} /> : <ImageCarousel images={photos} alt={model.title} className="aspect-4/3 bg-white" />}
+          {shown === "3d" ? (
+            <ModelViewer
+              url={state === "open" && model.open_glb_url ? model.open_glb_url : model.glb_url}
+              frameUrl={state === "open" && model.open_glb_url ? model.glb_url : undefined}
+              dimensions={dims}
+            />
+          ) : (
+            <ImageCarousel images={photos} alt={model.title} className="aspect-4/3 bg-white" />
+          )}
+          {shown === "3d" && model.open_glb_url && <StateToggle value={state} onChange={setState} />}
           {/* Tabs only when there is a choice: photo-only models (no GLB) show just the photos. */}
           {model.glb_url && photos.length > 0 && (
             <div className="flex gap-2" role="tablist" aria-label={t("View")}>

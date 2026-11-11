@@ -264,6 +264,8 @@ export interface CatalogModel {
   height_m: number | null;
   depth_m: number | null;
   glb_url: string;
+  /** A wardrobe's open state (supabase/model_states.sql); glb_url is its closed state. */
+  open_glb_url?: string | null;
   thumbnail: string | null;
   company_id: string;
   company: string;
@@ -292,6 +294,10 @@ export interface PlacedItem {
   title: string;
   company: string;
   glbUrl: string;
+  /** The open state's file of a product with two (a wardrobe); glbUrl is the closed one. */
+  openGlbUrl?: string;
+  /** Which state is shown: closed when absent (a wardrobe is placed closed). Edits are by part id, the same in both. */
+  state?: "open" | "closed";
   width_m: number;
   height_m: number;
   depth_m: number;
