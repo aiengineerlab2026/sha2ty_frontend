@@ -26,7 +26,7 @@ import { categoryLabel, categoryOf, type ModelCategory } from "@/lib/plan/catego
 import type { PriceUnit } from "@/lib/vendor/types";
 import { RichText } from "./RichText";
 import { ModelViewer } from "./ModelViewer";
-import { customizedModelFields, updateModel, type ModelValidation, type PartDocument, type PartEditorApi } from "@/lib/vendor/parts";
+import { customizedModelFields, updateModel, type ModelValidation, type PartDocument, type Swatch, type PartEditorApi } from "@/lib/vendor/parts";
 
 /**
  * cacheComponents keeps this route alive but hidden (React Activity) after leaving it, so coming back would show the
@@ -418,6 +418,27 @@ function ValidationNotice({ validation }: { validation?: ModelValidation }) {
           </li>
         ))}
       </ul>
+      {validation.appearance && !validation.appearance.ok && (
+        <div className="mt-3 grid gap-1.5 text-xs">
+          <Swatches label={t("Photo colours")} swatches={validation.appearance.reference} />
+          <Swatches label={t("Model colours")} swatches={validation.appearance.model} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** One colour scheme as a bar: each colour as wide as its share. */
+function Swatches({ label, swatches }: { label: string; swatches?: Swatch[] }) {
+  if (!swatches?.length) return null;
+  return (
+    <div className="flex items-center gap-2">
+      <span className="w-24 shrink-0">{label}</span>
+      <span className="flex h-4 flex-1 overflow-hidden rounded ring-1 ring-black/10" dir="ltr">
+        {swatches.map((s) => (
+          <span key={s.hex} title={`${s.hex} · ${Math.round(s.share * 100)}%`} style={{ background: s.hex, width: `${s.share * 100}%` }} />
+        ))}
+      </span>
     </div>
   );
 }

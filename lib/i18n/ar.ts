@@ -1121,6 +1121,8 @@ export const AR: Record<string, string> = {
   "Part": "جزء",
   "This model has problems. Check it closely, or generate it again from a clearer photo.": "في هذا الموديل مشاكل. راجعه جيدًا، أو أنشئه من جديد من صورة أوضح.",
   "Worth a check before saving:": "يستحق المراجعة قبل الحفظ:",
+  "Photo colours": "ألوان الصورة",
+  "Model colours": "ألوان الموديل",
   "Frame": "الهيكل",
   "Seat Cushion": "وسادة المقعد",
   "Back Cushion": "وسادة الظهر",
