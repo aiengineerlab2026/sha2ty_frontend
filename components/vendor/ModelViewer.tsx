@@ -403,6 +403,10 @@ export function prepare(root: Object3D, server?: PartDocument | null): { slots: 
   const used = new Set<string>();
   let n = 0;
   let cleaned = false;
+  // The saved part list is matched by mesh name when the file's meshes carry the parts' ids (the procedural wardrobe,
+  // split models); by order only when none do, so one missing or extra mesh never shifts every name after it.
+  const byId = new Map((server?.components ?? []).map((c) => [c.id, c]));
+  const named = meshes.some((mesh) => byId.has(mesh.name));
   for (const mesh of meshes) {
     const list = materials(mesh).map((mat) => mat.clone()); // own copies: edits never reach another mesh
     for (const mat of list) cleaned = clearStaleGlow(mat) || cleaned;
@@ -414,7 +418,7 @@ export function prepare(root: Object3D, server?: PartDocument | null): { slots: 
     if (!basePose.has(mesh)) basePose.set(mesh, { position: mesh.position.clone(), quaternion: mesh.quaternion.clone(), scale: mesh.scale.clone() });
     list.forEach((mat, materialIndex) => {
       if (mat.name === CORE) return; // the sheet's cut edge belongs to the face part
-      const from = server?.components[n];
+      const from = named ? (list.length === 1 ? byId.get(mesh.name) : undefined) : server?.components[n];
       let id = from?.id || mesh.name || `part_${n}`;
       while (used.has(id)) id = `${id}_${n}`;
       used.add(id);

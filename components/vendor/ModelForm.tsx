@@ -26,7 +26,7 @@ import { categoryLabel, categoryOf, type ModelCategory } from "@/lib/plan/catego
 import type { PriceUnit } from "@/lib/vendor/types";
 import { RichText } from "./RichText";
 import { ModelViewer } from "./ModelViewer";
-import { customizedModelFields, updateModel, type PartDocument, type PartEditorApi } from "@/lib/vendor/parts";
+import { customizedModelFields, updateModel, type ModelValidation, type PartDocument, type PartEditorApi } from "@/lib/vendor/parts";
 
 /**
  * cacheComponents keeps this route alive but hidden (React Activity) after leaving it, so coming back would show the
@@ -288,6 +288,7 @@ function ModelFormBody() {
           <p className="mt-2 text-sm text-slate-600">{t("Check the name, description and size written from the photo and correct anything, then save. The 3D model stays as generated.")}</p>
           <form onSubmit={saveReviewed} className="mt-6 space-y-5 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
             {/* The generated model at the size in the fields below: a correction shows here at once. */}
+            <ValidationNotice validation={review.components?.validation} />
             <ModelViewer edit parts={review.components} onApi={(api) => { editor.current = api; }} url={review.glbUrl} dimensions={w && h ? { width: w, height: h, ...(d ? { depth: d } : {}) } : null} />
             <div className="space-y-1.5">
               <Label htmlFor="review-title">{t("Name")}</Label>
@@ -401,3 +402,22 @@ function TriesLeft({ n }: { n: number | undefined }) {
 }
 
 const escapeHtml = (text: string) => text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+/** The generated model's check: problems are shown before saving, never hidden behind a success. */
+function ValidationNotice({ validation }: { validation?: ModelValidation }) {
+  const t = useT();
+  if (!validation || (validation.ok && !validation.warnings.length)) return null;
+  const bad = !validation.ok;
+  return (
+    <div role={bad ? "alert" : "status"} className={`rounded-xl border px-4 py-3 text-sm ${bad ? "border-red-200 bg-red-50 text-red-800" : "border-amber-200 bg-amber-50 text-amber-900"}`}>
+      <p className="font-semibold">{bad ? t("This model has problems. Check it closely, or generate it again from a clearer photo.") : t("Worth a check before saving:")}</p>
+      <ul className="mt-1 list-disc ps-5">
+        {[...validation.errors, ...validation.warnings].map((line) => (
+          <li key={line}>
+            <bdi>{line}</bdi>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
