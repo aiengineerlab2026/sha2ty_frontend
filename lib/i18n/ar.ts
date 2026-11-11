@@ -1119,6 +1119,8 @@ export const AR: Record<string, string> = {
   "Repeat Y": "التكرار رأسيًا",
   "This part's texture layout cannot tile a pattern, so the pattern is projected onto its front, sides and top.": "توزيع الخامة في هذا الجزء لا يسمح بتكرار النقشة، لذلك تُسقَط النقشة على واجهته وجانبيه وأعلاه.",
   "Part": "جزء",
+  "This model has problems. Check it closely, or generate it again from a clearer photo.": "في هذا الموديل مشاكل. راجعه جيدًا، أو أنشئه من جديد من صورة أوضح.",
+  "Worth a check before saving:": "يستحق المراجعة قبل الحفظ:",
   "Frame": "الهيكل",
   "Seat Cushion": "وسادة المقعد",
   "Back Cushion": "وسادة الظهر",

@@ -8,7 +8,9 @@ import type { PartMaterial } from "@/lib/designs/materials";
  * space when a customer picks it. `price_delta`: what it adds to (or takes off) the price, in EGP. */
 export type PartVariant = { id: string; name: string; glb_url: string; price_delta?: number | null };
 export type PartInfo = { id: string; name: string; editable: boolean; naming?: "file" | "geometry" | "ai" | "unidentified" | "vendor"; variants?: PartVariant[] };
-export type PartDocument = { modelType?: string; separated?: boolean; components: PartInfo[]; limits?: string | null };
+/** The backend's check before saving (services/model_check.py): errors are visible damage, warnings worth a look. */
+export type ModelValidation = { ok: boolean; errors: string[]; warnings: string[]; parts: number };
+export type PartDocument = { modelType?: string; separated?: boolean; components: PartInfo[]; limits?: string | null; method?: string; validation?: ModelValidation };
 export type MaterialEdit = {
   color?: string;
   mapUrl?: string | null;

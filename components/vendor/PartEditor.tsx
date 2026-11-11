@@ -5,13 +5,17 @@ import { useState, type ReactNode } from "react";
 import { MaterialPicker } from "./MaterialPicker";
 import { ChevronDown, MousePointerClick, Pencil, Redo2, RotateCcw, Search, Trash2, Undo2 } from "lucide-react";
 import type { MaterialEdit, PartInfo } from "@/lib/vendor/parts";
+import { meshNameAr } from "@/lib/vendor/meshNames";
 
 /** "Seat Cushion 2" → "وسادة المقعد 2": the part word is translated, the number kept. Vendor names show as typed. */
 export function partLabel(t: T, name: string): string {
   const match = /^(.*?)(?:\s+(\d+))?$/.exec(name);
   const base = match?.[1] || name;
-  return match?.[2] ? `${t(base)} ${match[2]}` : t(base);
+  const label = match?.[2] ? `${t(base)} ${match[2]}` : t(base);
+  // In Arabic, mesh names from the file ("Door_Right", "frame_left_side") are worded from their parts.
+  return label === name && t("Part") === "جزء" ? (meshNameAr(name) ?? name) : label;
 }
+
 
 export function PartList({
   parts,
