@@ -6,7 +6,7 @@ import { setLocale, useLocale, useT } from "@/lib/i18n";
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Check, ChevronDown, LayoutGrid, LogOut, Menu, PackageCheck, PencilRuler, Plus, Settings, Shapes, Shield, ShoppingBag } from "lucide-react";
+import { Check, ChevronDown, LogOut, Menu, PackageCheck, Shapes, Shield } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { getUser, logout, onAuthChange, type AuthUser } from "@/lib/auth/client";
 import type { VendorProfile } from "@/lib/vendor/types";
@@ -20,21 +20,7 @@ type NavItem = { href: string; label: string };
 /** "Get the app" opens the install popup (QR code + download link) instead of navigating. */
 const GET_APP = "#get-app";
 
-/** Vendors manage their own items in the studio. */
-const STUDIO_NAV: NavItem[] = [
-  { href: "/vendor", label: "Models" },
-  { href: "/vendor/paints", label: "Paints" },
-  ...(CARPETS_ENABLED ? [{ href: "/vendor/carpets", label: "Carpets" }] : []),
-  { href: "/vendor/fabrics", label: "Fabrics" },
-  { href: "/vendor/woods", label: "Woods" },
-  { href: "/vendor/furniture-paints", label: "Furniture paints" },
-  ...(WINDOWS_ENABLED ? [{ href: "/vendor/windows", label: "Windows" }] : []),
-  { href: "/plan", label: "Plan" },
-  { href: "/vendor/tasks", label: "Requests" },
-  { href: GET_APP, label: "Get the app" },
-];
-
-/** Everyone else (guests, customers) browses the public catalogue. */
+/** One header for everyone (guests, customers, vendors): the public catalogue. */
 const CATALOG_NAV: NavItem[] = [
   { href: "/catalog/models", label: "Models" },
   { href: "/catalog/paints", label: "Paints" },
@@ -45,7 +31,7 @@ const CATALOG_NAV: NavItem[] = [
   { href: GET_APP, label: "Get the app" },
 ];
 
-/** The most specific nav entry containing the path (/vendor/paints is Paints, not Models). */
+/** The most specific nav entry containing the path (/catalog/models/x is Models). */
 function activeHref(pathname: string, nav: NavItem[]) {
   if (/^\/vendor\/(login|signup|reset-password)/.test(pathname)) return null;
   const hits = nav.filter((item) => pathname === item.href || pathname.startsWith(`${item.href}/`));
@@ -53,16 +39,16 @@ function activeHref(pathname: string, nav: NavItem[]) {
 }
 
 /** Full-width app bar: brand · navigation + page actions · account. `actions` is the page's own toolbar. */
-export function Header({ vendor, actions }: { vendor?: VendorProfile | null; actions?: ReactNode }) {
+// ponytail: `vendor` kept so callers compile; the header is the same for everyone now.
+export function Header({ actions }: { vendor?: VendorProfile | null; actions?: ReactNode }) {
   const t = useT();
   const router = useRouter();
   const pathname = usePathname();
   const [getApp, setGetApp] = useState(false);
-  // Signed in without a vendor profile: a customer (or a vendor page still loading its profile).
+  // Anyone signed in (customer or vendor).
   const [user, setUser] = useState<AuthUser | null>(null);
   // Requests are a signed-in feature: guests do not see the link (the page itself asks them to log in).
-  // Furniture paints are the vendors' alone: the Sha2ty account (admins) has no library of them.
-  const nav = vendor ? STUDIO_NAV.filter((item) => !(vendor.platform && item.href === "/vendor/furniture-paints")) : CATALOG_NAV.filter((item) => user || item.href !== "/tasks");
+  const nav = CATALOG_NAV.filter((item) => user || item.href !== "/tasks");
   const current = activeHref(pathname, nav);
   // The links show whenever they fit beside the brand and the account controls (measured, so a desktop never gets the
   // menu button for links that would fit); the menu button only when they do not. With page actions (the plan
@@ -109,7 +95,7 @@ export function Header({ vendor, actions }: { vendor?: VendorProfile | null; act
         {/* With page actions (the plan editor) the links collapse into the menu until 2xl, so the
             document title and its save badge keep their room. */}
         <AppDownloadDialog open={getApp} onOpenChange={setGetApp} />
-        <Link href={vendor ? "/vendor" : "/"} className="flex shrink-0 items-center" aria-label={t("sha2ty home")}>
+        <Link href="/" className="flex shrink-0 items-center" aria-label={t("sha2ty home")}>
           {/* Phones: the mark alone, so page actions (plan title, Save) keep their room. */}
           <span className="sm:hidden">
             <LogoMark size={34} />
@@ -122,7 +108,7 @@ export function Header({ vendor, actions }: { vendor?: VendorProfile | null; act
         {/* The links show only when the space left by the brand and the account controls fits them all (a container
             query on this nav, so a longer studio nav or a wider account area never overlaps); otherwise the menu. */}
         <nav ref={navRef} className="relative flex h-full min-w-9 flex-1 items-center gap-4 xl:gap-6" aria-label={t("Main")}>
-          {(actions || !fits) && <MobileNav nav={nav} current={current} signedIn={Boolean(vendor)} admin={admin} wideOnly={Boolean(actions)} onGetApp={() => setGetApp(true)} />}
+          {(actions || !fits) && <MobileNav nav={nav} current={current} signedIn={Boolean(user)} admin={admin} wideOnly={Boolean(actions)} onGetApp={() => setGetApp(true)} />}
           {/* Kept laid out when hidden (invisible): its natural width is what is measured. */}
           <ul ref={linksRef} aria-hidden={!actions && !fits ? true : undefined} className={`h-full shrink-0 items-center gap-1 whitespace-nowrap ${showLinks}`}>
             {nav.map((item) => {
@@ -164,32 +150,20 @@ export function Header({ vendor, actions }: { vendor?: VendorProfile | null; act
               <span className="sr-only sm:not-sr-only">{t("Admin")}</span>
             </Link>
           )}
-          {vendor && (
-            <Link
-              href="/vendor/new"
-              className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-brand-amber px-2.5 font-semibold text-brand-navy shadow-sm shadow-brand-amber/30 sm:px-3.5 transition hover:-translate-y-px hover:bg-[#e8952a] hover:shadow-md active:translate-y-0"
-            >
-              <Plus className="size-4" aria-hidden />
-              <span className="hidden sm:inline">{t("Add model")}</span>
-            </Link>
-          )}
           <LanguageSwitch />
           {user && <NotificationBell me={user.id} />}
-          {(vendor || user) && (
+          {user && (
             <Link
               href="/designs"
               title={t("My designs")}
-              // Phones: in the vendor's account menu instead, so the bar fits.
-              className={`${vendor ? "hidden sm:inline-flex" : "inline-flex"} h-9 items-center gap-1.5 rounded-lg px-2.5 font-medium text-slate-600 transition-colors hover:bg-slate-50 hover:text-brand-navy`}
+              className={`inline-flex h-9 items-center gap-1.5 rounded-lg px-2.5 font-medium text-slate-600 transition-colors hover:bg-slate-50 hover:text-brand-navy`}
             >
               <Shapes className="size-4" aria-hidden />
               <span className="sr-only 2xl:not-sr-only">{t("My designs")}</span>
             </Link>
           )}
           <CartMenu />
-          {vendor ? (
-            <ProfileMenu vendor={vendor} onSignOut={() => void signOut()} />
-          ) : user ? (
+          {user ? (
             <>
               <Link
                 href="/orders"
@@ -225,79 +199,6 @@ export function Header({ vendor, actions }: { vendor?: VendorProfile | null; act
         </div>
       </div>
     </header>
-  );
-}
-
-function Avatar({ vendor, size = "size-8" }: { vendor: VendorProfile; size?: string }) {
-  return vendor.logo_url ? (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img src={vendor.logo_url} alt="" className={`${size} shrink-0 rounded-full bg-white object-cover ring-1 ring-slate-200`} />
-  ) : (
-    <span className={`flex ${size} shrink-0 items-center justify-center rounded-full bg-brand-navy text-xs font-semibold text-white`}>{vendor.name.slice(0, 1).toUpperCase()}</span>
-  );
-}
-
-/** One row of the account menu: roomy, rounded, a soft tint on hover / keyboard focus. */
-const MENU_ITEM = "cursor-pointer gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-slate-700 focus:bg-slate-100 focus:text-slate-900";
-
-/** Account cluster: avatar + name opens a menu with the studio's pages, settings and log out. */
-function ProfileMenu({ vendor, onSignOut }: { vendor: VendorProfile; onSignOut: () => void }) {
-  const t = useT();
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <button
-          type="button"
-          className="flex h-9 items-center gap-2 rounded-lg border border-transparent ps-1 pe-2 transition-colors hover:border-slate-200 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-amber/40 data-[state=open]:border-slate-200 data-[state=open]:bg-slate-50"
-          aria-label={t("Account menu for {name}", { name: vendor.name })}
-        >
-          <Avatar vendor={vendor} size="size-7" />
-          <span className="hidden max-w-36 truncate font-medium text-slate-700 2xl:inline">{vendor.name}</span>
-          <ChevronDown className="size-3.5 text-slate-400" aria-hidden />
-        </button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" sideOffset={8} className="w-72 overflow-hidden rounded-xl border border-slate-200/80 bg-white p-0 shadow-xl ring-0">
-        {/* Who is signed in: avatar, studio name, then the account email (or the location) muted. */}
-        <DropdownMenuLabel className="flex items-center gap-3 px-4 py-3.5 font-normal">
-          <Avatar vendor={vendor} size="size-10" />
-          <span className="min-w-0 flex-1 text-start">
-            <span className="block truncate text-sm font-semibold leading-5 text-slate-900">{vendor.name}</span>
-            {(vendor.email || vendor.location) && (
-              <span className="block truncate text-xs leading-4 text-slate-500">
-                {/* An LTR email keeps its own order inside an RTL line. */}
-                <bdi>{vendor.email || vendor.location}</bdi>
-              </span>
-            )}
-          </span>
-        </DropdownMenuLabel>
-        <DropdownMenuSeparator className="m-0 bg-slate-100" />
-        <div className="p-1.5">
-          {(
-            [
-              ["/vendor", "My models", LayoutGrid],
-              ["/designs", "My designs", Shapes],
-              ["/orders", "Bought items", ShoppingBag],
-              ["/plan", "Plan builder", PencilRuler],
-              ["/vendor/settings", "Settings", Settings],
-            ] as const
-          ).map(([href, label, Icon]) => (
-            <DropdownMenuItem key={href} asChild className={MENU_ITEM}>
-              <Link href={href}>
-                <Icon className="size-4 shrink-0 text-slate-500" strokeWidth={1.75} aria-hidden />
-                {t(label)}
-              </Link>
-            </DropdownMenuItem>
-          ))}
-        </div>
-        <DropdownMenuSeparator className="m-0 bg-slate-100" />
-        <div className="p-1.5">
-          <DropdownMenuItem onSelect={onSignOut} className={`${MENU_ITEM} text-red-600 focus:bg-red-50 focus:text-red-700`}>
-            <LogOut className="size-4 shrink-0" strokeWidth={1.75} aria-hidden />
-            {t("Log out")}
-          </DropdownMenuItem>
-        </div>
-      </DropdownMenuContent>
-    </DropdownMenu>
   );
 }
 
