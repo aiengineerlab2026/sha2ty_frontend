@@ -4,7 +4,7 @@ import { tilted } from "@/lib/plan/placementValidation";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Box3, Color, Group, Mesh, Vector3, type Object3D } from "three";
 import { Edges, Html, useGLTF } from "@react-three/drei";
-import { normalizeModel, type Dimensions, type NormalizationReport } from "@/lib/plan/modelNormalization";
+import { alignLike, normalizeModel, type Dimensions, type NormalizationReport } from "@/lib/plan/modelNormalization";
 import type { PlacedItem } from "@/lib/plan/types";
 import type { PartInfo } from "@/lib/vendor/parts";
 import { applyPoses, DRAG, partBox, prepare, replayEdits, reseat, SelectionOutline, slotHit, type Slot } from "@/components/vendor/ModelViewer";
@@ -46,10 +46,15 @@ export function FurnitureObject({
 
   // Normalisation depends only on the source and the catalogue size — never on the item's
   // position, rotation, the room or the camera — so dragging/rotating cannot change scale.
-  const { object, report } = useMemo(
+  const { object: closed, report } = useMemo(
     () => normalizeModel(scene, { width: item.width_m, height: item.height_m, ...(item.depth_m > 0 ? { depth: item.depth_m } : {}) }, item.modelId),
     [scene, item.width_m, item.height_m, item.depth_m, item.modelId],
   );
+  // The open state (a wardrobe): its own file, placed exactly like the closed one (same scale, rotation, origin), so
+  // switching never moves or resizes the item. Edits and part poses are by part id, the same in both states.
+  const open = item.state === "open" && item.openGlbUrl ? item.openGlbUrl : null;
+  const { scene: openScene } = useGLTF(open ?? item.glbUrl); // the closed file again (cached) when closed
+  const object = useMemo(() => (open ? alignLike(openScene, closed) : closed), [open, openScene, closed]);
 
   useEffect(() => {
     onNormalized?.(report);
@@ -86,14 +91,15 @@ export function FurnitureObject({
         const box = partBox(slot);
         areas[slot.id] = 2 * (box.width * box.height + box.width * box.depth + box.height * box.depth);
       }
-      onMeasured?.(item.instanceId, size, areas);
+      // The footprint is the closed one: opening doors for a look does not move furniture around it.
+      if (!open) onMeasured?.(item.instanceId, size, areas);
     });
     return () => {
       cancel = true;
     };
     // onParts / onMeasured are stable; item.instanceId does not change for this object
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [custom, object, item.materialEdits, item.partPoses, item.removedParts]);
+  }, [custom, object, open, item.materialEdits, item.partPoses, item.removedParts]);
 
   // eslint-disable-next-line react-hooks/refs -- slots is filled once the GLB loads; slotRev re-renders when it changes
   const picked = editing ? slots.current.find((slot) => slot.id === partId)?.mesh ?? null : null;

@@ -127,6 +127,31 @@ export function normalizeModel(source: Object3D, target: CatalogSize | null, mod
   return { object: wrapper, report };
 }
 
+/** Another state of the same product (an open wardrobe) placed with exactly the transform `reference` got from
+ * normalizeModel: never fitted to its own box, which open doors make wider and deeper, so it keeps the closed
+ * model's scale, orientation and origin and lines up with it (both states are built on the same origin). */
+export function alignLike(source: Object3D, reference: Group): Group {
+  const refOrient = reference.getObjectByName("orient");
+  const refFit = reference.getObjectByName("fit");
+  const model = source.clone(true);
+  const orient = new Group();
+  orient.name = "orient";
+  const fit = new Group();
+  fit.name = "fit";
+  const wrapper = new Group();
+  wrapper.name = "normalized-model";
+  orient.add(model);
+  fit.add(orient);
+  wrapper.add(fit);
+  if (refOrient) orient.quaternion.copy(refOrient.quaternion);
+  if (refFit) {
+    fit.scale.copy(refFit.scale);
+    fit.position.copy(refFit.position);
+  }
+  wrapper.userData.normalization = reference.userData.normalization;
+  return wrapper;
+}
+
 /** World-space axis-aligned size of an object, including all nested transforms. */
 export function measure(object: Object3D): Dimensions {
   const size = worldBox(object).getSize(new Vector3());

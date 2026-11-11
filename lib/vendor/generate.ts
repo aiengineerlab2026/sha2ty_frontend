@@ -1,6 +1,6 @@
 import { apiFetch } from "@/lib/api";
 import type { PartDocument } from "./parts";
-import type { ModelProvider } from "./types";
+import type { ModelProvider, ModelStates } from "./types";
 
 import { publish } from "@/lib/events";
 
@@ -25,13 +25,16 @@ export async function generateFromPhoto(
   imageUrl?: string,
   /** What to extract (catalogue category, product title, furniture type); the backend builds the Meshy / Astra prompt. */
   subject?: { category: string; title: string; kind?: string; lang?: "ar" | "en" },
-): Promise<{ glbUrl: string; reading: PhotoReading | null; components: PartDocument | null; sourceGlbUrl: string | null }> {
+  /** A wardrobe with open and closed states: the photo of it open (`file` is the closed one). */
+  openFile?: File,
+): Promise<{ glbUrl: string; reading: PhotoReading | null; components: PartDocument | null; sourceGlbUrl: string | null; states: ModelStates | null }> {
   const body = new FormData();
   body.append("image", file);
   body.append("provider", provider);
   body.append("model_id", modelId);
   body.append("should_texture", "true");
   if (imageUrl) body.append("image_url", imageUrl);
+  if (openFile) body.append("open_image", openFile);
   if (subject) {
     body.append("category", subject.category);
     body.append("title", subject.title);
@@ -62,7 +65,7 @@ export async function generateFromPhoto(
     : null;
   if (json.glb_url) {
     onProgress?.({ percent: 100, status: "Conversion complete" });
-    return { glbUrl: json.glb_url as string, reading, components: (json.components as PartDocument) ?? null, sourceGlbUrl: (json.source_glb_url as string) ?? null };
+    return { glbUrl: json.glb_url as string, reading, components: (json.components as PartDocument) ?? null, sourceGlbUrl: (json.source_glb_url as string) ?? null, states: statesFrom(json.states) };
   }
 
   const taskId = json.task_id as string;
@@ -79,7 +82,7 @@ export async function generateFromPhoto(
     if (task.status === "SUCCEEDED" && task.glb_url) {
       onProgress?.({ percent: 100, status: "Saving model to CDN…" });
       // glb_url is the split (modular) model when the backend could separate parts; source_glb_url the untouched one.
-      return { glbUrl: task.glb_url as string, reading, components: (task.components as PartDocument) ?? null, sourceGlbUrl: (task.source_glb_url as string) ?? null };
+      return { glbUrl: task.glb_url as string, reading, components: (task.components as PartDocument) ?? null, sourceGlbUrl: (task.source_glb_url as string) ?? null, states: null };
     }
     if (task.status === "FAILED" || task.status === "CANCELED") {
       throw new Error(task.error || "Generation failed.");
@@ -87,6 +90,22 @@ export async function generateFromPhoto(
     await wait(task.retry_after_seconds ? Number(task.retry_after_seconds) * 1000 : 4000);
   }
   throw new Error("Generation timed out. Try again.");
+}
+
+function statesFrom(raw: unknown): ModelStates | null {
+  const open = (raw as { open?: { glb_url?: string; components?: PartDocument } } | null)?.open;
+  return open?.glb_url ? { open: { glb_url: open.glb_url, components: open.components ?? null } } : null;
+}
+
+/** One photo showing a wardrobe both closed and open, cut into its two photos by the vision model (no try used). */
+export async function splitStates(file: File): Promise<{ closed: File; open: File }> {
+  const body = new FormData();
+  body.append("image", file);
+  const res = await apiFetch(`/api/vendor/split-states`, { method: "POST", body });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(detail(json) || `Could not split the photo (${res.status}).`);
+  const toFile = async (dataUrl: string, name: string) => new File([await (await fetch(dataUrl)).blob()], name, { type: "image/jpeg" });
+  return { closed: await toFile(json.closed, "closed.jpg"), open: await toFile(json.open, "open.jpg") };
 }
 
 /** Generation tries left per provider for the signed-in vendor, and the generator in use (the admin's choice), or

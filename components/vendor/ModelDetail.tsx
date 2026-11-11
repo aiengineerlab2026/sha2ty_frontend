@@ -18,7 +18,8 @@ import { CategoryPicker } from "./CategoryPicker";
 import { VariantsEditor } from "./VariantsEditor";
 import { ShapeField, type ModelShape } from "./ShapeField";
 import { categoryOf, type ModelCategory } from "@/lib/plan/categories";
-import type { PriceUnit } from "@/lib/vendor/types";
+import type { ModelStateName, ModelStates, PriceUnit } from "@/lib/vendor/types";
+import { StateToggle } from "./StateToggle";
 import { RichText } from "./RichText";
 import { catalogDimensions } from "@/lib/plan/modelNormalization";
 import { customizedModelFields, updateModel, type PartEditorApi } from "@/lib/vendor/parts";
@@ -58,6 +59,46 @@ export function ModelDetail({ id }: { id: string }) {
   const editor = useRef<PartEditorApi | null>(null);
   // A new 3D file uploaded but not saved yet: Save puts it on the listing (a fresh part list, look and picture).
   const [replaced, setReplaced] = useState<string | null>(null);
+  // A wardrobe with two states (supabase/model_states.sql): the one being edited. Each keeps its own edits and file.
+  const [shownState, setShownState] = useState<ModelStateName>("closed");
+  const openState = model?.states?.open ?? null;
+  const showingOpen = shownState === "open" && Boolean(openState);
+
+  /** The open state's edits exported into its own file (no thumbnail: the product's picture is its closed state). */
+  const openFields = async (): Promise<ModelStates | null> => {
+    if (!openState || !editor.current || !vendor || !model) return null;
+    const { fields } = await customizedModelFields(vendor.id, `${model.id}/open`, openState.glb_url, null, editor.current, 1, false);
+    return { open: { ...openState, glb_url: fields.glb_url ?? openState.glb_url, components: fields.components ?? openState.components, material_edits: fields.material_edits } };
+  };
+
+  /** Open ⇄ closed. Unsaved edits are saved first (the state's own file), so switching never loses them. */
+  const switchState = async (next: ModelStateName) => {
+    if (!model || !vendor) return;
+    if (editor.current?.dirty()) {
+      setBusy(true);
+      setError(null);
+      try {
+        if (showingOpen) {
+          const states = await openFields();
+          const updated = await updateModel(model.id, { states });
+          if (updated.error) throw new Error(updated.error.message);
+          setModel({ ...model, states });
+        } else if (model.glb_url) {
+          const { fields } = await customizedModelFields(vendor.id, model.id, model.glb_url, model.source_glb_url ?? null, editor.current, model.version ?? 1);
+          const updated = await updateModel(model.id, fields);
+          if (updated.error) throw new Error(updated.error.message);
+          setModel({ ...model, ...fields } as CatalogModel);
+        }
+        editor.current.markClean?.();
+      } catch (caught) {
+        setError(caught instanceof Error ? caught.message : String(caught));
+        return;
+      } finally {
+        setBusy(false);
+      }
+    }
+    setShownState(next);
+  };
   const [fileKey, setFileKey] = useState(0); // the viewer starts over on a new file
 
   useEffect(() => {
@@ -104,7 +145,9 @@ export function ModelDetail({ id }: { id: string }) {
     setError(null);
     setSaved(false);
     try {
-      const materials = editor.current && vendor && model.glb_url
+      // The open state on screen: its edits go into its own file; the closed one was saved when the vendor left it.
+      const states = showingOpen ? await openFields() : null;
+      const materials = !showingOpen && editor.current && vendor && model.glb_url
         ? await customizedModelFields(vendor.id, model.id, replaced ?? model.glb_url, replaced ? null : model.source_glb_url ?? null, editor.current, model.version ?? 1)
         : null;
       // Customers' designs keep the file they started from (their design stores it); new ones start from this file.
@@ -123,6 +166,7 @@ export function ModelDetail({ id }: { id: string }) {
           updated_at: new Date().toISOString(),
           ...newFile,
           ...(materials?.fields ?? {}),
+          ...(states ? { states } : {}),
           // Only when changed: saving keeps working before woods.sql adds the column.
           // Sha2ty's models are offered in every wood (an earlier pick is cleared); a vendor's keep their choice.
           ...(vendor?.platform ? (model.woods != null ? { woods: null } : {}) : JSON.stringify(woods) !== JSON.stringify(model.woods ?? null) ? { woods } : {}),
@@ -131,7 +175,7 @@ export function ModelDetail({ id }: { id: string }) {
         setError(updated.error.message);
         return;
       }
-      setModel({ ...model, ...newFile, ...(materials?.fields ?? {}), woods: vendor?.platform ? null : woods, title: title.trim() || model.title } as CatalogModel);
+      setModel({ ...model, ...newFile, ...(materials?.fields ?? {}), ...(states ? { states } : {}), woods: vendor?.platform ? null : woods, title: title.trim() || model.title } as CatalogModel);
       setReplaced(null);
       if (materials?.thumbnailError) {
         setError(t("Saved, but the model image could not be updated ({error}). The previous image is kept; save again to retry.", { error: materials.thumbnailError }));
@@ -236,11 +280,13 @@ export function ModelDetail({ id }: { id: string }) {
           edit
           fill
           details={form}
-          parts={replaced ? null : model.components}
-          edits={replaced ? {} : model.material_edits}
-          replay={Boolean(replaced) || !model.source_glb_url || model.source_glb_url === model.glb_url}
+          parts={showingOpen ? openState!.components ?? null : replaced ? null : model.components}
+          edits={showingOpen ? null : replaced ? {} : model.material_edits}
+          replay={!showingOpen && (Boolean(replaced) || !model.source_glb_url || model.source_glb_url === model.glb_url)}
           onApi={(api) => { editor.current = api; }}
-          url={replaced ?? model.glb_url}
+          // One viewer for both states: the camera stays put; the open file is placed exactly like the closed one.
+          url={showingOpen ? openState!.glb_url : replaced ?? model.glb_url}
+          frameUrl={showingOpen ? model.glb_url : undefined}
           woodVendor={vendor?.platform ? null : vendor?.id}
           woodModel={model.id}
           // Other shapes for a part, offered to customers (saved in the part list with the model).
@@ -253,6 +299,11 @@ export function ModelDetail({ id }: { id: string }) {
           }
           overlay={
             <>
+              {openState && !replaced && (
+                <div className="absolute start-3 top-3 z-10">
+                  <StateToggle value={shownState} onChange={(next) => void switchState(next)} disabled={busy} className="shadow-sm" />
+                </div>
+              )}
               {size.every((x) => x != null && x > 0) && (
                 <div className="pointer-events-none absolute inset-x-0 top-3 flex justify-center">
                   <span className="rounded-full border border-white/70 bg-white/90 px-2.5 py-0.5 text-[11px] font-medium tabular-nums sm:px-3 sm:py-1 sm:text-xs text-brand-navy shadow-sm backdrop-blur">

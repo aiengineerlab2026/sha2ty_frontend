@@ -11,7 +11,7 @@ import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
 import { supabase, supabaseConfigured } from "@/lib/supabase/client";
 import { on } from "@/lib/events";
-import { fetchGenerationQuota, generateFromPhoto, type PhotoReading } from "@/lib/vendor/generate";
+import { fetchGenerationQuota, generateFromPhoto, splitStates, type PhotoReading } from "@/lib/vendor/generate";
 import { glbSize } from "@/lib/vendor/glbSize";
 import { uploadPublicFile } from "@/lib/vendor/storage";
 import type { ModelProvider, ModelSource, VendorProfile } from "@/lib/vendor/types";
@@ -23,7 +23,8 @@ import { CategoryPicker } from "./CategoryPicker";
 import { WoodsField } from "./WoodsField";
 import { ShapeField, type ModelShape } from "./ShapeField";
 import { categoryLabel, categoryOf, type ModelCategory } from "@/lib/plan/categories";
-import type { PriceUnit } from "@/lib/vendor/types";
+import type { ModelStateName, ModelStates, PriceUnit } from "@/lib/vendor/types";
+import { StateToggle } from "./StateToggle";
 import { RichText } from "./RichText";
 import { ModelViewer } from "./ModelViewer";
 import { customizedModelFields, updateModel, type ModelValidation, type PartDocument, type Swatch, type PartEditorApi } from "@/lib/vendor/parts";
@@ -87,8 +88,70 @@ function ModelFormBody() {
   const [progressPercent, setProgressPercent] = useState(0);
   const [quota, setQuota] = useState<Record<ModelProvider, number> | null>(null);
   /** The generated model awaiting the vendor's check (saved as a draft): its id and 3D file. */
-  const [review, setReview] = useState<{ id: string; glbUrl: string; sourceGlbUrl: string | null; components: PartDocument | null } | null>(null);
+  const [review, setReview] = useState<{ id: string; glbUrl: string; sourceGlbUrl: string | null; components: PartDocument | null; states: ModelStates | null } | null>(null);
   const editor = useRef<PartEditorApi | null>(null);
+  // A wardrobe with an open and a closed state (supabase/model_states.sql): null until the vendor answers.
+  const [twoStates, setTwoStates] = useState<boolean | null>(null);
+  const [combined, setCombined] = useState(false); // one photo showing both, cut in two by the vision model
+  const [both, setBoth] = useState<File | null>(null);
+  const [openPhoto, setOpenPhoto] = useState<File | null>(null);
+  const [splitting, setSplitting] = useState(false);
+  const [shown, setShown] = useState<ModelStateName>("closed"); // the state on screen in the review
+  const withStates = category === "wardrobe" && source === "photo" && twoStates === true;
+  const updateRow = (id: string, row: Record<string, unknown>) => (mine ? supabase().from("user_models").update(row).eq("id", id) : updateModel(id, row));
+
+  const chooseBoth = async (file: File | null) => {
+    setBoth(file);
+    if (!file) return;
+    setSplitting(true);
+    setError(null);
+    try {
+      const parts = await splitStates(file);
+      setPhoto(parts.closed);
+      setOpenPhoto(parts.open);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setSplitting(false);
+    }
+  };
+
+  /** The state on screen with its edits saved into its own file (each state keeps its own edits). */
+  const persistShown = async (current: NonNullable<typeof review>) => {
+    if (!editor.current || !ownerId) return current;
+    if (shown === "closed") {
+      const { fields } = await customizedModelFields(ownerId, current.id, current.glbUrl, current.sourceGlbUrl, editor.current);
+      const updated = await updateRow(current.id, fields);
+      if (updated.error) throw new Error(updated.error.message);
+      return { ...current, glbUrl: fields.glb_url ?? current.glbUrl, sourceGlbUrl: fields.source_glb_url ?? current.sourceGlbUrl, components: fields.components ?? current.components };
+    }
+    const open = current.states?.open;
+    if (!open) return current;
+    const { fields } = await customizedModelFields(ownerId, `${current.id}/open`, open.glb_url, null, editor.current, 1, false);
+    const states: ModelStates = { open: { ...open, glb_url: fields.glb_url ?? open.glb_url, components: fields.components ?? open.components, material_edits: fields.material_edits } };
+    const updated = await updateRow(current.id, { states });
+    if (updated.error) throw new Error(updated.error.message);
+    return { ...current, states };
+  };
+
+  /** Open ⇄ closed: unsaved edits of the state on screen are saved first, so switching never loses them. */
+  const switchState = async (next: ModelStateName) => {
+    if (!review) return;
+    if (editor.current?.dirty()) {
+      setBusy(true);
+      setError(null);
+      try {
+        setReview(await persistShown(review));
+        editor.current.markClean?.();
+      } catch (caught) {
+        setError(caught instanceof Error ? caught.message : String(caught));
+        return;
+      } finally {
+        setBusy(false);
+      }
+    }
+    setShown(next);
+  };
   const refreshQuota = () =>
     void fetchGenerationQuota().then((q) => {
       setQuota(q?.remaining ?? null);
@@ -183,6 +246,7 @@ function ModelFormBody() {
       let components: PartDocument | null = null;
       let sourceGlbUrl: string | null = null;
       let estimated: PhotoReading | null = null;
+      let states: ModelStates | null = null;
       if (photo) {
         setProgressLabel(t("Uploading photo…"));
         setProgressPercent(6);
@@ -196,9 +260,10 @@ function ModelFormBody() {
         setProgressPercent(100);
         setProgressLabel(t("Upload complete"));
       } else {
-        if (!photo) throw new Error(t("Choose a photo to generate from."));
+        if (!photo) throw new Error(t(withStates ? "Add the photo of the wardrobe closed." : "Choose a photo to generate from."));
+        if (withStates && !openPhoto) throw new Error(t("Add the photo of the wardrobe open, or answer No."));
         if (quota && quota[provider] <= 0) throw new Error(t("No 3D generations left on this account."));
-        ({ glbUrl, reading: estimated, components, sourceGlbUrl } = await generateFromPhoto(
+        ({ glbUrl, reading: estimated, components, sourceGlbUrl, states } = await generateFromPhoto(
           photo,
           provider,
           id,
@@ -208,7 +273,13 @@ function ModelFormBody() {
           },
           sourceImageUrl ?? undefined,
           { category, title, kind: category === "furniture" ? kind.trim() : undefined, lang: locale === "ar" ? "ar" : "en" },
+          withStates ? openPhoto ?? undefined : undefined,
         ));
+        if (withStates) {
+          if (!states?.open) throw new Error(t("The open state could not be made. Check both photos and try again."));
+          setProgressLabel(t("Uploading photo…"));
+          states = { open: { ...states.open, source_image_url: await uploadPublicFile(ownerId, openPhoto!, `${id}/photo-open`) } };
+        }
       }
 
       const variantUrls: { model_id: string; image_url: string; sort_order: number }[] = [];
@@ -225,7 +296,8 @@ function ModelFormBody() {
 
       // Kept as a draft (not in the catalogue) until the vendor confirms the details below: the 3D file and
       // photo are saved now, so leaving the page loses nothing.
-      const draft = await supabase().from(table).update({ status: "draft", glb_url: glbUrl, source_image_url: sourceImageUrl, components, source_glb_url: sourceGlbUrl, error: null }).eq("id", id);
+      // `states` only when there are two: single-state models never need supabase/model_states.sql.
+      const draft = await supabase().from(table).update({ status: "draft", glb_url: glbUrl, source_image_url: sourceImageUrl, components, source_glb_url: sourceGlbUrl, error: null, ...(states ? { states } : {}) }).eq("id", id);
       if (draft.error) throw new Error(draft.error.message);
       // Fields left empty: what the vision model read from the photo. The vendor checks and corrects them.
       const listing = listingFrom(estimated);
@@ -235,7 +307,8 @@ function ModelFormBody() {
       if (!numberOrNull(width)) setWidth(m(estimated?.width_m));
       if (!numberOrNull(height)) setHeight(m(estimated?.height_m));
       if (!numberOrNull(depth)) setDepth(m(estimated?.depth_m));
-      setReview({ id, glbUrl: glbUrl!, sourceGlbUrl, components });
+      setShown("closed");
+      setReview({ id, glbUrl: glbUrl!, sourceGlbUrl, components, states });
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : String(caught);
       if (createdId) {
@@ -254,7 +327,9 @@ function ModelFormBody() {
     setBusy(true);
     setError(null);
     try {
-      const materials = editor.current && ownerId ? await customizedModelFields(ownerId, review.id, review.glbUrl, review.sourceGlbUrl, editor.current) : null;
+      // The state on screen is saved with its edits; the other was saved when the vendor switched away from it.
+      const materials = editor.current && ownerId && shown === "closed" ? await customizedModelFields(ownerId, review.id, review.glbUrl, review.sourceGlbUrl, editor.current) : null;
+      const states = shown === "open" ? (await persistShown(review)).states : review.states;
       const fields = {
         status: "ready",
         title: title.trim() || t("Untitled model"),
@@ -263,8 +338,9 @@ function ModelFormBody() {
         height_m: numberOrNull(height),
         depth_m: numberOrNull(depth),
         ...(materials?.fields ?? {}),
+        ...(states ? { states } : {}),
       };
-      const updated = mine ? await supabase().from("user_models").update(fields).eq("id", review.id) : await updateModel(review.id, fields);
+      const updated = await updateRow(review.id, fields);
       if (updated.error) throw new Error(updated.error.message);
       if (materials?.thumbnailError) {
         setError(t("Saved, but the model image could not be updated ({error}). The previous image is kept; save again to retry.", { error: materials.thumbnailError }));
@@ -288,8 +364,22 @@ function ModelFormBody() {
           <p className="mt-2 text-sm text-slate-600">{t("Check the name, description and size written from the photo and correct anything, then save. The 3D model stays as generated.")}</p>
           <form onSubmit={saveReviewed} className="mt-6 space-y-5 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
             {/* The generated model at the size in the fields below: a correction shows here at once. */}
-            <ValidationNotice validation={review.components?.validation} />
-            <ModelViewer edit parts={review.components} onApi={(api) => { editor.current = api; }} url={review.glbUrl} dimensions={w && h ? { width: w, height: h, ...(d ? { depth: d } : {}) } : null} />
+            {review.states?.open && (
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <StateToggle value={shown} onChange={(next) => void switchState(next)} disabled={busy} />
+                <p className="text-xs text-slate-500">{t("Each state keeps its own edits. Switching saves the one you leave.")}</p>
+              </div>
+            )}
+            <ValidationNotice validation={(shown === "open" ? review.states?.open?.components : review.components)?.validation} />
+            {/* One viewer for both states: the camera stays where it is; the open file is placed exactly like the closed. */}
+            <ModelViewer
+              edit
+              parts={shown === "open" ? review.states?.open?.components ?? null : review.components}
+              onApi={(api) => { editor.current = api; }}
+              url={shown === "open" && review.states?.open ? review.states.open.glb_url : review.glbUrl}
+              frameUrl={shown === "open" && review.states?.open ? review.glbUrl : undefined}
+              dimensions={w && h ? { width: w, height: h, ...(d ? { depth: d } : {}) } : null}
+            />
             <div className="space-y-1.5">
               <Label htmlFor="review-title">{t("Name")}</Label>
               <Input id="review-title" value={title} onChange={(event) => setTitle(event.target.value)} required />
@@ -359,7 +449,48 @@ function ModelFormBody() {
             <>
               {quota && <p className="text-xs text-slate-500">{t("3D generations left")} <TriesLeft n={quota[provider]} /></p>}
               {/* Upload, drag and drop, or paste a copied image (button or Ctrl/⌘+V). */}
-              <ImagePicker variant="dropzone" label={t("Photo")} value={photo} onChange={setPhoto} />
+              {category === "wardrobe" && (
+                <fieldset className="space-y-2 rounded-xl border border-slate-200 p-3">
+                  <legend className="px-1 text-sm font-medium">{t("Does this wardrobe have open and closed states?")}</legend>
+                  <div className="flex gap-4 text-sm">
+                    <label className="flex items-center gap-2">
+                      <input type="radio" name="two-states" checked={twoStates === true} onChange={() => setTwoStates(true)} />
+                      {t("Yes")}
+                    </label>
+                    <label className="flex items-center gap-2">
+                      <input type="radio" name="two-states" checked={twoStates === false} onChange={() => setTwoStates(false)} />
+                      {t("No")}
+                    </label>
+                  </div>
+                  {twoStates && (
+                    <div className="flex flex-wrap gap-4 text-sm">
+                      <label className="flex items-center gap-2">
+                        <input type="radio" name="states-upload" checked={!combined} onChange={() => setCombined(false)} />
+                        {t("Two photos: open and closed")}
+                      </label>
+                      <label className="flex items-center gap-2">
+                        <input type="radio" name="states-upload" checked={combined} onChange={() => setCombined(true)} />
+                        {t("One photo showing both")}
+                      </label>
+                    </div>
+                  )}
+                </fieldset>
+              )}
+              {withStates ? (
+                <>
+                  {combined && <ImagePicker variant="dropzone" label={t("Photo with the wardrobe closed and open")} value={both} onChange={(file) => void chooseBoth(file)} />}
+                  {splitting && <p className="text-sm text-slate-500">{t("Finding the closed and the open wardrobe in the photo…")}</p>}
+                  {(!combined || (photo && openPhoto)) && (
+                    // Labelled previews: either one can be replaced before generating (also after a split).
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <ImagePicker variant="dropzone" label={t("Closed")} value={photo} onChange={setPhoto} />
+                      <ImagePicker variant="dropzone" label={t("Open")} value={openPhoto} onChange={setOpenPhoto} />
+                    </div>
+                  )}
+                </>
+              ) : (
+                <ImagePicker variant="dropzone" label={t("Photo")} value={photo} onChange={setPhoto} />
+              )}
             </>
           )}
           {source === "upload" && (
@@ -380,7 +511,7 @@ function ModelFormBody() {
             </div>
           )}
           {error && <p className="text-sm text-red-700">{error}</p>}
-          <Button type="submit" disabled={busy || !ownerId}>
+          <Button type="submit" disabled={busy || splitting || !ownerId || (category === "wardrobe" && source === "photo" && twoStates === null)}>
             {busy ? (progressLabel ?? t("Saving…")) : t(source === "photo" ? "Generate 3D model" : "Continue")}
           </Button>
         </form>

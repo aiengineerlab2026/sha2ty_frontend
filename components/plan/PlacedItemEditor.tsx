@@ -1,5 +1,6 @@
 "use client";
 
+import { StateToggle } from "@/components/vendor/StateToggle";
 import { useT } from "@/lib/i18n";
 import { useEffect, useState } from "react";
 import { Check, PanelRightClose, ShoppingCart } from "lucide-react";
@@ -236,6 +237,10 @@ export function PlacedItemEditor({
               {t("In the room")} {shown.width.toFixed(2)} × {shown.height.toFixed(2)} × {shown.depth.toFixed(2)} m
             </p>
             <p className="text-xs text-slate-500">{t("Your edits stay on this copy. The vendor's listing is not changed.")}</p>
+            {item.openGlbUrl && (
+              // Same place, size, turn and edits: only the doors and drawers change.
+              <StateToggle className="mt-2" value={item.state === "open" ? "open" : "closed"} onChange={(state) => onPatch({ state })} />
+            )}
           </div>
         )}
         {editing && tab === "dimensions" && (

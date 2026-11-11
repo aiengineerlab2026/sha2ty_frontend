@@ -350,6 +350,8 @@ export function PlanLayout() {
       title: model.title,
       company: model.company,
       glbUrl: model.glb_url,
+      // Two states: placed closed; the item panel switches it.
+      ...(model.open_glb_url ? { openGlbUrl: model.open_glb_url, state: "closed" as const } : {}),
       width_m: width,
       height_m: height,
       depth_m: depth ?? size.depth, // no catalogue depth: the GLB's own (rendered at the catalogue width)

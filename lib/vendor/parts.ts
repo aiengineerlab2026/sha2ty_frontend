@@ -67,6 +67,8 @@ export async function customizedModelFields(
   sourceGlbUrl: string | null,
   api: PartEditorApi,
   version = 1,
+  /** false for another state (an open wardrobe): the product's picture is its closed state. */
+  thumbnail = true,
 ): Promise<{ fields: ModelFields; thumbnailError: string | null }> {
   const doc = api.document();
   const fields: ModelFields = { material_edits: api.edits(), version: version + 1 };
@@ -80,6 +82,7 @@ export async function customizedModelFields(
     }
   }
   let thumbnailError: string | null = null;
+  if (!thumbnail) return { fields, thumbnailError };
   try {
     const image = await api.thumbnail();
     if (!image) throw new Error("the model is not rendered yet");
