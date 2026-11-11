@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { Box, Check, Clock, Eye, LoaderCircle, Lock, LogOut, Mail, MapPin, Plus, Sparkles, UserRound, Wand2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ReportButton } from "@/components/tasks/ReportButton";
+import { AdminTaskDetail } from "./AdminTaskDetail";
 import { Logo } from "@/components/shatably/Logo";
 import { LanguageSwitch } from "@/components/shatably/Header";
 import { AuthInput } from "@/components/vendor/AuthInput";
@@ -339,6 +340,7 @@ function AdminTasks({ call }: { call: (path: string, init?: RequestInit) => Prom
   type Row = { id: string; title: string; status: string; created_at: string; budget_max: number | null; offers: number; customer: string };
   const [rows, setRows] = useState<Row[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [opened, setOpened] = useState<string | null>(null); // the request whose details are open
   useEffect(() => {
     call("/tasks").then(
       (body) => body && setRows(body.tasks as Row[]),
@@ -349,7 +351,8 @@ function AdminTasks({ call }: { call: (path: string, init?: RequestInit) => Prom
   return (
     <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
       <h2 className="text-lg font-semibold text-brand-navy">{t("Implementation requests")}</h2>
-      <p className="mt-1 text-sm text-slate-500">{t("Customers' requests to have a model made. Download a one-page report of any of them.")}</p>
+      <p className="mt-1 text-sm text-slate-500">{t("Customers' requests to have a model made. Open one to see it from the customer's side and every vendor's, or download its one-page report.")}</p>
+      {opened && <AdminTaskDetail id={opened} call={call} onClose={() => setOpened(null)} />}
       {error && <p className="mt-3 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p>}
       {!rows && !error && <p className="mt-3 text-sm text-slate-500">{t("Loading…")}</p>}
       {rows && !rows.length && <p className="mt-3 text-sm text-slate-500">{t("No requests yet.")}</p>}
@@ -357,12 +360,15 @@ function AdminTasks({ call }: { call: (path: string, init?: RequestInit) => Prom
         <ul className="mt-4 max-h-[28rem] divide-y divide-slate-100 overflow-y-auto rounded-xl border border-slate-200">
           {rows.map((r) => (
             <li key={r.id} className="flex flex-wrap items-center gap-3 px-4 py-3 text-sm">
-              <span className="min-w-0 flex-1">
+              <button type="button" onClick={() => setOpened(r.id)} className="min-w-0 flex-1 rounded-lg text-start hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-amber/40">
                 <span className="block truncate font-medium text-brand-navy">{r.title}</span>
                 <span className="block text-xs text-slate-500">
                   {[r.customer, new Date(r.created_at).toLocaleDateString(), t("{n} offers", { n: r.offers }), t(r.status)].filter(Boolean).join(" · ")}
                 </span>
-              </span>
+              </button>
+              <button type="button" onClick={() => setOpened(r.id)} className="h-9 rounded-lg px-3 font-medium text-brand-navy ring-1 ring-slate-200 hover:bg-slate-50">
+                {t("Details")}
+              </button>
               <ReportButton taskId={r.id} />
             </li>
           ))}
