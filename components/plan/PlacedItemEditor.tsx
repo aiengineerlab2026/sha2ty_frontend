@@ -254,7 +254,7 @@ export function PlacedItemEditor({
               <option value="m">m</option>
               <option value="cm">cm</option>
             </select>
-            <p className="text-xs text-slate-500">{t("The model stays on the floor. A different width, height and depth stretches the whole mesh.")}</p>
+            <p className="text-xs text-slate-500">{t("The model stays on the floor and keeps its proportions. A size that does not match is flagged instead of stretching the mesh.")}</p>
             {fitNotes.map((note) => (
               <p key={note} className="text-xs text-amber-800">{t(note)}</p>
             ))}

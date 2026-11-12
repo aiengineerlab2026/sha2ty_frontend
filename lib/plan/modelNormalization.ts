@@ -36,13 +36,19 @@ const ORIENTATIONS: { name: Orientation; matrix: Matrix4 }[] = [
   { name: "z-up→y-up+yaw-90", matrix: new Matrix4().makeRotationY(Math.PI / 2).multiply(new Matrix4().makeRotationX(-Math.PI / 2)) },
 ];
 
+/** One scale for every axis: the geometric mean of the per-axis ratios. Never a different factor per axis. */
+export function uniformFactor(ratios: number[]): number {
+  const usable = ratios.filter((r) => r > 0 && Number.isFinite(r));
+  if (!usable.length) return 1;
+  return Math.exp(usable.reduce((sum, r) => sum + Math.log(r), 0) / usable.length);
+}
+
 /**
- * Wrap a loaded model at its real size, Y-up, standing on Y = 0 and centred on X/Z. The catalogue
- * size is the truth: each axis gets its own factor so the model is exactly the database width ×
- * height (× depth). Without a catalogue depth, depth takes the mean of the width and height factors
- * (the GLB's depth, scaled with the rest). A GLB whose own shape is far from the catalogue is
- * stretched to it and warned about (`distortion`). Orientation is corrected first, as its own
- * step, so scaling never compensates for a rotated model. The result is a fresh hierarchy:
+ * Wrap a loaded model at its real size, Y-up, standing on Y = 0 and centred on X/Z. When the
+ * catalogue size matches the model's proportions, one factor makes it that size. When it does not,
+ * the same factor is still used (the geometric mean), so the mesh is never stretched, and the
+ * difference is reported for review. Orientation is corrected first, as its own step, so scaling
+ * never compensates for a rotated model. The result is a fresh hierarchy:
  *
  *   wrapper (identity — the caller positions/rotates this)
  *    └─ fit    (position: centring offset, scale: one factor per axis, world-aligned)
@@ -76,12 +82,10 @@ export function normalizeModel(source: Object3D, target: CatalogSize | null, mod
   const perAxis = target
     ? [target.width / orientedSize.width, target.height / orientedSize.height, ...(target.depth ? [target.depth / orientedSize.depth] : [])]
     : [1, 1, 1];
-  // The catalogue size is exact: one factor per axis (depth follows width/height when not given).
-  const sx = target ? target.width / orientedSize.width : 1;
-  const sy = target ? target.height / orientedSize.height : 1;
-  const sz = target?.depth ? target.depth / orientedSize.depth : Math.sqrt(sx * sy);
-  const scale: [number, number, number] = [sx, sy, sz];
-  fit.scale.set(sx, sy, sz);
+  // One factor on every axis. A catalogue size with different proportions is flagged, not stretched into.
+  const k = uniformFactor(perAxis);
+  const scale: [number, number, number] = [k, k, k];
+  fit.scale.set(k, k, k);
 
   // Centre on X/Z, bottom on the floor.
   const box = worldBox(wrapper);
@@ -93,9 +97,9 @@ export function normalizeModel(source: Object3D, target: CatalogSize | null, mod
   const distortion = Math.max(...perAxis) / Math.min(...perAxis);
   const heightError = target ? Math.abs(finalSize.height - target.height) / target.height : 0;
   const depthError = target?.depth ? Math.abs(finalSize.depth - target.depth) / target.depth : 0;
-  // Exact by construction; a large stretch means the GLB and the catalogue disagree on the shape.
   if (target && distortion > 1 + STRETCH_TOLERANCE) {
-    warnings.push(`The 3D model was stretched ${((distortion - 1) * 100).toFixed(0)}% to match the catalogue size ${[target.width, target.height, target.depth].filter(Boolean).map((v) => Number(v).toFixed(2)).join(" × ")} m: check the model or its dimensions.`);
+    const listed = [target.width, target.height, target.depth].filter((v): v is number => Boolean(v)).map((v) => Number(v).toFixed(2)).join(" × ");
+    warnings.push(`The model's proportions differ from the catalogue size ${listed} m by ${((distortion - 1) * 100).toFixed(0)}%. It was scaled uniformly; review the dimensions.`);
   }
 
   let nestedTransforms = 0;

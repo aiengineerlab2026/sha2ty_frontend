@@ -9,7 +9,7 @@ import { OutlinePass } from "three/examples/jsm/postprocessing/OutlinePass.js";
 import { Box3, BufferGeometry, Color, DirectionalLight, Euler, Group, LinearSRGBColorSpace, Matrix4, Mesh, MeshStandardMaterial, NeutralToneMapping, NormalBlending, Object3D, PerspectiveCamera, PMREMGenerator, Quaternion, RepeatWrapping, Scene, Sphere, SRGBColorSpace, Texture, Vector2, Vector3, WebGLRenderer, type Material } from "three";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 import { GLTFExporter } from "three/examples/jsm/exporters/GLTFExporter.js";
-import { alignLike, measure, normalizeModel, type CatalogSize, type Dimensions, type NormalizationReport } from "@/lib/plan/modelNormalization";
+import { alignLike, measure, normalizeModel, uniformFactor, type CatalogSize, type Dimensions, type NormalizationReport } from "@/lib/plan/modelNormalization";
 import type { MaterialEdit, PartDocument, PartEditorApi, PartInfo, PartVariant } from "@/lib/vendor/parts";
 import { fitInto, loadVariant } from "@/lib/vendor/partVariant";
 import { quote } from "@/lib/designs/materials";
@@ -1051,9 +1051,11 @@ export function ModelViewer({
     setRemoved3d(slots, removed);
   }, [removed, slots]);
   const base = report?.finalSize;
-  const size = designSize ?? base;
-  // The size group: customer size ÷ the size the model was normalised to.
-  const factor: [number, number, number] = designSize && base ? [designSize.width / base.width, designSize.height / base.height, designSize.depth / base.depth] : [1, 1, 1];
+  const ratios: [number, number, number] = designSize && base ? [designSize.width / base.width, designSize.height / base.height, designSize.depth / base.depth] : [1, 1, 1];
+  // The size group uses one factor. A requested size with different proportions is flagged, not stretched onto the mesh.
+  const k = uniformFactor(ratios);
+  const factor: [number, number, number] = [k, k, k];
+  const size = base ? { width: base.width * k, height: base.height * k, depth: base.depth * k } : null;
   const slot = slots.find((item) => item.id === selected) ?? null;
   // Every selected part, the first-picked one first (its settings are the ones shown).
   const selection = useMemo(() => (slot ? [slot, ...slots.filter((item) => item.id !== slot.id && also.has(item.id))] : []), [slot, slots, also]);
@@ -1378,7 +1380,7 @@ export function ModelViewer({
             : t("Loading…")}
         </p>
         {report?.warnings.map((warning) => (
-          <p key={warning} className="rounded-lg border border-amber-200 bg-amber-50/95 px-2.5 py-1 text-amber-800 shadow-sm">{warning}</p>
+          <p key={warning} className="rounded-lg border border-amber-200 bg-amber-50/95 px-2.5 py-1 text-amber-800 shadow-sm">{t(warning)}</p>
         ))}
       </div>
     </div>

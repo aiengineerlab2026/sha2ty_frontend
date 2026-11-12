@@ -597,7 +597,7 @@ export function DimensionFields({
       </div>
       {stretched && (
         <p className="text-xs text-amber-800">
-          {t("These proportions differ from the catalogue model: the whole model is stretched, so cushions, legs and textures stretch too. This is scaling, not a redesign of the furniture.")}
+          {t("These proportions differ from the model. It stays uniformly scaled and the difference is flagged for review, so cushions, legs and textures are not stretched.")}
         </p>
       )}
       </Section>
