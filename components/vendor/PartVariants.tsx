@@ -6,7 +6,6 @@ import { useT } from "@/lib/i18n";
 import { loadVariant } from "@/lib/vendor/partVariant";
 import type { PartVariant } from "@/lib/vendor/parts";
 
-const MAX_MB = 50;
 
 /** The selected part's variants. Vendors and admins (`onUpload`): add (name, GLB, price difference) and remove them;
  * they are saved with the model. Customers (`onChoose`): pick the original or a variant, shown in the part's place. */
@@ -78,7 +77,6 @@ function Manage({ variants, onUpload, onChange, money }: { variants: PartVariant
   const add = async () => {
     if (!file) return;
     if (!file.name.toLowerCase().endsWith(".glb")) return setError(t("Choose a .glb file."));
-    if (file.size > MAX_MB * 1024 * 1024) return setError(t("3D files must be {mb} MB or smaller.", { mb: MAX_MB }));
     setAdding(true);
     setError(null);
     try {
