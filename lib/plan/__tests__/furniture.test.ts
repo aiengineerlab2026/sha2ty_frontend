@@ -60,27 +60,35 @@ test("a model with catalogue proportions becomes exactly 3 × 1 × 1.5 m (the sa
   assert.equal(report.warnings.length, 0);
 });
 
-test("the catalogue size is exact on every axis: a 1 m cube becomes 3 × 1 × 1.5 m, and the stretch is reported", () => {
-  const { object, report } = normalizeModel(box(1, 1, 1), SOFA);
-  close(measure(object), SOFA);
-  assert.ok(report.heightError < 1e-6 && report.depthError < 1e-6);
-  assert.ok(report.warnings.some((w) => w.includes("stretched")));
+test("a cube is scaled uniformly and the catalogue mismatch is reported, not stretched into 3 × 1 × 1.5", () => {
+  const source = box(1, 1, 1);
+  const { object, report } = normalizeModel(source, SOFA);
+  const size = measure(object);
+  assert.ok(Math.abs(size.width - size.height) < 1e-6 && Math.abs(size.height - size.depth) < 1e-6, JSON.stringify(size));
+  assert.ok(report.scale[0] === report.scale[1] && report.scale[1] === report.scale[2]);
+  assert.ok(report.warnings.some((w) => w.includes("scaled uniformly")));
 });
 
-test("a small difference in shape is stretched silently; a large one is reported", () => {
+test("a small difference in shape is scaled uniformly without a warning; a large one is reported", () => {
   const within = normalizeModel(box(1, 0.36, 0.52), SOFA).report; // 8% / 4% off: within the 25% tolerance
   assert.equal(within.warnings.length, 0);
-  close(within.finalSize, SOFA, 1e-6);
-  const beyond = normalizeModel(box(1, 0.6, 0.5), SOFA).report; // 80% off in height
-  close(beyond.finalSize, SOFA, 1e-6);
-  assert.equal(beyond.warnings.length, 1);
+  assert.ok(within.scale.every((f) => Math.abs(f - within.scale[0]) < 1e-9));
+  const source = box(1, 0.6, 0.5); // 80% off in height
+  const beyond = normalizeModel(source, SOFA);
+  assert.equal(beyond.report.warnings.length, 1);
+  const made = measure(beyond.object);
+  const authored = measure(source);
+  assert.ok(Math.abs(made.width / made.height - authored.width / authored.height) < 1e-4);
 });
 
-test("a door whose GLB is squat still stands at its catalogue height (0.72 × 2.38 m, no depth)", () => {
-  const { object } = normalizeModel(box(1, 2.06, 0.08), { width: 0.72, height: 2.38 }); // GLB 1 : 2.06 → would be 1.48 m tall
+test("a squat door keeps its proportions instead of being stretched up to the catalogue height", () => {
+  const source = box(1, 2.06, 0.08);
+  const { object, report } = normalizeModel(source, { width: 0.72, height: 2.38 });
   const size = measure(object);
-  assert.ok(Math.abs(size.width - 0.72) < 1e-6 && Math.abs(size.height - 2.38) < 1e-6, JSON.stringify(size));
-  assert.ok(size.depth > 0.05 && size.depth < 0.1); // the GLB's own depth, scaled with the door
+  const authored = measure(source);
+  assert.ok(Math.abs(size.height / size.width - authored.height / authored.width) < 1e-4, JSON.stringify(size));
+  assert.ok(report.scale.every((f) => Math.abs(f - report.scale[0]) < 1e-9));
+  assert.ok(report.warnings.some((w) => w.includes("scaled uniformly")));
 });
 
 test("nested GLB-style transforms are included (cm root, rotated and offset children)", () => {
@@ -104,10 +112,14 @@ test("nested GLB-style transforms are included (cm root, rotated and offset chil
   assert.ok(Math.abs(b.getCenter(new Vector3()).x) < EPS && Math.abs(b.getCenter(new Vector3()).z) < EPS, "centred on X/Z");
 });
 
-test("the real sofa GLB (1.9 × 0.45 × 1.0) renders at the catalogue's 3 × 1 × 1.5 m", () => {
-  const { object, report } = normalizeModel(box(1.903, 0.452, 0.999), SOFA);
-  close(measure(object), SOFA, 1e-6);
-  assert.ok(report.warnings.some((w) => w.includes("stretched"))); // 1.0 m catalogue height vs the GLB's 0.71 m at 3 m wide
+test("the real sofa GLB (1.9 × 0.45 × 1.0) keeps its proportions and flags the catalogue mismatch", () => {
+  const source = box(1.903, 0.452, 0.999);
+  const { object, report } = normalizeModel(source, SOFA);
+  const made = measure(object);
+  const authored = measure(source);
+  assert.ok(Math.abs(made.width / made.height - authored.width / authored.height) < 1e-3);
+  assert.ok(report.scale.every((f) => Math.abs(f - report.scale[0]) < 1e-9));
+  assert.ok(report.warnings.some((w) => w.includes("scaled uniformly")));
 });
 
 test("Z-up CAD export is turned Y-up before measuring", () => {
@@ -198,10 +210,10 @@ test("both viewers produce the same world-space size for the same model", () => 
   const child = box(140, 50, 70);
   child.rotation.x = -Math.PI / 2;
   scene.add(child);
-  const editor = normalizeModel(scene, SOFA).object;
-  const standalone = normalizeModel(scene, SOFA).object;
-  close(measure(editor), measure(standalone));
-  assert.ok(Math.abs(measure(editor).width - SOFA.width) < EPS, "width is the database width");
+  const editor = normalizeModel(scene, SOFA);
+  const standalone = normalizeModel(scene, SOFA);
+  close(measure(editor.object), measure(standalone.object));
+  assert.ok(editor.report.scale.every((factor) => Math.abs(factor - editor.report.scale[0]) < 1e-9));
 });
 
 test("a 3 m sofa along a 4 m wall uses 75% of it, with no warning", () => {
@@ -221,10 +233,12 @@ test("collision uses the edited size, not an older catalogue width", () => {
   assert.ok(localWarnings(stillWide, geometry, [stillWide]).some((w) => w.includes("3.00 m wide")));
 });
 
-test("a shorter height still stands on the floor", () => {
-  const { object } = normalizeModel(PROPORTIONAL(), { width: 3, height: 0.8, depth: 1.5 });
+test("a shorter catalogue height does not squash the model", () => {
+  const { object, report } = normalizeModel(PROPORTIONAL(), { width: 3, height: 0.8, depth: 1.5 });
   assert.ok(Math.abs(new Box3().setFromObject(object, true).min.y) < 1e-4);
-  close(measure(object), { width: 3, height: 0.8, depth: 1.5 });
+  const size = measure(object);
+  assert.ok(Math.abs(size.height / size.width - 1 / 3) < 1e-4, JSON.stringify(size));
+  assert.ok(report.scale.every((f) => Math.abs(f - report.scale[0]) < 1e-9));
 });
 
 test("furniture larger than the room warns instead of shrinking", () => {
