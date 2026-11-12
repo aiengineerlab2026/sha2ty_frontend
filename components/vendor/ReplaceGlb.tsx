@@ -4,8 +4,6 @@ import { useState } from "react";
 import { FileUp, Loader2 } from "lucide-react";
 import { useT } from "@/lib/i18n";
 
-const MAX_MB = 200; // bigger files are shrunk in the browser before upload (uploadPublicFile)
-
 /** "Replace 3D file": the person's new .glb version of the model. Asks first (the new file has its own parts, so part
  * names, materials and variants start over), uploads it and hands back its URL. */
 export function ReplaceGlb({ upload, onReplaced, onError, className, label = true }: { upload: (file: File) => Promise<string>; onReplaced: (url: string) => void; onError: (message: string) => void; className?: string; label?: boolean }) {
@@ -15,7 +13,6 @@ export function ReplaceGlb({ upload, onReplaced, onError, className, label = tru
   const pick = async (file: File | undefined) => {
     if (!file) return;
     if (!/\.glb$/i.test(file.name)) return onError(t("Choose a .glb file."));
-    if (file.size > MAX_MB * 1024 * 1024) return onError(t("3D files must be {mb} MB or smaller.", { mb: MAX_MB }));
     // A binary glTF starts with "glTF": anything else (a renamed file) is refused before it is uploaded.
     if (new TextDecoder().decode(await file.slice(0, 4).arrayBuffer()) !== "glTF") return onError(t("This is not a valid .glb file."));
     if (!window.confirm(t("Replace the 3D file with “{name}”? Part names, materials and part changes start over on the new file.", { name: file.name }))) return;
