@@ -27,9 +27,3 @@ export function supabase(): SupabaseClient {
   }
   return client;
 }
-
-/** Public file URL on the real Supabase host (stored in the database, so never the proxy). */
-export function publicStorageUrl(bucket: string, path: string): string {
-  const url = (process.env.NEXT_PUBLIC_SUPABASE_URL ?? "").replace(/\/$/, "");
-  return `${url}/storage/v1/object/public/${bucket}/${path.split("/").map(encodeURIComponent).join("/")}`;
-}
