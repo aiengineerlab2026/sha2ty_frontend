@@ -2,11 +2,11 @@
 
 import { useT } from "@/lib/i18n";
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type ComponentRef, type CSSProperties, type ReactNode } from "react";
-import { Download, Layers, Loader2, Palette, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, RotateCcw, RotateCw, SlidersHorizontal } from "lucide-react";
+import { DoorOpen, Download, Layers, Pointer, Loader2, Palette, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, RotateCcw, RotateCw, SlidersHorizontal } from "lucide-react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { Bounds, ContactShadows, Environment, OrbitControls, useBounds, useGLTF } from "@react-three/drei";
 import { OutlinePass } from "three/examples/jsm/postprocessing/OutlinePass.js";
-import { Box3, BufferGeometry, Color, DirectionalLight, Euler, Group, LinearSRGBColorSpace, Matrix4, Mesh, MeshStandardMaterial, NeutralToneMapping, NormalBlending, Object3D, PerspectiveCamera, PMREMGenerator, Quaternion, RepeatWrapping, Scene, Sphere, SRGBColorSpace, Texture, Vector2, Vector3, WebGLRenderer, type Material } from "three";
+import { Box3, BufferGeometry, Color, DirectionalLight, Euler, Group, LinearSRGBColorSpace, Matrix4, Mesh, MeshStandardMaterial, NeutralToneMapping, NormalBlending, Object3D, PerspectiveCamera, PMREMGenerator, Quaternion, Raycaster, RepeatWrapping, Scene, Sphere, SRGBColorSpace, Texture, Vector2, Vector3, WebGLRenderer, type Material } from "three";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 import { GLTFExporter } from "three/examples/jsm/exporters/GLTFExporter.js";
 import { alignLike, measure, normalizeModel, uniformFactor, type CatalogSize, type Dimensions, type NormalizationReport } from "@/lib/plan/modelNormalization";
@@ -19,9 +19,14 @@ import { MaterialPicker } from "./MaterialPicker";
 import { PartVariants } from "./PartVariants";
 import { PartSizes } from "./PartSizes";
 import { ResizeGizmo } from "@/components/designs/ResizeGizmo";
+import { AnimationPanel } from "./AnimationPanel";
+import { AddComponentsPanel, PickerBridge, PlacementOverlay, ResizeHandles, useComponentEditor } from "./AddComponents";
+import { choosePart, offsetAxis, specBox, type Side, type Surroundings } from "@/lib/vendor/parts3d";
+import { checkMovers, movedBox, openCavities, rebuildPanel, type Added } from "@/lib/vendor/reconstruct";
+import { animationClips, animationOf, applyAnimations, attachmentsFrom, boxInModel, carried, enabledAnimations, handleOf, meshesOf, refine, step, type AnimationConfig, type Openness } from "@/lib/vendor/animation";
 import { MIN_SIZE, resized } from "@/lib/designs/resize";
 
-export type Slot = { id: string; name: string; naming?: PartInfo["naming"]; variants?: PartVariant[]; mesh: Mesh; materialIndex: number };
+export type Slot = { id: string; name: string; nameAr?: string | null; analysisId?: string; naming?: PartInfo["naming"]; variants?: PartVariant[]; mesh: Mesh; materialIndex: number };
 
 /** Extra transform on one mesh, relative to how the file was authored. Scale is a multiplier (1 = unchanged). */
 export type PartPose = {
@@ -420,12 +425,14 @@ export function prepare(root: Object3D, server?: PartDocument | null): { slots: 
     if (!basePose.has(mesh)) basePose.set(mesh, { position: mesh.position.clone(), quaternion: mesh.quaternion.clone(), scale: mesh.scale.clone() });
     list.forEach((mat, materialIndex) => {
       if (mat.name === CORE) return; // the sheet's cut edge belongs to the face part
-      const from = named ? (list.length === 1 ? byId.get(mesh.name) : undefined) : server?.components[n];
+      // The part id written into the file at export (glTF extras → userData) first: stable whatever the mesh order.
+      const saved = (mesh.userData.partIds as string[] | undefined)?.[materialIndex] ?? (list.length === 1 ? (mesh.userData.partId as string | undefined) : undefined);
+      const from: PartInfo | undefined = (saved ? byId.get(saved) ?? { id: saved, name: mesh.name, editable: true } : undefined) ?? (named ? (list.length === 1 ? byId.get(mesh.name) : undefined) : server?.components[n]);
       let id = from?.id || mesh.name || `part_${n}`;
       while (used.has(id)) id = `${id}_${n}`;
       used.add(id);
       const name = from?.name || mesh.name || (meshes.length === 1 && list.length === 1 ? "Whole model" : `Part ${n + 1}`);
-      slots.push({ id, name, naming: from?.naming, ...(from?.variants?.length ? { variants: from.variants } : {}), mesh, materialIndex });
+      slots.push({ id, name, naming: from?.naming, ...(from?.nameAr ? { nameAr: from.nameAr } : {}), ...(from?.analysisId ? { analysisId: from.analysisId } : {}), ...(from?.variants?.length ? { variants: from.variants } : {}), mesh, materialIndex });
       n += 1;
     });
   }
@@ -482,26 +489,216 @@ export async function replayEdits(slots: Slot[], edits: Record<string, MaterialE
   );
 }
 
-/** Scale, slide and turn individual meshes. One mesh with several materials is moved once. Reset starts from the pose captured in `prepare`. */
-export function applyPoses(slots: Slot[], poses: Record<string, PartPose> | undefined) {
+/** A part made here (an interior, a drawer box: lib/vendor/reconstruct.ts) set up like a loaded one (its rest pose,
+ * its original material for resets) and listed with the parts. */
+function adopt(slots: Slot[], part: Added) {
+  const mesh = part.mesh;
+  originals.set(mesh, materials(mesh).map((mat) => mat.clone()));
+  originalGeometry.set(mesh, mesh.geometry);
+  basePose.set(mesh, { position: mesh.position.clone(), quaternion: mesh.quaternion.clone(), scale: mesh.scale.clone() });
+  slots.push({ id: part.id, name: part.name, nameAr: part.nameAr, naming: "estimated", mesh, materialIndex: 0 });
+}
+
+/** The movable parts of a loaded model (at rest), checked on its real meshes: found and hinged (refine), their
+ * geometry and movement validated (checkMovers), and the body opened behind them where it is solid (openCavities;
+ * the new parts join `slots`). Used by the viewer, the editor and the planner alike. */
+export function movableParts(saved: AnimationConfig | null | undefined, slots: Slot[], root: Object3D, doc?: PartDocument | null): AnimationConfig | null {
+  const model = authored(root);
+  const checked = checkMovers(refine(saved, slots, model, attachmentsFrom(doc)), slots, model);
+  if (!checked) return null;
+  const added = openCavities(checked, slots, model);
+  for (const part of added) {
+    adopt(slots, part);
+    if (part.follows) checked.animations.find((a) => a.id === part.follows)?.follow.push(part.id);
+  }
+  return added.length
+    ? { ...checked, interior: { added: [...(checked.interior?.added ?? []), ...added.map((p) => p.id)], note: "The body was solid behind its doors: an estimated hollow interior was added there (the original file is unchanged). Edit or remove these parts." } }
+    : checked;
+}
+
+/** Scale, slide and turn individual meshes. One mesh with several materials is moved once. Reset starts from the pose
+ * captured in `prepare`. `assemblies` (part id → the parts attached to it: handles, trims, decorations…): a posed part
+ * carries its attached parts along, each keeping its place on it and its own size (a handle is not stretched with
+ * a resized door); a child's own pose is added on top. */
+export function applyPoses(slots: Slot[], poses: Record<string, PartPose> | undefined, assemblies: Record<string, string[]> = {}) {
   const seen = new Set<Mesh>();
+  const meshOf = new Map(slots.map((slot) => [slot.id, slot.mesh]));
+  const rest = (mesh: Mesh) => {
+    const base = basePose.get(mesh);
+    if (!base) return false;
+    mesh.position.copy(base.position);
+    mesh.quaternion.copy(base.quaternion);
+    mesh.scale.copy(base.scale);
+    return true;
+  };
+  const own = (mesh: Mesh, pose: PartPose | undefined) => {
+    if (!pose) return;
+    if (pose.position) mesh.position.add(new Vector3(...pose.position));
+    if (pose.rotation) mesh.quaternion.multiply(new Quaternion().setFromEuler(new Euler(...pose.rotation.map((deg) => (deg * Math.PI) / 180) as [number, number, number])));
+    if (pose.scale) mesh.scale.multiply(new Vector3(...pose.scale));
+  };
   for (const slot of slots) {
     if (seen.has(slot.mesh)) continue;
     seen.add(slot.mesh);
-    const base = basePose.get(slot.mesh);
-    if (!base) continue;
-    const pose = poses?.[slot.id];
-    slot.mesh.position.copy(base.position);
-    slot.mesh.quaternion.copy(base.quaternion);
-    slot.mesh.scale.copy(base.scale);
-    if (!pose) continue;
-    if (pose.position) slot.mesh.position.add(new Vector3(...pose.position));
-    if (pose.rotation) {
-      const extra = new Quaternion().setFromEuler(new Euler(...pose.rotation.map((deg) => (deg * Math.PI) / 180) as [number, number, number]));
-      slot.mesh.quaternion.multiply(extra);
-    }
-    if (pose.scale) slot.mesh.scale.multiply(new Vector3(...pose.scale));
+    if (rest(slot.mesh)) own(slot.mesh, poses?.[slot.id]);
   }
+  for (const [parentId, children] of Object.entries(assemblies)) {
+    const parent = meshOf.get(parentId);
+    const base = parent && basePose.get(parent);
+    if (!parent || !base || !poses?.[parentId]) continue;
+    parent.parent?.updateMatrixWorld(true);
+    const outer = parent.parent?.matrixWorld ?? new Matrix4();
+    const now = { position: parent.position, quaternion: parent.quaternion, scale: parent.scale };
+    for (const id of children) {
+      const child = meshOf.get(id);
+      const from = child && basePose.get(child);
+      if (!child || !from || child === parent) continue;
+      const to = carried(base, now, outer, from, child.parent?.matrixWorld ?? new Matrix4()); // its place on the part, its own size
+      child.position.copy(to.position);
+      child.quaternion.copy(to.quaternion);
+      child.scale.copy(to.scale);
+      own(child, poses?.[id]);
+    }
+  }
+}
+
+/** Part id → the parts attached to it (each animation's part and its `follow`): what moves as one assembly. */
+export function assembliesOf(config: AnimationConfig | null | undefined): Record<string, string[]> {
+  return Object.fromEntries((config?.animations ?? []).filter((a) => a.follow.length).map((a) => [a.component, a.follow]));
+}
+
+/** Plays the movable parts (lib/vendor/animation.ts): each frame while a part moves or stands open, the rest pose
+ * (with the part poses) and then the animations on top. Idle when everything is closed. Independent of the camera. */
+export function Animator({ slots, root, config, target, poses }: { slots: Slot[]; root: Object3D | null; config: AnimationConfig | null | undefined; target: Openness; poses?: Record<string, PartPose> }) {
+  const now = useRef<Openness>({});
+  useFrame((_, dt) => {
+    if (!root || !slots.length || !config) return;
+    const moving = step(now.current, target, config, Math.min(dt, 0.1));
+    if (!moving && !Object.values(now.current).some((v) => v > 0)) return;
+    applyPoses(slots, poses, assembliesOf(config));
+    // Eased (slow out of rest, slow into place): a door swings like a door, no jolt at either end.
+    const eased = Object.fromEntries(Object.entries(now.current).map(([id, t]) => [id, t * t * (3 - 2 * t)]));
+    applyAnimations(slots, authored(root), config, eased);
+  });
+  return null;
+}
+
+/** One movable part's icon: the animation, the mesh it sits on (the handle, else the part itself) and what belongs to
+ * the part (never counted as hiding its icon). */
+export type PartIcon = { id: string; on: Mesh; handle: boolean; own: Set<Mesh> };
+
+/** Every movable part's icon, with the explicit handle mesh → movable part association (handleOf: by geometry). */
+export function partIcons(slots: Slot[], config: AnimationConfig | null | undefined, skip: Set<string>): { icons: PartIcon[]; handles: Map<string, string> } {
+  const icons: PartIcon[] = [];
+  const handles = new Map<string, string>(); // handle mesh uuid → movable part id
+  for (const a of enabledAnimations(config)) {
+    if (skip.has(a.component)) continue;
+    const part = slots.find((s) => s.id === a.component)?.mesh;
+    if (!part) continue;
+    const handle = handleOf(part, slots.filter((s) => a.follow.includes(s.id)).map((s) => ({ id: s.id, mesh: s.mesh, name: `${s.name} ${s.nameAr ?? ""}` })));
+    if (handle) handles.set(handle.mesh.uuid, a.component);
+    const own = new Set(slots.filter((s) => s.id === a.component || a.follow.includes(s.id)).map((s) => s.mesh));
+    icons.push({ id: a.id, on: handle?.mesh ?? part, handle: Boolean(handle), own });
+  }
+  return { icons, handles };
+}
+
+const ICON = 20; // px
+/** Moves the icons (plain page elements above the canvas, `els`) to their handles every frame: each handle's world box
+ * centre from its current world matrix, projected with the camera; icons closer than one icon apart pushed apart;
+ * an icon behind other geometry or the camera hidden. No React render per frame. */
+export function IconTracker({ icons, els }: { icons: PartIcon[]; els: { current: Map<string, HTMLButtonElement> } }) {
+  const box = useMemo(() => new Box3(), []);
+  const ray = useMemo(() => new Raycaster(), []);
+  const frame = useRef(0);
+  const hidden = useRef(new Map<string, boolean>());
+  useFrame(({ camera, gl, scene }) => {
+    const w = gl.domElement.clientWidth, h = gl.domElement.clientHeight;
+    const at = icons.map((icon) => {
+      box.setFromObject(icon.on);
+      const world = box.getCenter(new Vector3());
+      const p = world.clone().project(camera);
+      return { icon, world, x: ((p.x + 1) / 2) * w, y: ((1 - p.y) / 2) * h, behind: p.z > 1 };
+    });
+    // Apart: two icons closer than an icon's width move away from each other, half each (two passes).
+    for (let pass = 0; pass < 2; pass++) {
+      for (let i = 0; i < at.length; i++) for (let j = i + 1; j < at.length; j++) {
+        const dx = at[j].x - at[i].x, dy = at[j].y - at[i].y, d = Math.hypot(dx, dy);
+        if (d >= ICON + 2) continue;
+        const ux = d > 0.01 ? dx / d : 1, uy = d > 0.01 ? dy / d : 0, push = (ICON + 2 - d) / 2;
+        at[i].x -= ux * push; at[i].y -= uy * push;
+        at[j].x += ux * push; at[j].y += uy * push;
+      }
+    }
+    // Hidden behind other geometry: rechecked every few frames (a ray to the handle; its own part does not count).
+    if (frame.current++ % 4 === 0) {
+      for (const a of at) {
+        const to = a.world.clone().sub(camera.position);
+        const distance = to.length();
+        ray.set(camera.position, to.normalize());
+        const hit = ray.intersectObject(scene, true).find((x) => (x.object as Mesh).isMesh && x.object.visible);
+        hidden.current.set(a.icon.id, Boolean(hit && !a.icon.own.has(hit.object as Mesh) && hit.distance < distance - 0.01));
+      }
+    }
+    for (const a of at) {
+      const el = els.current.get(a.icon.id);
+      if (!el) continue;
+      const off = a.behind || hidden.current.get(a.icon.id);
+      el.style.transform = `translate(${a.x - ICON / 2}px, ${a.y - ICON / 2}px)`;
+      el.style.opacity = off ? "0" : a.icon.handle ? "1" : "0.75";
+      el.style.pointerEvents = off ? "none" : "auto";
+    }
+  });
+  return null;
+}
+
+const GLOW = new Color("#f2a33a");
+/** A soft warm glow on a movable part under the pointer (and the parts on it), and the pointer cursor. */
+export function glow(meshes: Mesh[], on: boolean, cursor = "pointer") {
+  for (const mesh of meshes) {
+    for (const mat of materials(mesh).map(standard)) {
+      if (!mat) continue;
+      if (on && mat.userData.glowFrom === undefined) {
+        mat.userData.glowFrom = mat.emissive.getHex();
+        mat.emissive.copy(GLOW).multiplyScalar(0.18);
+      } else if (!on && mat.userData.glowFrom !== undefined) {
+        mat.emissive.setHex(mat.userData.glowFrom);
+        delete mat.userData.glowFrom;
+      }
+    }
+  }
+  if (typeof document !== "undefined") document.body.style.cursor = on ? cursor : "";
+}
+
+type PointerHit = { stopPropagation: () => void; object: Object3D; delta?: number; face?: { materialIndex?: number } | null };
+
+/** The movable part (its animation) under the pointer: the part itself or a handle on it. */
+export function movableHit(slots: Slot[], config: AnimationConfig | null | undefined, event: PointerHit) {
+  const mesh = event.object as Mesh;
+  if (!mesh.isMesh) return null;
+  const id = slotHit(slots, mesh, Array.isArray(mesh.material) ? event.face?.materialIndex ?? 0 : 0)?.id;
+  return id ? animationOf(config, id) : null;
+}
+
+/** A click (a tap) opens or closes the part hit, never after a drag of the view. True when it did. */
+export function toggleHit(slots: Slot[], config: AnimationConfig | null | undefined, event: PointerHit, onToggle: (animationId: string) => void): boolean {
+  if ((event.delta ?? 0) > DRAG) return false;
+  const anim = movableHit(slots, config, event);
+  if (!anim) return false;
+  event.stopPropagation();
+  onToggle(anim.id);
+  return true;
+}
+
+/** Lights the movable part under the pointer (and the parts on it); `lit` keeps what is lit between moves. */
+export function hoverHit(slots: Slot[], config: AnimationConfig | null | undefined, lit: { current: Mesh[] }, event: PointerHit | null, cursor = "pointer") {
+  event?.stopPropagation(); // the nearest part only: not the body and back panel behind it
+  const anim = event ? movableHit(slots, config, event) : null;
+  const next = anim ? meshesOf(slots, anim) : [];
+  if (next.length === lit.current.length && next.every((m, i) => m === lit.current[i])) return;
+  glow(lit.current, false);
+  lit.current = next;
+  if (next.length) glow(next, true, cursor);
 }
 
 /** After a part moves, put the model's lowest point back on y = 0 and return its world size. */
@@ -622,6 +819,7 @@ const SELECT = "#f2a33a"; // Sha2ty orange
 export const DRAG = 4;
 const GRID = "editor-grid";
 const GUIDES_KEY = "sha2ty.showDimensions";
+const HANDS_KEY = "sha2ty.showHandIcons";
 type Tab = "parts" | "properties" | "actions";
 const TAB_ICON: Record<Tab, typeof Layers> = { parts: Layers, properties: Palette, actions: SlidersHorizontal };
 
@@ -756,6 +954,9 @@ function LoadedModel({
   onSlots,
   onPick,
   track,
+  movable,
+  liveSlots,
+  choose,
 }: {
   url: string;
   /** Another state's file (the closed wardrobe) whose fit this one takes: see alignLike. */
@@ -770,6 +971,12 @@ function LoadedModel({
   /** `add`: shift / ctrl / ⌘ held, adds the part to the selection (or takes it out). */
   onPick: (id: string, add?: boolean) => void;
   track: <T>(load: Promise<T>) => Promise<T>;
+  /** Movable parts (refined): a click opens or closes one (in the editor a double click: a click selects). */
+  movable?: AnimationConfig | null;
+  /** The editor's parts as they are now (with parts added after loading): what clicks resolve to. */
+  liveSlots?: () => Slot[];
+  /** Which part a click selects among everything under the pointer (lib/vendor/parts3d.ts choosePart). */
+  choose?: (hits: { object: Object3D; distance: number; face?: { materialIndex?: number } | null }[]) => string | null;
 }) {
   const { scene } = useGLTF(url);
   const { scene: frame } = useGLTF(frameUrl ?? url); // the same file (already loaded) when there is no frame
@@ -788,11 +995,13 @@ function LoadedModel({
     return { object: alignLike(scene, reference.object), report: reference.report };
   }, [scene, frame, frameUrl, w, h, d, url]);
   useEffect(() => onReport(report), [onReport, report]);
+  // Viewing: the parts are needed only to find and play movable ones (a model of several parts).
+  const animated = (server?.components?.length ?? 0) > 1 || enabledAnimations(server?.animation).length > 0;
   useEffect(() => {
-    if (!edit) return;
+    if (!edit && !animated) return;
     const { slots: next, cleaned } = prepare(object, server);
     slotsRef.current = next;
-    if (replay && saved) {
+    if (edit && replay && saved) {
       for (const slot of next) {
         const editOf = saved[slot.id];
         if (!editOf) continue;
@@ -801,17 +1010,24 @@ function LoadedModel({
       }
     }
     onSlots(next, object, cleaned);
-  }, [edit, object, onSlots, replay, saved, server, track]);
+  }, [edit, animated, object, onSlots, replay, saved, server, track]);
+  const lit = useRef<Mesh[]>([]);
+  const moves = enabledAnimations(movable).length > 0;
   return (
     <primitive
       object={object}
+      onPointerMove={moves ? (event: PointerHit) => hoverHit(liveSlots?.() ?? slotsRef.current, movable, lit, event) : undefined}
+      onPointerOut={moves ? () => hoverHit(liveSlots?.() ?? slotsRef.current, movable, lit, null) : undefined}
       onClick={(event: { stopPropagation: () => void; object: Object3D; delta: number; face?: { materialIndex?: number } | null; shiftKey?: boolean; ctrlKey?: boolean; metaKey?: boolean }) => {
-        if (!edit || event.delta > DRAG) return; // turning or panning the view is not a click
+        if (event.delta > DRAG) return; // turning or panning the view is not a click
+        if (!edit) return; // viewing: parts open and close from their icons
         event.stopPropagation();
         const mesh = event.object as Mesh;
         if (!mesh.isMesh) return;
         const materialIndex = Array.isArray(mesh.material) ? event.face?.materialIndex ?? 0 : 0;
-        const hit = slotHit(slotsRef.current, mesh, materialIndex);
+        // Everything under the pointer, by priority (added parts, through open fronts); else the nearest part.
+        const chosen = choose?.((event as unknown as { intersections?: { object: Object3D; distance: number; face?: { materialIndex?: number } | null }[] }).intersections ?? []);
+        const hit = chosen ? { id: chosen } : slotHit(liveSlots?.() ?? slotsRef.current, mesh, materialIndex);
         if (hit) onPick(hit.id, Boolean(event.shiftKey || event.ctrlKey || event.metaKey)); // shift / ctrl / ⌘: add or remove
       }}
     />
@@ -829,6 +1045,7 @@ export function ModelViewer({
   onApi,
   designSize = null,
   fill = false,
+  tall = false,
   details,
   overlay,
   resetView,
@@ -869,6 +1086,8 @@ export function ModelViewer({
   proportional?: boolean;
   /** Fill the parent's height on desktop (the parent sets it); each side panel then scrolls on its own. */
   fill?: boolean;
+  /** Viewing as a page's centrepiece (the request page): a taller canvas. */
+  tall?: boolean;
   /** Studio layout (desktop: details | canvas | parts and materials; tablets: drawers; phones: tabs). The page's form
    * for the left column. Use with `fill`. */
   details?: ReactNode;
@@ -919,6 +1138,108 @@ export function ModelViewer({
     if (next) setLoadedUrl(url);
   }, [url]);
   const [slots, setSlots] = useState<Slot[]>([]);
+  // Movable parts: the saved (or detected) configuration, edited here, and how far each is asked to be open.
+  const [anim, setAnim] = useState<AnimationConfig | null>(() => server?.animation ?? null);
+  const [openTarget, setOpenTarget] = useState<Openness>({});
+  const [modelRoot, setModelRoot] = useState<Object3D | null>(null); // root.current, for rendering
+  const serverRef = useRef(server);
+  useEffect(() => {
+    serverRef.current = server;
+  }, [server]);
+  // Adding parts (shelves, drawers, doors…): the gallery, drag-and-drop placement and the selected part's toolbar.
+  const partsEditor = useComponentEditor({
+    slots,
+    setSlots,
+    root: modelRoot ? authored(modelRoot) : null,
+    anim,
+    setAnim,
+    saved: server?.added,
+    objectType: server?.analysis?.objectType ?? server?.modelType,
+    onBuilt: (mesh, id) => {
+      if (!originals.has(mesh)) originals.set(mesh, materials(mesh).map((mat) => mat.clone())); // reset goes to its first look
+      originalGeometry.set(mesh, mesh.geometry);
+      basePose.set(mesh, { position: mesh.position.clone(), quaternion: mesh.quaternion.clone(), scale: mesh.scale.clone() });
+      // Rebuilt at a new size: its wood / fabric is laid out again for the new size (not stretched).
+      const look = editsRef.current[id];
+      if (look) paint(materials(mesh)[0], look); // its saved paint (a part rebuilt on reopening)
+      if (look?.mapUrl) void loadMap(look.mapUrl, look).then((texture) => layPattern({ id, name: id, mesh, materialIndex: 0 }, texture, look));
+    },
+  });
+  const [dimFocus, setDimFocus] = useState<0 | 1 | 2 | Side | null>(null);
+
+  const modelMeshes = useCallback(() => [...new Set(slots.map((s) => s.mesh))], [slots]);
+  // What clicks resolve against: the parts now (added ones included), which are added, which stand open.
+  const live = useRef<{ slots: Slot[]; added: Set<string>; open: Set<string> }>({ slots: [], added: new Set(), open: new Set() });
+  useEffect(() => {
+    live.current = {
+      slots,
+      added: new Set(partsEditor.added.map((a) => a.id)),
+      open: new Set((anim?.animations ?? []).filter((a) => (openTarget[a.id] ?? 0) > 0).flatMap((a) => [a.component, ...a.follow])),
+    };
+  }, [slots, partsEditor.added, anim, openTarget]);
+  const liveSlots = () => live.current.slots;
+  const choosePick = (hits: { object: Object3D; distance: number; face?: { materialIndex?: number } | null }[]) => {
+    const { slots: now, added, open } = live.current;
+    const parts = hits.flatMap((h) => {
+      const mesh = h.object as Mesh;
+      if (!mesh.isMesh) return [];
+      const slot = slotHit(now, mesh, Array.isArray(mesh.material) ? h.face?.materialIndex ?? 0 : 0);
+      return slot ? [{ id: slot.id, distance: h.distance, added: added.has(slot.id), open: open.has(slot.id), visible: mesh.visible }] : []; // helpers and overlays are no parts
+    });
+    return choosePart(parts, 0.003);
+  };
+  // Placement measures the STRUCTURE: every door / drawer (and what moves with it) is left out, open or closed.
+  const movingIds = useMemo(() => new Set((anim?.animations ?? []).flatMap((a) => [a.component, ...a.follow])), [anim]);
+  const structureMeshes = useCallback(() => [...new Set(slots.filter((s) => !movingIds.has(s.id)).map((s) => s.mesh))], [slots, movingIds]);
+  const surroundings = useCallback((): Surroundings => {
+    if (!modelRoot) return { front: () => null, sweeps: [] };
+    const model = authored(modelRoot);
+    model.updateMatrixWorld(true);
+    const inv = model.matrixWorld.clone().invert();
+    /** A part's box where it rests (closed), in model coordinates, whatever it shows now. */
+    const rest = (mesh: Mesh) => {
+      const base = basePose.get(mesh);
+      if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
+      const local = base ? new Matrix4().compose(base.position, base.quaternion, base.scale) : mesh.matrix;
+      return mesh.geometry.boundingBox!.clone().applyMatrix4(inv.clone().multiply(mesh.parent?.matrixWorld ?? new Matrix4()).multiply(local));
+    };
+    const meshOf = (id: string) => slots.find((s) => s.id === id)?.mesh;
+    const fronts = (anim?.animations ?? []).map((a) => ({ id: a.component, box: meshOf(a.component) ? rest(meshOf(a.component)!) : null })).filter((f): f is { id: string; box: Box3 } => Boolean(f.box));
+    const structure = structureMeshes().map((m) => new Box3().setFromObject(m, true).applyMatrix4(inv));
+    const span = (a0: number, a1: number, b0: number, b1: number) => Math.max(0, Math.min(a1, b1) - Math.max(a0, b0));
+    return {
+      front: (x0, x1, y0, y1, from) => {
+        const area = Math.max((x1 - x0) * (y1 - y0), 1e-9);
+        const over = (b: Box3) => (span(b.min.x, b.max.x, x0, x1) * span(b.min.y, b.max.y, y0, y1)) / area;
+        const door = fronts.filter((f) => over(f.box) > 0.3 && f.box.min.z >= from).sort((a, b) => a.box.min.z - b.box.min.z)[0];
+        if (door) return { z: door.box.min.z, part: door.id };
+        const shell = structure.filter((b) => over(b) > 0.3 && b.max.z > from);
+        return shell.length ? { z: Math.max(...shell.map((b) => b.max.z)), part: null } : null;
+      },
+      sweeps: enabledAnimations(anim).flatMap((a) => {
+        const meshes = [a.component, ...a.follow].map(meshOf).filter((m): m is Mesh => Boolean(m));
+        if (!meshes.length) return [];
+        const box = meshes.map(rest).reduce((all, b) => all.union(b), new Box3());
+        return [{ label: a.label, component: a.component, boxes: [0, 0.25, 0.5, 0.75, 1].map((t) => movedBox(a.type === "rotation" ? { ...a, to: (a.to ?? 0) * t } : { ...a, distance: (a.distance ?? 0) * t }, box)) }];
+      }),
+    };
+  }, [modelRoot, slots, anim, structureMeshes]);
+  /** World now → world at rest for a part that may stand open (a handle dropped on an open door goes where the door
+   * is closed; its opening then carries it, once). */
+  const restOfMesh = useCallback((mesh: Mesh) => {
+    const base = basePose.get(mesh);
+    if (!base) return null;
+    mesh.updateMatrixWorld(true);
+    const rest = (mesh.parent?.matrixWorld.clone() ?? new Matrix4()).multiply(new Matrix4().compose(base.position, base.quaternion, base.scale));
+    return rest.multiply(mesh.matrixWorld.clone().invert());
+  }, []);
+  const idOfMesh = useCallback((mesh: Mesh) => slots.find((s) => s.mesh === mesh)?.id ?? null, [slots]);
+  const toggleOpen = useCallback((id: string) => setOpenTarget((now) => ({ ...now, [id]: (now[id] ?? 0) > 0 ? 0 : 1 })), []);
+  // Each movable part's hand icon, on its handle (or the part when it has none), always shown; the page elements are
+  // placed by IconTracker every frame.
+  const iconEls = useRef(new Map<string, HTMLButtonElement>());
+  // What was detected, checked against the real meshes (refine): the starting point and what Reset goes back to.
+  const [detected, setDetected] = useState<AnimationConfig | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   // More parts selected with it (shift / ctrl / ⌘ click, or "Select several" on touch screens): edits go to all of them.
   const [also, setAlso] = useState<Set<string>>(() => new Set());
@@ -955,6 +1276,7 @@ export function ModelViewer({
   const [hidden, setHidden] = useState<Set<string>>(() => new Set());
   // Parts removed from the model: their meshes are switched off, so neither the export nor the thumbnail has them.
   const [removed, setRemoved] = useState<Set<string>>(() => new Set(removedParts ?? []));
+  const icons = useMemo(() => partIcons(slots, anim, new Set([...removed, ...hidden])).icons, [slots, anim, removed, hidden]);
   const removedRef = useRef(removed);
   // The variant chosen per part, and the one each mesh shows now (so a re-render never swaps it again).
   const [choices, setChoices] = useState<Record<string, string>>(() => savedVariants ?? {});
@@ -1009,6 +1331,22 @@ export function ModelViewer({
       // storage blocked: the choice lasts for this page only
     }
   };
+  // The hand icons on the movable parts: shown unless turned off (remembered in this browser).
+  const [hands, setHands] = useState(() => {
+    try {
+      return localStorage.getItem(HANDS_KEY) !== "0";
+    } catch {
+      return true;
+    }
+  });
+  const showHands = (on: boolean) => {
+    setHands(on);
+    try {
+      localStorage.setItem(HANDS_KEY, on ? "1" : "0");
+    } catch {
+      // storage blocked: the choice lasts for this page only
+    }
+  };
   const [guideUnit, setGuideUnit] = useState<"m" | "cm">("m");
   const root = useRef<Object3D | null>(null);
   const sizer = useRef<Group>(null);
@@ -1055,6 +1393,13 @@ export function ModelViewer({
   // The size group uses one factor. A requested size with different proportions is flagged, not stretched onto the mesh.
   const k = uniformFactor(ratios);
   const factor: [number, number, number] = [k, k, k];
+  // Metres per model unit (the model at its real size, with the customer's size on top): sizes shown in m / cm.
+  const realScale = useMemo(() => {
+    if (!modelRoot) return null;
+    const model = authored(modelRoot);
+    model.updateMatrixWorld(true);
+    return new Vector3().setFromMatrixScale(model.matrixWorld).multiplyScalar(k);
+  }, [modelRoot, k]);
   const size = base ? { width: base.width * k, height: base.height * k, depth: base.depth * k } : null;
   const slot = slots.find((item) => item.id === selected) ?? null;
   // Every selected part, the first-picked one first (its settings are the ones shown).
@@ -1072,6 +1417,13 @@ export function ModelViewer({
 
   const onSlots = useMemo(() => (next: Slot[], object: Object3D, cleaned: boolean) => {
     root.current = object;
+    setModelRoot(object);
+    // At rest: every door and drawer found and checked on the real meshes (pivots, hinges, handles moving along).
+    applyPoses(next, undefined);
+    const found = movableParts(serverRef.current?.animation, next, object, serverRef.current); // may add interiors to `next`
+    setDetected(found);
+    setAnim(found);
+    setOpenTarget(found?.state ?? {}); // as the user left it
     if (cleaned) dirty.current = true; // the next save writes the file without the stale glow
     setSlots(next);
     // Nothing is selected until the user picks a part (no outline or panel on load).
@@ -1176,7 +1528,7 @@ export function ModelViewer({
     const clean = name.trim();
     if (!clean) return;
     dirty.current = true; // the exported GLB carries the names
-    setSlots((current) => current.map((item) => (item.id === id ? { ...item, name: clean, naming: "vendor" } : item)));
+    setSlots((current) => current.map((item) => (item.id === id ? { ...item, name: clean, nameAr: null, naming: "vendor" } : item)));
   };
 
   const undo = () => {
@@ -1202,8 +1554,17 @@ export function ModelViewer({
   const exportGlb = () => new Promise<Blob | null>((resolve, reject) => {
     if (!root.current) return resolve(null);
     const restoreView = showAll(slots); // the file has every part, whatever is hidden on screen
+    // Saved at rest (closed), with the movable parts as glTF animation clips; the next frame opens them again.
+    applyPoses(slots, undefined);
+    const clips = animationClips(slots, authored(root.current), anim);
     // Names go into the file: one mesh, one material → the mesh carries the part's name.
     for (const item of slots) if (materials(item.mesh).length === 1) item.mesh.name = item.name;
+    // Each mesh carries its part id(s) in the file (glTF extras): reopening finds every part, added ones included, by
+    // id, never by position in the file.
+    for (const item of slots) {
+      if (materials(item.mesh).length === 1) item.mesh.userData.partId = item.id;
+      else (item.mesh.userData.partIds ??= [])[item.materialIndex] = item.id;
+    }
     // The exporter re-encodes every texture as full-size PNG: one phone photo used as a texture pushed a
     // 24 MB model past the 50 MB storage limit. Opaque textures go out as JPEG, all at most 2048 px.
     for (const item of slots) {
@@ -1222,7 +1583,7 @@ export function ModelViewer({
         restoreView();
         reject(error);
       },
-      { binary: true, maxTextureSize: 2048 },
+      { binary: true, maxTextureSize: 2048, animations: clips },
     );
   });
 
@@ -1233,8 +1594,12 @@ export function ModelViewer({
       document: () => ({
         modelType: server?.modelType,
         separated: slots.length > 1,
-        components: slots.map((item) => ({ id: item.id, name: item.name, editable: true, ...(item.naming ? { naming: item.naming } : {}), ...(item.variants?.length ? { variants: item.variants } : {}) })),
+        components: slots.map((item) => ({ id: item.id, name: item.name, editable: true, ...(item.naming ? { naming: item.naming } : {}), ...(item.nameAr ? { nameAr: item.nameAr } : {}), ...(item.analysisId ? { analysisId: item.analysisId } : {}), ...(item.variants?.length ? { variants: item.variants } : {}) })),
         limits: slots.length > 1 ? null : WHOLE,
+        ...(anim ? { animation: { ...anim, state: Object.fromEntries(Object.entries(openTarget).filter(([, v]) => v > 0)) } } : {}),
+        ...(partsEditor.added.length ? { added: partsEditor.added } : {}),
+        // The photo's vision analysis stays with the model (later editing and regeneration).
+        ...(server?.analysis ? { analysis: server.analysis, modularity: server.modularity, conditioning: server.conditioning } : {}),
       }),
       // Material estimates at the size being saved (the customer may have resized since picking).
       edits: () => {
@@ -1255,7 +1620,7 @@ export function ModelViewer({
           return [id, { ...value, material: quote(value.material, areas.get(id)!) }];
         }));
       },
-      dirty: () => dirty.current,
+      dirty: () => dirty.current || partsEditor.version > 0, // parts added or changed: a new file
       partVariants: () => Object.fromEntries(Object.entries(choicesRef.current).filter(([id, variant]) => slots.some((item) => item.id === id && item.variants?.some((v) => v.id === variant)))),
       visibleParts: () => slots.filter((item) => !hiddenRef.current.has(item.id) && !removedRef.current.has(item.id)).map((item) => item.id),
       removedParts: () => [...removedRef.current].filter((id) => slots.some((item) => item.id === id)),
@@ -1267,6 +1632,7 @@ export function ModelViewer({
         while (loading.current.size) await Promise.all(loading.current);
         // The model as shown (oriented, at the customer's size); handles, guides and outline are not part of it.
         const restoreView = showAll(slots);
+        applyPoses(slots, undefined); // the product's picture is closed; the player opens it again on the next frame
         try {
           return await renderThumbnail(root.current, sizer.current?.scale);
         } finally {
@@ -1276,14 +1642,15 @@ export function ModelViewer({
     });
     // exportGlb reads only `slots` and refs: rebuilt with them, so it is not a dependency of its own.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [edit, onApi, server?.modelType, slots]);
+  }, [edit, onApi, server?.modelType, slots, anim, partsEditor.added, partsEditor.version, openTarget]); // the saved document follows every change
 
 
   const canvas = (
     // A soft studio backdrop (CSS gradient behind a transparent canvas): the model is the only thing that stands out.
     <div
+      {...(edit ? partsEditor.surface : {})}
       className={`relative w-full overflow-hidden ${details !== undefined ? "" : "rounded-2xl border border-slate-200/80"} bg-[radial-gradient(ellipse_at_50%_35%,#ffffff_0%,#f1f5f9_55%,#e2e8f0_100%)] ${
-        edit ? (details !== undefined ? "h-full min-h-[280px] md:min-h-[420px]" : fill ? "h-full min-h-0 max-lg:rounded-none max-lg:border-0" : "h-[52vh] min-h-[320px] lg:h-[calc(100dvh-12.5rem)] lg:min-h-[520px]") : "h-[min(70vh,640px)]"
+        edit ? (details !== undefined ? "h-full min-h-[280px] md:min-h-[420px]" : fill ? "h-full min-h-0 max-lg:rounded-none max-lg:border-0" : "h-[52vh] min-h-[320px] lg:h-[calc(100dvh-12.5rem)] lg:min-h-[520px]") : tall ? "h-[min(78vh,780px)] min-h-[480px]" : "h-[min(70vh,640px)]"
       }`}
     >
       <Canvas
@@ -1298,7 +1665,7 @@ export function ModelViewer({
         <Suspense fallback={null}>
           <Bounds fit clip observe margin={1.25}>
             <group ref={sizer} name={SIZER} scale={factor}>
-              <LoadedModel url={url} frameUrl={frameUrl} dimensions={dimensions} edit={edit} server={server} saved={saved} replay={replay} onReport={onLoaded} onSlots={onSlots} onPick={(id, add) => {
+              <LoadedModel url={url} frameUrl={frameUrl} dimensions={dimensions} edit={edit} server={server} saved={saved} replay={replay} onReport={onLoaded} onSlots={onSlots} movable={anim} liveSlots={liveSlots} choose={choosePick} onPick={(id, add) => {
                 // Phones: tapping the selected part again while its properties show deselects it and lowers the sheet.
                 if (fill && id === selected && !add && !several && also.size === 0 && sheet !== "peek" && window.matchMedia("(max-width: 1023px)").matches) {
                   pick(null);
@@ -1311,6 +1678,42 @@ export function ModelViewer({
             </group>
             <FitOnSignal signal={resetView} />
           </Bounds>
+          <Animator slots={slots} root={modelRoot} config={anim} target={openTarget} />
+          {hands && <IconTracker icons={icons} els={iconEls} />}
+          {edit && modelRoot && <PickerBridge onReady={partsEditor.setPicker} root={authored(modelRoot)} meshes={modelMeshes} structure={structureMeshes} idOf={idOfMesh} around={surroundings} restOf={restOfMesh} />}
+          {edit && modelRoot && realScale && partsEditor.preview && (
+            <PlacementOverlay root={authored(modelRoot)} box={specBox(partsEditor.preview)} space={partsEditor.preview.space} valid={partsEditor.preview.valid} mpu={realScale} unit={guideUnit} ghost axis={offsetAxis(partsEditor.preview.type)} />
+          )}
+          {edit && modelRoot && realScale && !partsEditor.armed && (() => {
+            const spec = partsEditor.added.find((a) => a.id === selected);
+            return spec ? (
+              <>
+                <PlacementOverlay
+                  root={authored(modelRoot)}
+                  box={specBox(spec)}
+                  space={spec.space ? new Box3(new Vector3(...spec.space[0]), new Vector3(...spec.space[1])) : undefined}
+                  axis={offsetAxis(spec.type)}
+                  valid={!partsEditor.blocked}
+                  mpu={realScale}
+                  unit={guideUnit}
+                  ghost={false}
+                  onLabel={(axis) => { setDimFocus(null); setTimeout(() => setDimFocus(axis), 0); }}
+                  onOffset={(side) => { setDimFocus(null); setTimeout(() => setDimFocus(side), 0); }}
+                />
+                <ResizeHandles
+                  root={authored(modelRoot)}
+                  box={specBox(spec)}
+                  mpu={realScale}
+                  blocked={Boolean(partsEditor.blocked)}
+                  onStart={() => partsEditor.beginResize(spec.id)}
+                  onDrag={partsEditor.resizeDrag}
+                  onEnd={partsEditor.endResize}
+                  moveAxis={offsetAxis(spec.type)}
+                  onMove={partsEditor.moveDrag}
+                />
+              </>
+            ) : null;
+          })()}
           {partSizes && <PartSizes target={sizer} names={partSizes.names} show={partSizes.show} onSizes={partSizes.onSizes} lit={partSizes.lit} onLit={partSizes.onLit} signal={`${url}|${factor}`} />}
           {edit && guides && designSize && onDesignSize && base && (
             <ResizeGizmo target={sizer} size={designSize} proportional={proportional} guides={guides} unit={guideUnit} onSize={onDesignSize} onDrag={() => undefined} />
@@ -1325,6 +1728,56 @@ export function ModelViewer({
         {/* Never under the floor or upside down: a vertical drag stops just above the ground. */}
         <OrbitControls ref={orbit} makeDefault enableDamping autoRotate={autoRotate} autoRotateSpeed={1.2} minPolarAngle={0.1} maxPolarAngle={Math.PI / 2 - 0.02} onStart={() => setTurned(true)} />
       </Canvas>
+      {/* The hand icons, one per movable part, on its handle (moved there every frame by IconTracker): above the canvas,
+          so a click never turns the camera or selects a part. */}
+      {!edit && enabledAnimations(anim).length > 0 && loadedUrl === url && (
+        // The moving parts, docked on glass at the bottom of the canvas: how many, open all, close all.
+        <div className="absolute bottom-3 end-3 z-20 flex items-center gap-1 rounded-2xl border border-white/70 bg-white/65 p-1 ps-3 text-xs shadow-lg shadow-slate-900/10 backdrop-blur-md">
+          <DoorOpen className="size-4 text-[#b8731d]" aria-hidden />
+          <span className="font-semibold text-brand-navy">{t("Movable parts")}</span>
+          <span className="rounded-full bg-slate-900/5 px-1.5 font-semibold tabular-nums text-slate-600">{enabledAnimations(anim).length}</span>
+          <button type="button" onClick={() => setOpenTarget(Object.fromEntries(enabledAnimations(anim).map((a) => [a.id, 1])))} className="ms-1 rounded-xl bg-brand-amber px-3 py-1.5 font-semibold text-brand-navy transition hover:bg-[#e8952a]">
+            {t("Open all")}
+          </button>
+          <button type="button" onClick={() => setOpenTarget({})} className="rounded-xl px-3 py-1.5 font-semibold text-slate-600 transition hover:bg-white">
+            {t("Close all")}
+          </button>
+        </div>
+      )}
+      {icons.length > 0 && loadedUrl === url && (
+        // Hide or show the hand icons.
+        <label className="absolute start-3 top-3 z-20 flex cursor-pointer items-center gap-1.5 rounded-full border border-white/70 bg-white/90 px-2.5 py-1.5 text-[11px] font-medium text-slate-600 shadow-sm backdrop-blur">
+          <input type="checkbox" checked={hands} onChange={(e) => showHands(e.target.checked)} className="size-3.5 accent-brand-amber" />
+          <Pointer className="size-3.5" aria-hidden /> {t("Show hand icons")}
+        </label>
+      )}
+      <div className="pointer-events-none absolute inset-0 z-10 overflow-hidden" hidden={!hands}>
+        {icons.map((icon) => {
+          const open = (openTarget[icon.id] ?? 0) > 0;
+          return (
+            <button
+              key={icon.id}
+              ref={(el) => {
+                if (el) iconEls.current.set(icon.id, el);
+                else iconEls.current.delete(icon.id);
+              }}
+              type="button"
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                toggleOpen(icon.id);
+              }}
+              aria-label={t(open ? "Close" : "Open")}
+              aria-pressed={open}
+              style={{ opacity: 0 }}
+              className={`group absolute left-0 top-0 grid size-5 place-items-center rounded-full border border-white/90 shadow shadow-slate-900/30 transition-colors ${open ? "bg-brand-amber text-brand-navy" : "bg-brand-navy/85 text-white"}`}
+            >
+              <span className="pointer-events-none absolute inset-0 rounded-full bg-brand-amber/60 opacity-0 group-hover:animate-ping group-hover:opacity-100" aria-hidden />
+              <Pointer className="relative size-3" aria-hidden />
+            </button>
+          );
+        })}
+      </div>
       {edit && designSize && onDesignSize && (
         // Floating toolbar: typed sizes, the handles / dimensions switch and the unit. Phones: none (the sizes are in "Size & more").
         <div className={`absolute inset-x-3 top-3 flex justify-center ${fill ? "max-lg:hidden" : ""}`}>
@@ -1386,7 +1839,31 @@ export function ModelViewer({
     </div>
   );
 
-  if (!edit) return canvas;
+  const animationPanel = (editing: boolean) =>
+    modelRoot && slots.length > 1 ? (
+      <AnimationPanel
+        config={anim ?? { version: 1, movable: false, animations: [], flagged: [], answer: null }}
+        detected={detected}
+        onChange={(next) => { dirty.current = true; setAnim(next); }}
+        parts={[...new Map(slots.map((s) => [s.id, { id: s.id, name: s.name, nameAr: s.nameAr, mesh: s.mesh }])).values()]}
+        boxOf={(mesh) => { applyPoses(slots, undefined); return boxInModel(mesh, authored(modelRoot)); }}
+        target={openTarget}
+        onTarget={setOpenTarget}
+        edit={editing}
+        onRebuild={(id) => {
+          const slot = slots.find((s) => s.id === id);
+          if (!slot || !anim || !rebuildPanel(slot.mesh)) return;
+          dirty.current = true; // the saved file carries the clean panel; the stored original is unchanged
+          applyPoses(slots, undefined);
+          const cleared = { ...anim, animations: anim.animations.map((a) => (a.component === id ? { ...a, issues: [], enabled: true } : a)) };
+          setAnim(checkMovers(cleared, slots, authored(modelRoot!)));
+          setOpenTarget({});
+        }}
+      />
+    ) : null;
+  if (!edit) {
+    return canvas; // the moving parts are on the canvas (their hand icons, and the bar to open or close them all)
+  }
 
   const download = async () => {
     setDownloading(true);
@@ -1414,7 +1891,7 @@ export function ModelViewer({
     }
   };
 
-  const list: PartInfo[] = slots.filter((item) => !removed.has(item.id)).map((item) => ({ id: item.id, name: item.name, editable: true, naming: item.naming }));
+  const list: PartInfo[] = slots.filter((item) => !removed.has(item.id)).map((item) => ({ id: item.id, name: item.name, nameAr: item.nameAr, editable: true, naming: item.naming }));
   // The parts list takes the room left; download and the page's footer (e.g. "Have it made") stay under it.
   const partsPanel = (
     <div className="flex min-h-0 flex-1 flex-col gap-3">
@@ -1424,6 +1901,8 @@ export function ModelViewer({
       <Download className="size-4" aria-hidden />
       {downloading ? t("Preparing the file…") : t("Download 3D model (.glb)")}
     </button>
+    {/* Its own scroll, at most 45% of the column: the parts list above always keeps its room. */}
+    {modelRoot && slots.length > 1 && <div className="max-h-[45%] min-h-0 shrink-0 overflow-y-auto overscroll-contain [scrollbar-width:thin]">{animationPanel(true)}</div>}
     {partsFooter && <div className="shrink-0">{partsFooter}</div>}
     </div>
   );
@@ -1432,8 +1911,9 @@ export function ModelViewer({
   const columns = `${leftOpen ? "260px" : "0px"}_minmax(0,1fr)_${rightOpen ? "320px" : "0px"}`;
   const controls = (
     <>
+      <div id="sha2ty-part-controls" className="scroll-mt-4" />
       <PartControls
-        name={slot ? (selection.length > 1 ? t("{n} parts selected", { n: selection.length }) : partLabel(t, slot.name)) : null}
+        name={slot ? (selection.length > 1 ? t("{n} parts selected", { n: selection.length }) : partLabel(t, slot.name, slot.nameAr)) : null}
         edit={slot ? { color: `#${(standard(slotMaterial(slot))?.color.getHexString() ?? "cccccc")}`, roughness: standard(slotMaterial(slot))?.roughness, metalness: standard(slotMaterial(slot))?.metalness, ...edits[slot.id] } : null}
         mapping={slot ? edits[slot.id]?.mapping : undefined}
         area={area}
@@ -1477,6 +1957,18 @@ export function ModelViewer({
           onChange={(next) => setPartVariants(slot.id, next)}
         />
       )}
+      <AddComponentsPanel
+        editor={partsEditor}
+        selected={selected}
+        mpu={realScale}
+        unit={guideUnit}
+        focus={dimFocus}
+        // The part's own paint and material controls (colour, presets, woods, textures, roughness, reset).
+        onPaint={() => {
+          openTab("properties");
+          document.getElementById("sha2ty-part-controls")?.scrollIntoView({ behavior: "smooth", block: "start" });
+        }}
+      />
       {woodParts.length > 0 && (
         <div className="rounded-2xl border border-slate-200/80 bg-white p-3 text-sm shadow-sm">
           <MaterialPicker

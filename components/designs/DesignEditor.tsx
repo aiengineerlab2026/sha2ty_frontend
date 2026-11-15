@@ -1,6 +1,6 @@
 "use client";
 
-import { useT } from "@/lib/i18n";
+import { useLocale, useT } from "@/lib/i18n";
 import { useCallback, useEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
@@ -11,9 +11,10 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { appView, useInApp } from "@/lib/app";
 import { authSession } from "@/lib/auth/client";
 import { deleteDesign, designFromModel, designFromUserModel, getDesign, renameDesign, saveItemVersion, savePlanVersion } from "@/lib/designs/api";
-import { requestImplementation, requestTarget, type RequestTarget } from "@/lib/tasks";
+import { requestImplementation, requestTarget, updateRequestViews, type RequestTarget, type RequestViews } from "@/lib/tasks";
+import { makeRequestViews } from "@/lib/designs/requestViews";
 import { resized, stretch } from "@/lib/designs/resize";
-import type { Design, DesignData, DesignVersion, Dimensions, ItemEdits, SourceModel } from "@/lib/designs/schema";
+import type { Design, DesignData, DesignVersion, Dimensions, ItemDesign, ItemEdits, SourceModel } from "@/lib/designs/schema";
 import { fetchCatalogModel } from "@/lib/plan/api";
 import type { PartDocument } from "@/lib/vendor/parts";
 import { uploadPublicFile } from "@/lib/vendor/storage";
@@ -53,6 +54,7 @@ export function DesignEditor({ id, model }: { id: string; model?: string }) {
   const router = useRouter();
   const [designId, setDesignId] = useState<string | null>(id === "new" ? null : id);
   const [userId, setUserId] = useState<string | null>(null);
+  const locale = useLocale();
   const [design, setDesign] = useState<Design | null>(null);
   const [shown, setShown] = useState<Shown | null>(null);
   const [viewKey, setViewKey] = useState(0); // the editor reloads only when another version is opened
@@ -172,6 +174,17 @@ export function DesignEditor({ id, model }: { id: string; model?: string }) {
     };
   };
 
+  /** The request report's two pictures of the saved model (closed with its size, opened with its parts numbered) and
+   * its parts table, rendered from the saved file and uploaded. Throws when they cannot be made: no incomplete report. */
+  const requestViews = async (designId: string, glbUrl: string | null, item: ItemDesign | undefined): Promise<RequestViews> => {
+    if (!glbUrl || !item) throw new Error(t("Save the design first: the request is made from the saved model."));
+    try {
+      return await makeRequestViews(glbUrl, item, locale === "ar" ? "ar" : "en", `designs/${designId}/request`);
+    } catch (caught) {
+      throw new Error(t("Could not make the pictures of the model for the request: {error}", { error: caught instanceof Error ? caught.message : String(caught) }));
+    }
+  };
+
   /** The customised GLB (when the look changed) and a fresh thumbnail, uploaded under `folder`. */
   const files = async (folder: string) => {
     const api = editor.current!;
@@ -216,10 +229,20 @@ export function DesignEditor({ id, model }: { id: string; model?: string }) {
       token.current = crypto.randomUUID();
       if ((v as { unchanged?: boolean }).unchanged) return t("No changes to save.");
       editor.current?.markClean?.();
+      // Its open requests now show this version: their report pictures are made again from it.
+      let viewsError: string | null = null;
+      if ((v as { requests?: number }).requests) {
+        try {
+          await updateRequestViews(design.id, await requestViews(design.id, v.glb_url ?? glbUrl, v.data?.item ?? { ...prev!, ...item }));
+        } catch (caught) {
+          viewsError = caught instanceof Error ? caught.message : String(caught);
+        }
+      }
       if (base) setViewKey((k) => k + 1); // the saved part list of the new file from now on
       setBase(null);
       setShown({ ...(v as Shown), data: v.data ?? { ...shown!.data, item: { ...prev!, ...item } } });
       await refresh(design.id);
+      if (viewsError) throw new Error(t("Saved, but the pictures in your open request could not be updated: {error}", { error: viewsError }));
       return t("Saved.");
     });
   };
@@ -501,7 +524,11 @@ export function DesignEditor({ id, model }: { id: string; model?: string }) {
               // The parts shown in the editor are the ones to make (all shown: the whole model).
               const total = shown?.data.item?.components?.components.length ?? 0;
               const visible = editor.current?.visibleParts?.() ?? null;
-              const task = await requestImplementation(design.id, { ...body, part_ids: visible && total && visible.length < total ? visible : null });
+              // The request is made from the saved model: its report pictures too.
+              if (editor.current?.dirty?.()) throw new Error(t("Save your changes first: the request is made from the saved design."));
+              if (!shown || shown.id !== design.current_version_id) throw new Error(t("Open the latest saved version to request it."));
+              const views = await requestViews(design.id, shown.glb_url, shown.data.item);
+              const task = await requestImplementation(design.id, { ...body, part_ids: visible && total && visible.length < total ? visible : null, views });
               setRequesting(false);
               router.push(`/tasks/${task.id}`);
             })

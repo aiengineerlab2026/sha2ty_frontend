@@ -7,12 +7,24 @@ import type { PartMaterial } from "@/lib/designs/materials";
 /** Another shape a vendor offers for one part (other legs, another headboard): its own GLB, fitted into the part's
  * space when a customer picks it. `price_delta`: what it adds to (or takes off) the price, in EGP. */
 export type PartVariant = { id: string; name: string; glb_url: string; price_delta?: number | null };
-export type PartInfo = { id: string; name: string; editable: boolean; naming?: "file" | "geometry" | "ai" | "unidentified" | "vendor"; variants?: PartVariant[] };
+/** `nameAr`: the Arabic name the vision analysis gave the part (naming "vision"); `analysisId`: its component there. */
+export type PartInfo = { id: string; name: string; nameAr?: string | null; analysisId?: string; editable: boolean; naming?: "file" | "geometry" | "ai" | "unidentified" | "vendor" | "vision" | "estimated"; estimated?: boolean; variants?: PartVariant[] };
 /** The backend's check before saving (services/model_check.py): errors are visible damage, warnings worth a look. */
 export type Swatch = { hex: string; share: number };
 /** `appearance`: the model's front view against the photo's colours (the main colours of each, largest share first). */
 export type ModelValidation = { ok: boolean; errors: string[]; warnings: string[]; parts: number; appearance?: { ok: boolean; issues: string[]; reference?: Swatch[]; model?: Swatch[] } };
-export type PartDocument = { modelType?: string; separated?: boolean; components: PartInfo[]; limits?: string | null; method?: string; validation?: ModelValidation };
+/** The backend's vision analysis of the photo (services/mesh_analysis.py), kept with the model for later editing and
+ * regeneration; `modularity`: how many of its components the generated meshes turned out to be. */
+export type MeshAnalysis = { objectType: string; summary?: string; components: Record<string, unknown>[] };
+export type Modularity = { level: "full" | "partial" | "none"; matched: string[]; missing: string[]; unmatchedMeshes: string[]; note?: string | null };
+export type PartDocument = {
+  modelType?: string; separated?: boolean; components: PartInfo[]; limits?: string | null; method?: string; validation?: ModelValidation;
+  analysis?: MeshAnalysis; modularity?: Modularity; conditioning?: Record<string, unknown>;
+  /** Movable parts (lib/vendor/animation.ts), detected at generation and corrected by the vendor. */
+  animation?: import("./animation").AnimationConfig;
+  /** Parts added in the editor (lib/vendor/parts3d.ts): regenerated from these when resized, never stretched. */
+  added?: import("./parts3d").AddedSpec[];
+};
 export type MaterialEdit = {
   color?: string;
   mapUrl?: string | null;

@@ -367,7 +367,11 @@ export function PlanLayout() {
       // A customised model: its pinned version's look, at its saved size (the size above).
       ...(model.design
         ? { designId: model.design.id, designVersion: model.design.version, materialEdits: model.design.materialEdits, partPoses: model.design.partPoses, partDocument: model.design.partDocument, removedParts: model.design.removedParts }
-        : {}),
+        : model.parts && model.parts.length > 1
+          ? { partDocument: { separated: true, components: model.parts, ...(model.animation ? { animation: model.animation } : {}) } } // movable parts, played in the plan
+          : model.components?.animation
+            ? { partDocument: model.components }
+            : {}),
       x,
       y: baseHeight(mountFor(model.category), geometry.height, size.height),
       z,
@@ -964,6 +968,19 @@ export function PlanLayout() {
                 partId={partId}
                 onPickPart={setPartId}
                 onParts={(id, parts, separated) => setPartList({ id, parts, separated })}
+                onMovable={(id, change) => {
+                  // The checked configuration is kept with the item (quietly: not an undo step); a click opens / closes.
+                  // eslint-disable-next-line react-hooks/immutability -- a ref flag read by the history effect, never rendered
+                  if (change.config) quiet.current = true;
+                  setItems((list) =>
+                    list.map((item) => {
+                      if (item.instanceId !== id) return item;
+                      if (change.config) return { ...item, partDocument: { ...(item.partDocument ?? { components: [] }), animation: change.config } };
+                      const open = item.animationOpen ?? {};
+                      return { ...item, animationOpen: { ...open, [change.toggle!]: (open[change.toggle!] ?? 0) > 0 ? 0 : 1 } };
+                    }),
+                  );
+                }}
                 onMeasured={(id, size, areas) => {
                   if (!geometry) return;
                   // eslint-disable-next-line react-hooks/immutability -- a ref flag read by the history effect, never rendered
