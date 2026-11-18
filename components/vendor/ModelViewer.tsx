@@ -2,16 +2,21 @@
 
 import { useT } from "@/lib/i18n";
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type ComponentRef, type CSSProperties, type ReactNode } from "react";
-import { DoorOpen, Download, Layers, Pointer, Loader2, Palette, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, RotateCcw, RotateCw, SlidersHorizontal } from "lucide-react";
+import { DoorOpen, Download, Layers, Link2, Pointer, Loader2, Palette, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, RotateCcw, RotateCw, SlidersHorizontal } from "lucide-react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
-import { Bounds, ContactShadows, Environment, OrbitControls, useBounds, useGLTF } from "@react-three/drei";
+import { Bounds, ContactShadows, OrbitControls, useBounds, useGLTF } from "@react-three/drei";
 import { OutlinePass } from "three/examples/jsm/postprocessing/OutlinePass.js";
 import { Box3, BufferGeometry, Color, DirectionalLight, Euler, Group, LinearSRGBColorSpace, Matrix4, Mesh, MeshStandardMaterial, NeutralToneMapping, NormalBlending, Object3D, PerspectiveCamera, PMREMGenerator, Quaternion, Raycaster, RepeatWrapping, Scene, Sphere, SRGBColorSpace, Texture, Vector2, Vector3, WebGLRenderer, type Material } from "three";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
+import { FILL_POSITION, KEY_POSITION, STUDIO_LIGHT } from "@/lib/vendor/studioLight";
 import { GLTFExporter } from "three/examples/jsm/exporters/GLTFExporter.js";
-import { alignLike, measure, normalizeModel, uniformFactor, type CatalogSize, type Dimensions, type NormalizationReport } from "@/lib/plan/modelNormalization";
-import type { MaterialEdit, PartDocument, PartEditorApi, PartInfo, PartVariant } from "@/lib/vendor/parts";
+import { alignLike, fitScale, measure, normalizeModel, type CatalogSize, type Dimensions, type NormalizationReport } from "@/lib/plan/modelNormalization";
+import type { AddablePart, MaterialEdit, PartDocument, PartEditorApi, PartInfo, PartVariant } from "@/lib/vendor/parts";
 import { fitInto, loadVariant } from "@/lib/vendor/partVariant";
+import { sameShape, variantProblems } from "@/lib/vendor/variantCheck";
+import { formatPrice } from "@/lib/plan/pricing";
+import { guideWithOptions } from "@/lib/designs/api";
+import { REGISTRY } from "@/lib/vendor/parts3d";
 import { quote } from "@/lib/designs/materials";
 import { boxProject, fabricNormals, inspectUv, seamlessFabric, splitSheetEdge, type Mapping } from "@/lib/vendor/tiling";
 import { PartControls, PartList, partLabel } from "./PartEditor";
@@ -24,7 +29,7 @@ import { AddComponentsPanel, PickerBridge, PlacementOverlay, ResizeHandles, useC
 import { choosePart, offsetAxis, specBox, type Side, type Surroundings } from "@/lib/vendor/parts3d";
 import { checkMovers, movedBox, openCavities, rebuildPanel, type Added } from "@/lib/vendor/reconstruct";
 import { animationClips, animationOf, applyAnimations, attachmentsFrom, boxInModel, carried, enabledAnimations, handleOf, meshesOf, refine, step, type AnimationConfig, type Openness } from "@/lib/vendor/animation";
-import { MIN_SIZE, resized } from "@/lib/designs/resize";
+import { MIN_SIZE, resized, sizeCm } from "@/lib/designs/resize";
 
 export type Slot = { id: string; name: string; nameAr?: string | null; analysisId?: string; naming?: PartInfo["naming"]; variants?: PartVariant[]; mesh: Mesh; materialIndex: number };
 
@@ -88,6 +93,13 @@ export function paint(mat: Material, edit: MaterialEdit) {
     std.normalMap = null;
   }
   if (edit.color) std.color.set(edit.color);
+  // The file's own coat (clearcoat on lacquered legs, sheen on fabric) stays only on what it suits: a wood or paint
+  // picked by the customer shows as its swatch, a fabric keeps its soft sheen.
+  const physical = std as MeshStandardMaterial & { clearcoat?: number; sheen?: number };
+  if (edit.material?.kind === "wood" || edit.material?.kind === "paint") {
+    if (physical.sheen != null) physical.sheen = 0;
+    if (physical.clearcoat != null) physical.clearcoat = edit.material.finish?.wood_type === "lacquer" ? 0.3 : 0;
+  }
   if (edit.roughness != null) std.roughness = edit.roughness;
   if (edit.metalness != null) std.metalness = edit.metalness;
   if (std.map) {
@@ -233,6 +245,44 @@ export async function setVariant(slot: Slot, variant: PartVariant | null) {
   mesh.geometry = geometry;
   mesh.material = base[0].clone();
 }
+
+/** The other choices of this part (the original, "" here, and the other variants) that look exactly like
+ * `variant` once in the part's place: picking it instead of them changes nothing on screen. */
+export async function shapeTwins(slot: Slot, variant: PartVariant, others: PartVariant[]): Promise<string[]> {
+  const file = fileParts.get(slot.mesh);
+  if (!file) return [];
+  file.geometry.computeBoundingBox();
+  const box = file.geometry.boundingBox!;
+  const mine = fitInto((await loadVariant(variant.glb_url)).geometry, box);
+  const twins = sameShape(mine, file.geometry) ? [""] : [];
+  for (const other of others) {
+    if (other.id !== variant.id && sameShape(mine, fitInto((await loadVariant(other.glb_url)).geometry, box))) twins.push(other.name);
+  }
+  return twins;
+}
+/** Vendors: why a new variant file cannot be offered for this part (null: it can). It must open as one 3D part and
+ * look different, once in the part's place, from the part itself and from every variant already offered. */
+export async function variantFileProblem(slot: Slot, url: string, existing: PartVariant[], t: (s: string, v?: Record<string, string>) => string): Promise<string | null> {
+  let loaded;
+  try {
+    loaded = await loadVariant(url);
+  } catch (caught) {
+    return t("This file cannot be offered: {error}", { error: caught instanceof Error ? caught.message : String(caught) });
+  }
+  const file = fileParts.get(slot.mesh) ?? { geometry: originalGeometry.get(slot.mesh) ?? slot.mesh.geometry };
+  file.geometry.computeBoundingBox();
+  const box = file.geometry.boundingBox!;
+  const mine = fitInto(loaded.geometry, box);
+  if (sameShape(mine, file.geometry)) return t("This file has the same shape as the part itself: customers would see no difference. Upload a different shape.");
+  for (const other of existing) {
+    try {
+      if (sameShape(mine, fitInto((await loadVariant(other.glb_url)).geometry, box))) return t("This file has the same shape as “{name}”: customers would see no difference. Upload a different shape.", { name: other.name });
+    } catch {
+      // an older variant that no longer opens is reported by the publish check
+    }
+  }
+  return null;
+}
 let maxAnisotropy = 8; // the renderer's maximum, read when the model loads
 
 const DEFAULT_TILE = 0.3; // metres one pattern tile covers across
@@ -241,9 +291,8 @@ const DEFAULT_TILE = 0.3; // metres one pattern tile covers across
 // printed or pressed decors barely; clear lacquer fills the pores of whatever it covers.
 // A little flat light only: the room environment and the key light shade the model. More flattened every surface
 // (wood grain and fabric weave read washed out).
-const AMBIENT = 0.25;
-/** The thumbnail's light (room environment strength, key and fill lights): see the calibration where it is used. */
-const THUMB_LIGHT = { environment: 0.7, key: 0.5, fill: 0.15 };
+/** The thumbnail's and the live views' light: one calibration (lib/vendor/studioLight). */
+const THUMB_LIGHT = STUDIO_LIGHT;
 
 const RELIEF: Record<string, number> = { oak: 0.7, ash: 0.7, walnut: 0.65, teak: 0.55, mahogany: 0.5, pine: 0.5, beech: 0.45, veneer: 0.5, plywood: 0.35, blockboard: 0.35, particleboard: 0.08, mdf: 0.08, hdf: 0.06, laminate: 0.12, melamine: 0.06 };
 const LACQUER_FILL = 0.4;
@@ -786,9 +835,9 @@ async function renderThumbnail(object: Object3D, scale?: Vector3): Promise<Blob>
     // catalogue picture. No ambient light: the environment already lights every side.
     scene.environmentIntensity = THUMB_LIGHT.environment;
     const key = new DirectionalLight(0xffffff, THUMB_LIGHT.key);
-    key.position.set(6, 8, 4);
+    key.position.set(...KEY_POSITION);
     const fill = new DirectionalLight(0xffffff, THUMB_LIGHT.fill);
-    fill.position.set(-4, 2, -3);
+    fill.position.set(...FILL_POSITION);
     scene.add(key, fill);
     const model = object.clone(true); // shares geometry and materials: nothing is copied or changed
     if (scale) model.scale.multiply(scale); // the customer's size (the editor's size group)
@@ -882,6 +931,24 @@ export function SelectionOutline({ mesh, meshes }: { mesh?: Mesh | null; meshes?
 }
 
 /** Khronos PBR Neutral tone mapping: base colours and textures keep their hue (ACES shifted hues, greyed whites). */
+/** The neutral room environment (three's RoomEnvironment, untinted) at the studio strength. */
+function NeutralRoom() {
+  const get = useThree((state) => state.get);
+  useEffect(() => {
+    const { gl, scene } = get();
+    const pmrem = new PMREMGenerator(gl);
+    const texture = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+    scene.environment = texture;
+    scene.environmentIntensity = STUDIO_LIGHT.environment;
+    pmrem.dispose();
+    return () => {
+      if (scene.environment === texture) scene.environment = null;
+      texture.dispose();
+    };
+  }, [get]);
+  return null;
+}
+
 function ToneMapping() {
   const gl = useThree((state) => state.gl);
   useEffect(() => setNeutral(gl), [gl]);
@@ -1056,6 +1123,11 @@ export function ModelViewer({
   woodModel,
   onDesignSize,
   proportional = true,
+  onProportional,
+  sizeNote,
+  shopper = false,
+  phoneAction,
+  priceGuide,
   actions,
   actionsLabel = "Save",
   removedParts,
@@ -1084,6 +1156,18 @@ export function ModelViewer({
   onDesignSize?: (size: Dimensions) => void;
   /** Handles keep the proportions (true) or change one axis (false). */
   proportional?: boolean;
+  /** With it, a "Lock proportions" switch beside the typed sizes. */
+  onProportional?: (on: boolean) => void;
+  /** What the size under the model is called, instead of the catalogue's (a request: "Requested size"). */
+  sizeNote?: string;
+  /** A customer customising a listing: no vendor set-up (movable parts, file download, renaming), sizes in cm, the
+   * look (fabric, wood, styles) before adding parts. */
+  shopper?: boolean;
+  /** Customers: the per-piece range from earlier bids on this model (undefined while loading); shown with the
+   * chosen variants' and added parts' price differences on top, or "Price determined by vendor bids". */
+  priceGuide?: import("@/lib/designs/api").PriceGuide | null;
+  /** Phones (`fill`): the page's main action (Save, Request bids) at the bottom of the screen, within thumb reach. */
+  phoneAction?: ReactNode;
   /** Fill the parent's height on desktop (the parent sets it); each side panel then scrolls on its own. */
   fill?: boolean;
   /** Viewing as a page's centrepiece (the request page): a taller canvas. */
@@ -1140,6 +1224,8 @@ export function ModelViewer({
   const [slots, setSlots] = useState<Slot[]>([]);
   // Movable parts: the saved (or detected) configuration, edited here, and how far each is asked to be open.
   const [anim, setAnim] = useState<AnimationConfig | null>(() => server?.animation ?? null);
+  // The part types the vendor lets customers add to this model (PartDocument.addable).
+  const [addable, setAddable] = useState<AddablePart[]>(() => server?.addable ?? []);
   const [openTarget, setOpenTarget] = useState<Openness>({});
   const [modelRoot, setModelRoot] = useState<Object3D | null>(null); // root.current, for rendering
   const serverRef = useRef(server);
@@ -1347,12 +1433,15 @@ export function ModelViewer({
       // storage blocked: the choice lasts for this page only
     }
   };
-  const [guideUnit, setGuideUnit] = useState<"m" | "cm">("m");
+  const [guideUnit, setGuideUnit] = useState<"m" | "cm">(shopper ? "cm" : "m");
+  // Phones: a tall, narrow canvas, so the size lines beside the model need more room to stay on screen.
+  const [narrowCanvas] = useState(() => typeof window !== "undefined" && window.matchMedia("(max-width: 639px)").matches);
   const root = useRef<Object3D | null>(null);
   const sizer = useRef<Group>(null);
   const history = useRef<Record<string, MaterialEdit>[]>([]);
   const ahead = useRef<Record<string, MaterialEdit>[]>([]);
   const dirty = useRef(false);
+  const cleanParts = useRef(0); // the added-parts version at the last save
   const removable = (id: string) => {
     const item = slots.find((entry) => entry.id === id);
     return Boolean(item && materials(item.mesh).length === 1); // one part of a shared mesh cannot leave the file alone
@@ -1389,18 +1478,17 @@ export function ModelViewer({
     setRemoved3d(slots, removed);
   }, [removed, slots]);
   const base = report?.finalSize;
-  const ratios: [number, number, number] = designSize && base ? [designSize.width / base.width, designSize.height / base.height, designSize.depth / base.depth] : [1, 1, 1];
-  // The size group uses one factor. A requested size with different proportions is flagged, not stretched onto the mesh.
-  const k = uniformFactor(ratios);
-  const factor: [number, number, number] = [k, k, k];
+  // The model shown at exactly the size on screen (the customer's, else the catalogue's): one dimension source for
+  // the product page, the editor and the request (lib/plan/modelNormalization fitScale).
+  const factor = base ? fitScale(designSize ?? dimensions, base, !proportional) : ([1, 1, 1] as [number, number, number]);
   // Metres per model unit (the model at its real size, with the customer's size on top): sizes shown in m / cm.
   const realScale = useMemo(() => {
     if (!modelRoot) return null;
     const model = authored(modelRoot);
     model.updateMatrixWorld(true);
-    return new Vector3().setFromMatrixScale(model.matrixWorld).multiplyScalar(k);
-  }, [modelRoot, k]);
-  const size = base ? { width: base.width * k, height: base.height * k, depth: base.depth * k } : null;
+    return new Vector3().setFromMatrixScale(model.matrixWorld).multiply(new Vector3(...factor));
+  }, [modelRoot, factor[0], factor[1], factor[2]]); // eslint-disable-line react-hooks/exhaustive-deps
+  const size = base ? { width: base.width * factor[0], height: base.height * factor[1], depth: base.depth * factor[2] } : null;
   const slot = slots.find((item) => item.id === selected) ?? null;
   // Every selected part, the first-picked one first (its settings are the ones shown).
   const selection = useMemo(() => (slot ? [slot, ...slots.filter((item) => item.id !== slot.id && also.has(item.id))] : []), [slot, slots, also]);
@@ -1408,8 +1496,11 @@ export function ModelViewer({
   const area = useMemo(() => (selection.length ? selection.reduce((sum, item) => sum + partArea(item, factor), 0) : null), [selection, factor[0], factor[1], factor[2], shapeTick]); // eslint-disable-line react-hooks/exhaustive-deps
   // The model's wood goes on its wooden parts: shown, not removed, not upholstered (a fabric chosen) and not soft
   // by name (mattress, pillows, bedding…).
+  // Upholstered in the file too: a part whose own material has a fabric sheen (glTF KHR_materials_sheen) is never
+  // turned into wood, even before the customer picks its fabric.
+  const fabricInFile = (item: Slot) => ((originals.get(item.mesh)?.[item.materialIndex] ?? slotMaterial(item)) as { sheen?: number }).sheen! > 0;
   const woodParts = useMemo(
-    () => slots.filter((item) => !removed.has(item.id) && !hidden.has(item.id) && !["fabric", "paint"].includes(edits[item.id]?.material?.kind ?? "") && !SOFT.test(item.name) && !NOT_WOOD.test(item.name)),
+    () => slots.filter((item) => !removed.has(item.id) && !hidden.has(item.id) && !["fabric", "paint"].includes(edits[item.id]?.material?.kind ?? "") && !(edits[item.id]?.material?.kind !== "wood" && fabricInFile(item)) && !SOFT.test(item.name) && !NOT_WOOD.test(item.name)),
     [slots, removed, hidden, edits],
   );
   const woodEdit = woodParts.map((item) => edits[item.id]).find((e) => e?.material?.kind === "wood") ?? null;
@@ -1430,6 +1521,26 @@ export function ModelViewer({
     setSelected((current) => (current && next.some((s) => s.id === current) ? current : null));
     setAlso(new Set());
   }, []);
+
+  // A part the customer adds (a leg, a shelf…) is made of the model's wood once one is picked: what is shown is
+  // what is requested (an added part with no material read "as in the catalogue model").
+  useEffect(() => {
+    const wood = Object.values(edits).find((e) => e.material?.kind === "wood");
+    if (!wood) return;
+    const missing = partsEditor.added.filter((a) => !edits[a.id] && !SOFT.test(a.type));
+    if (!missing.length) return;
+    const next = { ...edits };
+    for (const a of missing) {
+      next[a.id] = { ...wood };
+      const item = slots.find((x) => x.id === a.id);
+      if (!item) continue;
+      paint(slotMaterial(item), next[a.id]);
+      if (wood.mapUrl) void track(loadMap(wood.mapUrl, wood).then((texture) => layPattern(item, texture, next[a.id])));
+    }
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- an added part takes the wood picked before it
+    setEdits(next);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [partsEditor.added, slots]);
 
   const applyAll = (map: Record<string, MaterialEdit>) => {
     for (const item of slots) restore(item);
@@ -1469,6 +1580,13 @@ export function ModelViewer({
     setVariantError(null);
     showVariant(item, variant).then(
       () => {
+        // Never a silent choice: a variant whose 3D file looks like another choice of this part is kept (it names
+        // what the customer wants) but said, so the customer knows the model on screen does not show the difference.
+        if (variant) {
+          void shapeTwins(item, variant, item.variants ?? []).then((twins) => {
+            if (twins.length) setVariantError(t("“{style}” has the same 3D shape as {others}, so the model looks the same. Your choice is saved and named in your request; the vendor confirms the shape.", { style: t(variant.name), others: twins.map((name) => (name ? `“${t(name)}”` : t("the original part"))).join(t(" and ")) }));
+          });
+        }
         dirty.current = true; // the saved GLB carries the new shape
         const next = { ...choicesRef.current };
         if (variant) next[item.id] = variant.id;
@@ -1598,6 +1716,7 @@ export function ModelViewer({
         limits: slots.length > 1 ? null : WHOLE,
         ...(anim ? { animation: { ...anim, state: Object.fromEntries(Object.entries(openTarget).filter(([, v]) => v > 0)) } } : {}),
         ...(partsEditor.added.length ? { added: partsEditor.added } : {}),
+        ...(addable.length ? { addable } : {}),
         // The photo's vision analysis stays with the model (later editing and regeneration).
         ...(server?.analysis ? { analysis: server.analysis, modularity: server.modularity, conditioning: server.conditioning } : {}),
       }),
@@ -1620,12 +1739,28 @@ export function ModelViewer({
           return [id, { ...value, material: quote(value.material, areas.get(id)!) }];
         }));
       },
-      dirty: () => dirty.current || partsEditor.version > 0, // parts added or changed: a new file
+      // Parts added or changed since the last save: a new file (not "ever", or a saved design would stay unsaved).
+      dirty: () => dirty.current || partsEditor.version !== cleanParts.current,
       partVariants: () => Object.fromEntries(Object.entries(choicesRef.current).filter(([id, variant]) => slots.some((item) => item.id === id && item.variants?.some((v) => v.id === variant)))),
       visibleParts: () => slots.filter((item) => !hiddenRef.current.has(item.id) && !removedRef.current.has(item.id)).map((item) => item.id),
       removedParts: () => [...removedRef.current].filter((id) => slots.some((item) => item.id === id)),
       markClean: () => {
         dirty.current = false; // saved: the next save only re-exports after a new change
+        cleanParts.current = partsEditor.version;
+      },
+      checkVariants: async () => {
+        const out = variantProblems(slots.map((item) => ({ id: item.id, name: item.name, variants: item.variants }))).map((p) =>
+          p.problem === "no-file" ? t("{part} · {variant}: no 3D file.", { part: p.part, variant: p.variant })
+          : p.problem === "same-file" ? t("{part} · {variant}: the same 3D file as “{other}”.", { part: p.part, variant: p.variant, other: p.other ?? "" })
+          : t("{part}: two variants are named “{variant}”.", { part: p.part, variant: p.variant }));
+        for (const item of slots) {
+          const vs = item.variants ?? [];
+          for (let i = 0; i < vs.length; i++) {
+            const problem = await variantFileProblem(item, vs[i].glb_url, vs.slice(0, i), t);
+            if (problem) out.push(`${item.name} · ${vs[i].name}: ${problem}`);
+          }
+        }
+        return [...new Set(out)];
       },
       thumbnail: async () => {
         if (!root.current) return null;
@@ -1659,11 +1794,12 @@ export function ModelViewer({
         dpr={[1, 2]}
         onPointerMissed={() => edit && pick(null)}
       >
-        <ambientLight intensity={AMBIENT} />
-        <directionalLight position={[6, 8, 4]} intensity={1.35} />
-        <directionalLight position={[-4, 2, -3]} intensity={0.35} />
+        {/* The thumbnail's light (lib/vendor/studioLight): what the shopper sees is what is saved and sent. */}
+        <directionalLight position={KEY_POSITION} intensity={STUDIO_LIGHT.key} />
+        <directionalLight position={FILL_POSITION} intensity={STUDIO_LIGHT.fill} />
         <Suspense fallback={null}>
-          <Bounds fit clip observe margin={1.25}>
+          {/* Room for the floating size bar above the model while editing. */}
+          <Bounds fit clip observe margin={edit && designSize ? (narrowCanvas ? 1.75 : 1.45) : 1.25}>
             <group ref={sizer} name={SIZER} scale={factor}>
               <LoadedModel url={url} frameUrl={frameUrl} dimensions={dimensions} edit={edit} server={server} saved={saved} replay={replay} onReport={onLoaded} onSlots={onSlots} movable={anim} liveSlots={liveSlots} choose={choosePick} onPick={(id, add) => {
                 // Phones: tapping the selected part again while its properties show deselects it and lowers the sheet.
@@ -1718,7 +1854,7 @@ export function ModelViewer({
           {edit && guides && designSize && onDesignSize && base && (
             <ResizeGizmo target={sizer} size={designSize} proportional={proportional} guides={guides} unit={guideUnit} onSize={onDesignSize} onDrag={() => undefined} />
           )}
-          <Environment preset="warehouse" />
+          <NeutralRoom />
         </Suspense>
         <ToneMapping />
         {/* Always mounted in the editor, not per selection: no flicker or colour shift on select. */}
@@ -1783,6 +1919,12 @@ export function ModelViewer({
         <div className={`absolute inset-x-3 top-3 flex justify-center ${fill ? "max-lg:hidden" : ""}`}>
           <div className="flex max-w-full flex-wrap items-end gap-3 rounded-2xl border border-white/70 bg-white/80 px-3 py-2 shadow-lg shadow-slate-900/5 backdrop-blur-md">
             <SizeInputs size={designSize} unit={guideUnit} proportional={proportional} onSize={onDesignSize} />
+            {onProportional && (
+              // Locked: one size changes all three (the model keeps its shape). Unlocked: each side on its own.
+              <button type="button" aria-pressed={proportional} onClick={() => onProportional(!proportional)} title={t(proportional ? "Changing one size changes the others" : "Width, height and depth change separately")} className={`inline-flex h-8 items-center gap-1.5 self-end rounded-lg px-2 text-xs font-semibold transition ${proportional ? "bg-brand-navy text-white" : "border border-slate-200 bg-white text-slate-600"}`}>
+                <Link2 className="size-3.5" aria-hidden /> {t("Lock proportions")}
+              </button>
+            )}
             <span className="hidden h-8 w-px bg-slate-200 sm:block" aria-hidden />
             <label className="flex cursor-pointer items-center gap-2 self-center text-xs font-medium text-slate-600">
               <span className="relative inline-flex">
@@ -1805,10 +1947,11 @@ export function ModelViewer({
       {edit && fill && loadedUrl === url && (
         // Phones: turn the model by hand (a one-finger drag), or 45° at a time with these.
         <>
-          {!turned && (
+          {!turned && sheet === "peek" && (
             <p className="pointer-events-none absolute inset-x-0 bottom-16 mx-auto w-fit rounded-full bg-brand-navy/80 px-3 py-1.5 text-xs font-medium text-white backdrop-blur lg:hidden">{t("Drag to rotate · pinch to zoom")}</p>
           )}
-          <div className="absolute bottom-3 end-3 flex gap-2 lg:hidden">
+          {/* Top corner: the size lines and labels live along the bottom of the model. */}
+          <div className="absolute end-3 top-3 flex gap-2 lg:hidden">
             {([1, -1] as const).map((dir) => (
               <button key={dir} type="button" onClick={() => turn(dir)} aria-label={t(dir === 1 ? "Rotate left" : "Rotate right")} className="flex size-11 items-center justify-center rounded-full border border-white/70 bg-white/90 text-brand-navy shadow-lg shadow-slate-900/10 backdrop-blur-md active:scale-95">
                 {dir === 1 ? <RotateCcw className="size-5" aria-hidden /> : <RotateCw className="size-5" aria-hidden />}
@@ -1829,7 +1972,7 @@ export function ModelViewer({
         {/* With the page's own overlay (studio) its size pill replaces this one; on phones the size pill on top does. */}
         <p className={`${overlay ? "hidden" : ""} ${fill ? "max-lg:hidden" : ""} rounded-full border border-white/70 bg-white/85 px-3 py-1 font-medium tabular-nums text-slate-700 shadow-sm backdrop-blur`}>
           {size
-            ? `${designSize ? t("Your size") : dimensions ? t("Scaled to the catalogue size") : t("No catalogue size yet: authored size")} · ${size.width.toFixed(2)} × ${size.height.toFixed(2)} × ${size.depth.toFixed(2)} m (W × H × D)`
+            ? `${designSize ? t("Your size") : sizeNote ?? (dimensions ? t("Catalogue size") : t("No catalogue size yet: authored size"))} · ${sizeCm(size)} ${t("cm")} (${t("W × H × D")})`
             : t("Loading…")}
         </p>
         {report?.warnings.map((warning) => (
@@ -1895,22 +2038,49 @@ export function ModelViewer({
   // The parts list takes the room left; download and the page's footer (e.g. "Have it made") stay under it.
   const partsPanel = (
     <div className="flex min-h-0 flex-1 flex-col gap-3">
-    <PartList parts={list} selected={selected} also={also} several={slots.length > 1 ? several : undefined} onSeveral={setSeveral} limits={slots.length > 1 ? null : WHOLE} onSelect={(id, add) => { pick(id, add); openTab("properties"); }} onRename={rename} hidden={hidden} onToggle={slots.length > 1 ? toggle : undefined}
+    {/* At least a few parts in view: on a short window the column scrolls instead of squeezing the list away. */}
+    <div className="flex min-h-48 flex-1 flex-col [&>aside]:flex-1">
+    <PartList parts={list} selected={selected} also={also} several={slots.length > 1 ? several : undefined} onSeveral={setSeveral} limits={slots.length > 1 ? null : WHOLE} onSelect={(id, add) => { pick(id, add); openTab("properties"); }} onRename={shopper ? undefined : rename} hidden={hidden} onToggle={slots.length > 1 ? toggle : undefined}
       {...(removedParts !== undefined && slots.length > 1 ? { onRemove: removePart, canRemove: removable, removedCount: removed.size, onRestore: restoreParts } : {})} />
-    <button type="button" onClick={() => void download()} disabled={downloading} className="flex w-full shrink-0 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-brand-navy shadow-sm hover:bg-slate-50 disabled:opacity-60">
+    </div>
+    {!shopper && <button type="button" onClick={() => void download()} disabled={downloading} className="flex w-full shrink-0 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-brand-navy shadow-sm hover:bg-slate-50 disabled:opacity-60">
       <Download className="size-4" aria-hidden />
       {downloading ? t("Preparing the file…") : t("Download 3D model (.glb)")}
-    </button>
+    </button>}
     {/* Its own scroll, at most 45% of the column: the parts list above always keeps its room. */}
-    {modelRoot && slots.length > 1 && <div className="max-h-[45%] min-h-0 shrink-0 overflow-y-auto overscroll-contain [scrollbar-width:thin]">{animationPanel(true)}</div>}
+    {modelRoot && slots.length > 1 && !shopper && <div className="max-h-[45%] min-h-0 shrink-0 overflow-y-auto overscroll-contain [scrollbar-width:thin]">{animationPanel(true)}</div>}
     {partsFooter && <div className="shrink-0">{partsFooter}</div>}
     </div>
   );
   // Side panels: their own thin scrollbar, the height of the canvas.
   const panel = `lg:overflow-y-auto lg:overscroll-contain [scrollbar-width:thin] ${fill ? "lg:h-full lg:min-h-0" : "lg:sticky lg:top-20 lg:max-h-[calc(100dvh-12.5rem)]"}`;
   const columns = `${leftOpen ? "260px" : "0px"}_minmax(0,1fr)_${rightOpen ? "320px" : "0px"}`;
+  // The customer's options that change the price: each chosen variant's and each added part's difference.
+  const optionDeltas = [
+    ...Object.entries(choices).map(([id, v]) => slots.find((s) => s.id === id)?.variants?.find((x) => x.id === v)?.price_delta),
+    ...partsEditor.added.map((a) => addable.find((x) => x.type === a.type)?.price_delta),
+  ];
+  const estimate = guideWithOptions(priceGuide, optionDeltas);
   const controls = (
     <>
+      {shopper && priceGuide !== undefined && (
+        // An estimate, said as one, with what it rests on; no figure without enough earlier bids.
+        <section className="rounded-2xl border border-slate-200/80 bg-white p-3 text-sm shadow-sm" aria-live="polite">
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{t("Estimated price")}</p>
+          {estimate ? (
+            <>
+              <p className="mt-1 text-lg font-bold tabular-nums text-brand-navy"><bdi>{formatPrice(estimate.low)} – {formatPrice(estimate.high)}</bdi> <span className="text-xs font-medium text-slate-500">{t("per piece")}</span></p>
+              {estimate.extra !== 0 && <p className="text-xs text-slate-600">{t("Includes {amount} for your options", { amount: formatPrice(estimate.extra) })}</p>}
+              <p className="mt-1 text-[11px] leading-relaxed text-slate-500">{t("From {n} vendor bids on {r} earlier requests for this model, adjusted to your size. An estimate only: the final price comes from vendors' bids.", { n: priceGuide!.count, r: priceGuide!.requests })}</p>
+            </>
+          ) : (
+            <>
+              <p className="mt-1 font-semibold text-brand-navy">{t("Price determined by vendor bids")}</p>
+              <p className="mt-0.5 text-[11px] leading-relaxed text-slate-500">{t("Not enough earlier bids on this model to estimate a price yet.")}</p>
+            </>
+          )}
+        </section>
+      )}
       <div id="sha2ty-part-controls" className="scroll-mt-4" />
       <PartControls
         name={slot ? (selection.length > 1 ? t("{n} parts selected", { n: selection.length }) : partLabel(t, slot.name, slot.nameAr)) : null}
@@ -1945,10 +2115,12 @@ export function ModelViewer({
           setFuture(0);
         }}
       />
-      {slot && selection.length === 1 && takesVariants(slot) && (onUploadVariant || slot.variants?.length) && (
+      {slot && selection.length === 1 && takesVariants(slot) && (onUploadVariant || slot.variants?.some((v) => v.offered !== false)) && (
         <PartVariants
           key={slot.id}
-          variants={slot.variants ?? []}
+          // Customers see the variants the vendor offers; vendors all of theirs.
+          variants={onUploadVariant ? slot.variants ?? [] : (slot.variants ?? []).filter((v) => v.offered !== false)}
+          onValidate={(url) => variantFileProblem(slot, url, slot.variants ?? [], t)}
           chosen={choices[slot.id] ?? null}
           busy={variantBusy}
           error={variantError}
@@ -1957,6 +2129,48 @@ export function ModelViewer({
           onChange={(next) => setPartVariants(slot.id, next)}
         />
       )}
+      {shopper ? (
+        <>
+      {woodParts.length > 0 && (
+        <div className="rounded-2xl border border-slate-200/80 bg-white p-3 text-sm shadow-sm">
+          <MaterialPicker
+            mode="wood"
+            edit={woodEdit}
+            area={woodArea}
+            woodVendor={woodVendor}
+            woodModel={woodModel}
+            onPick={(picked) => {
+              const next = { ...picked, color: "#ffffff" };
+              // Each part its own texture (its tiling is its own); the image is loaded and prepared once.
+              void track(
+                Promise.all(woodParts.map((item) => loadMap(next.mapUrl!, next).then((texture) => [item.id, texture] as const))).then((pairs) => changeWood(next, new Map(pairs))),
+              );
+            }}
+          />
+        </div>
+      )}
+          {/* Adding parts: only the types the vendor offers for this model, folded until asked for. */}
+          {addable.length > 0 && <details className="group rounded-2xl border border-slate-200/80 bg-white shadow-sm">
+            <summary className="cursor-pointer list-none px-4 py-3 text-sm font-semibold text-brand-navy marker:hidden">{t("Add parts (shelves, drawers, legs…)")}</summary>
+            <div className="px-1 pb-1">
+      <AddComponentsPanel
+        allowed={addable}
+        editor={partsEditor}
+        selected={selected}
+        mpu={realScale}
+        unit={guideUnit}
+        focus={dimFocus}
+        // The part's own paint and material controls (colour, presets, woods, textures, roughness, reset).
+        onPaint={() => {
+          openTab("properties");
+          document.getElementById("sha2ty-part-controls")?.scrollIntoView({ behavior: "smooth", block: "start" });
+        }}
+      />
+            </div>
+          </details>}
+        </>
+      ) : (
+        <>
       <AddComponentsPanel
         editor={partsEditor}
         selected={selected}
@@ -1986,6 +2200,9 @@ export function ModelViewer({
             }}
           />
         </div>
+      )}
+          {onUploadVariant && <AddableEditor value={addable} onChange={(next) => { setAddable(next); dirty.current = true; }} />}
+        </>
       )}
     </>
   );
@@ -2049,10 +2266,10 @@ export function ModelViewer({
       style={{ "--cols": columns.replace(/_/g, " ") } as CSSProperties}
     >
       {/* Full height: no scroll of its own, only the parts list inside scrolls. */}
-      <div className={`hidden ${fill ? "lg:flex lg:h-full lg:min-h-0 lg:flex-col lg:overflow-hidden" : `lg:block ${panel}`} ${leftOpen ? "" : "lg:invisible lg:w-0"}`}>{leftOpen && partsPanel}</div>
+      <div className={`hidden ${fill ? "lg:flex lg:h-full lg:min-h-0 lg:flex-col lg:overflow-y-auto lg:overscroll-contain [scrollbar-width:thin]" : `lg:block ${panel}`} ${leftOpen ? "" : "lg:invisible lg:w-0"}`}>{leftOpen && partsPanel}</div>
       {/* Phones: the 3D view ends where the sheet starts (full: stays above the half height), so the camera fits
           the model into what is visible and a selected part is never under the sheet. */}
-      <div className={`relative ${fill ? `max-lg:absolute max-lg:inset-x-0 max-lg:top-0 max-lg:transition-[bottom] max-lg:duration-300 ${sheet === "peek" ? "max-lg:bottom-[5.5rem]" : "max-lg:bottom-[52%]"} lg:h-full lg:min-h-0` : "max-lg:sticky max-lg:top-16 max-lg:z-10"}`}>
+      <div className={`relative ${fill ? `max-lg:absolute max-lg:inset-x-0 max-lg:top-0 max-lg:transition-[bottom] max-lg:duration-300 ${sheet === "peek" ? (phoneAction ? "max-lg:bottom-[9rem]" : "max-lg:bottom-[5.5rem]") : "max-lg:bottom-[52%]"} lg:h-full lg:min-h-0` : "max-lg:sticky max-lg:top-16 max-lg:z-10"}`}>
         {canvas}
         <div className="absolute bottom-3 end-3 hidden gap-1.5 lg:flex">
           <button type="button" onClick={() => setLeftOpen((o) => !o)} title={leftOpen ? t("Hide parts") : t("Show parts")} className="rounded-lg border border-white/70 bg-white/85 p-1.5 text-slate-600 shadow-sm backdrop-blur transition hover:text-brand-navy">
@@ -2106,7 +2323,46 @@ export function ModelViewer({
           {actions && <div className={tab === "properties" ? "max-lg:hidden" : ""}>{actions}</div>}
           </div>
         </div>
+        {fill && phoneAction && <div className="mx-3 mb-[max(0.75rem,env(safe-area-inset-bottom))] mt-1 shrink-0 lg:hidden">{phoneAction}</div>}
       </div>
     </div>
+  );
+}
+
+/** Vendors: which parts customers may add to this model (none ticked: they add nothing), and what each adds to
+ * the price. Saved with the model's part list; the backend refuses customer designs with anything else. */
+function AddableEditor({ value, onChange }: { value: AddablePart[]; onChange: (next: AddablePart[]) => void }) {
+  const t = useT();
+  const ar = t("Part") === "جزء";
+  const on = new Map(value.map((a) => [a.type, a]));
+  return (
+    <section className="space-y-2 rounded-2xl border border-slate-200/80 bg-white p-3 text-sm shadow-sm">
+      <p className="text-[13px] font-semibold text-brand-navy">{t("Parts customers can add")}</p>
+      <p className="text-[11px] text-slate-500">{t("Only what you can make and price. Customers see these as optional parts with your price difference.")}</p>
+      <ul className="space-y-1.5">
+        {REGISTRY.map((d) => {
+          const entry = on.get(d.type);
+          return (
+            <li key={d.type} className="flex items-center gap-2">
+              <label className="flex flex-1 items-center gap-2 text-xs text-slate-700">
+                <input type="checkbox" checked={Boolean(entry)} onChange={(e) => onChange(e.target.checked ? [...value, { type: d.type }] : value.filter((a) => a.type !== d.type))} className="size-4 accent-brand-amber" />
+                {ar ? d.nameAr : t(d.name)}
+              </label>
+              {entry && (
+                <input
+                  type="number"
+                  inputMode="decimal"
+                  placeholder={t("± EGP")}
+                  aria-label={t("Price difference (EGP)")}
+                  value={entry.price_delta ?? ""}
+                  onChange={(e) => onChange(value.map((a) => (a.type === d.type ? { ...a, price_delta: e.target.value === "" ? null : Number(e.target.value) } : a)))}
+                  className="h-8 w-24 rounded-lg border border-slate-200 px-2 text-xs tabular-nums"
+                />
+              )}
+            </li>
+          );
+        })}
+      </ul>
+    </section>
   );
 }

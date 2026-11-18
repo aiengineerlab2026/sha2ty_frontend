@@ -28,7 +28,7 @@ import { vendorBrands } from "@/lib/tasks";
 import { Header } from "@/components/shatably/Header";
 import { PaintSwatch } from "@/components/vendor/PaintLibrary";
 import { fetchCatalog } from "@/lib/plan/api";
-import { CATALOG_GROUPS, groupOf } from "@/lib/plan/categories";
+import { CATALOG_GROUPS, FURNITURE_TYPES, furnitureType, groupOf, shopperReady } from "@/lib/plan/categories";
 import { formatPrice } from "@/lib/plan/pricing";
 import { tileLabel } from "@/lib/plan/roomMaterials";
 import type { CatalogModel } from "@/lib/plan/types";
@@ -41,6 +41,7 @@ import type {
 } from "@/lib/vendor/types";
 import type { CatalogKind } from "./CatalogDetail";
 import { sizeLabel } from "@/lib/plan/modelNormalization";
+import { cm } from "@/lib/designs/resize";
 
 const PAGE_TITLE: Record<CatalogKind, [string, string]> = {
   models: ["Models", "Furniture ready to place in a plan"],
@@ -159,9 +160,18 @@ export function HomePage({ only }: { only?: CatalogKind } = {}) {
   // Vendors' paints only: Sha2ty's own (the admins' studio) are left out.
   const colours = paints.filter((p) => (p.surface ?? "wall") === "wall" && !platformIds.has((p as { vendor_id?: string }).vendor_id ?? ""));
   // One carousel per model type that has models (all empty: a single "Models" row says so).
+  // Shoppers see ready listings only (vendors see everything, their own drafts included), narrowed by the search
+  // box and the type chips on the models page.
+  const [query, setQuery] = useState("");
+  const [type, setType] = useState<string | null>(null);
+  const words = query.trim().toLowerCase();
+  // A word naming a kind of furniture finds it in either language ("chair" finds "كرسي …").
+  const wordType = words ? FURNITURE_TYPES.find((option) => option.words.test(words))?.id : undefined;
+  const matches = (m: CatalogModel) => !words || `${m.title} ${m.company ?? ""}`.toLowerCase().includes(words) || (wordType != null && furnitureType(m) === wordType);
+  const listed = models.filter((m) => (vendor || shopperReady(m)) && matches(m) && (!type || furnitureType(m) === type));
   const modelGroups = CATALOG_GROUPS.map((c) => ({
     ...c,
-    items: models.filter((m) => groupOf(m.category) === c.id),
+    items: listed.filter((m) => groupOf(m.category) === c.id),
   })).filter((g) => g.items.length);
   const metrics: [string, number | null, string][] = [
     ["Your models", ownModels, "/vendor"],
@@ -248,8 +258,28 @@ export function HomePage({ only }: { only?: CatalogKind } = {}) {
         {
           <>
             {!only && vendor && <div className="mt-6"><VendorRequestsPanel /></div>}
-            {show("models") && signedIn && <MyCustomisedRow grid={grid} />}
-            {show("models") && signedIn && <MyUploadedRow grid={grid} />}
+            {only === "models" && (
+              // Find a model: words in its name or vendor, and the kind of furniture.
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                <input
+                  type="search"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder={t("Search models, e.g. chair or كرسي")}
+                  aria-label={t("Search models")}
+                  className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm shadow-sm outline-none focus:border-brand-amber focus:ring-2 focus:ring-brand-amber/20 sm:max-w-xs"
+                />
+                <div className="flex flex-wrap gap-1.5" role="group" aria-label={t("Type")}>
+                  {[{ id: null, label: "All" }, ...FURNITURE_TYPES].map((option) => (
+                    <button key={option.label} type="button" aria-pressed={type === option.id} onClick={() => setType(option.id)} className={`rounded-full px-3 py-1.5 text-xs font-semibold transition ${type === option.id ? "bg-brand-navy text-white" : "border border-slate-200 bg-white text-slate-600 hover:text-brand-navy"}`}>
+                      {t(option.label)}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+            {show("models") && signedIn && !words && !type && <MyCustomisedRow grid={grid} />}
+            {show("models") && signedIn && !words && !type && <MyUploadedRow grid={grid} />}
             {show("models") &&
               (modelGroups.length
                 ? modelGroups
@@ -270,7 +300,7 @@ export function HomePage({ only }: { only?: CatalogKind } = {}) {
                   title={t(g.label)}
                   subtitle={t(g.hint)}
                   count={g.items.length}
-                  empty={t("No ready models yet.")}
+                  empty={words || type ? t("No models match. Try another word or type.") : t("No ready models yet.")}
                 >
                   {g.items.map((m) => (
                     <Card
@@ -284,7 +314,7 @@ export function HomePage({ only }: { only?: CatalogKind } = {}) {
                       title={m.title}
                       owner={m.company ? { name: m.company, logo_url: m.company_logo ?? null } : null}
                       meta={
-                        sizeLabel(m) ?? t("Size not set")
+                        m.width_m && m.height_m ? `${[m.width_m, m.height_m, m.depth_m].filter(Boolean).map(cm).join(" × ")} ${t("cm")}` : t("Size not set")
                       }
                     >
                       {m.thumbnail ? (
@@ -728,7 +758,10 @@ function MyCustomisedRow({ grid }: { grid: boolean }) {
                 )}
               </div>
               <div className="space-y-1 p-3.5">
-                <h3 className="truncate text-sm font-semibold text-brand-navy">{d.title || t("Untitled design")}</h3>
+                <h3 className="flex items-center gap-1.5 text-sm font-semibold text-brand-navy">
+                  {d.draft && <span className="shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-900">{t("Draft")}</span>}
+                  <span className="truncate">{d.title || t("Untitled design")}</span>
+                </h3>
                 <p className="truncate text-xs tabular-nums text-slate-500">
                   <bdi>{size ? `${size.width.toFixed(2)} × ${size.height.toFixed(2)} × ${size.depth.toFixed(2)} m` : t("Size not set")}</bdi>
                 </p>

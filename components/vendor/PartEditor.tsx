@@ -6,6 +6,7 @@ import { MaterialPicker } from "./MaterialPicker";
 import { ChevronDown, MousePointerClick, Pencil, Redo2, RotateCcw, Search, Trash2, Undo2 } from "lucide-react";
 import type { MaterialEdit, PartInfo } from "@/lib/vendor/parts";
 import { meshNameAr } from "@/lib/vendor/meshNames";
+import { arabicName } from "@/lib/designs/partNames";
 
 /** "Seat Cushion 2" → "وسادة المقعد 2": the part word is translated, the number kept. Vendor names show as typed. */
 export function partLabel(t: T, name: string, nameAr?: string | null): string {
@@ -14,7 +15,8 @@ export function partLabel(t: T, name: string, nameAr?: string | null): string {
   const base = match?.[1] || name;
   const label = match?.[2] ? `${t(base)} ${match[2]}` : t(base);
   // In Arabic, mesh names from the file ("Door_Right", "frame_left_side") are worded from their parts.
-  return label === name && t("Part") === "جزء" ? (meshNameAr(name) ?? name) : label;
+  // Names the dictionary does not know are translated word by word (as on the request page: "Chair Base" → "قاعدة كرسي").
+  return label === name && t("Part") === "جزء" ? (meshNameAr(name) ?? arabicName(name)) : label;
 }
 
 
@@ -44,7 +46,8 @@ export function PartList({
   limits?: string | null;
   /** `add`: shift / ctrl / ⌘ held (add to the selection, or take out). */
   onSelect: (id: string, add?: boolean) => void;
-  onRename: (id: string, name: string) => void;
+  /** Without it (customers), part names cannot be changed. */
+  onRename?: (id: string, name: string) => void;
   /** With `onToggle`: a checkbox per part shows / hides it in the 3D view. */
   hidden?: Set<string>;
   onToggle?: (id: string, shown: boolean) => void;
@@ -69,7 +72,7 @@ export function PartList({
         <label className="mx-4 mb-2 flex cursor-pointer items-center gap-2 text-xs text-slate-600">
           <input type="checkbox" checked={several} onChange={(e) => onSeveral(e.target.checked)} className="size-3.5 rounded accent-[#f2a33a]" />
           {t("Select several")}
-          <span className="ms-auto text-[11px] text-slate-400">{t("or shift-click")}</span>
+          <span className="ms-auto text-[11px] text-slate-400 max-lg:hidden">{t("or shift-click")}</span>
         </label>
       )}
       <div className="relative px-3">
@@ -103,7 +106,7 @@ export function PartList({
                   aria-label={t("Part name")}
                   onBlur={(e) => {
                     setEditing(null);
-                    if (e.target.value.trim() && e.target.value.trim() !== partLabel(t, part.name, part.nameAr)) onRename(part.id, e.target.value);
+                    if (e.target.value.trim() && e.target.value.trim() !== partLabel(t, part.name, part.nameAr)) onRename?.(part.id, e.target.value);
                   }}
                   onKeyDown={(e) => {
                     if (e.key === "Enter") e.currentTarget.blur();
@@ -115,7 +118,7 @@ export function PartList({
                 <button
                   type="button"
                   onClick={(e) => onSelect(part.id, e.shiftKey || e.ctrlKey || e.metaKey)}
-                  onDoubleClick={() => setEditing(part.id)}
+                  onDoubleClick={() => onRename && setEditing(part.id)}
                   aria-current={active}
                   className={`min-w-0 flex-1 truncate py-2 text-start text-sm transition-colors ${active ? "font-semibold text-brand-navy" : "text-slate-700"} ${off ? "text-slate-400 line-through" : ""}`}
                 >
@@ -124,9 +127,11 @@ export function PartList({
               )}
               {editing !== part.id && (
                 <span className={`flex shrink-0 items-center gap-0.5 transition-opacity ${active ? "opacity-100" : "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100"}`}>
-                  <button type="button" onClick={() => setEditing(part.id)} title={t("Rename")} aria-label={t("Rename {name}", { name: partLabel(t, part.name, part.nameAr) })} className="rounded-md p-1 text-slate-400 transition hover:bg-white hover:text-brand-navy">
-                    <Pencil className="size-3.5" aria-hidden />
-                  </button>
+                  {onRename && (
+                    <button type="button" onClick={() => setEditing(part.id)} title={t("Rename")} aria-label={t("Rename {name}", { name: partLabel(t, part.name, part.nameAr) })} className="rounded-md p-1 text-slate-400 transition hover:bg-white hover:text-brand-navy">
+                      <Pencil className="size-3.5" aria-hidden />
+                    </button>
+                  )}
                   {onRemove && (
                     <button
                       type="button"
@@ -152,7 +157,7 @@ export function PartList({
           <button type="button" onClick={onRestore} className="font-medium text-brand-navy underline-offset-2 hover:underline">{t("Restore removed parts")}</button>
         </div>
       )}
-      {onToggle && <p className="border-t border-slate-100 px-4 py-2.5 text-[11px] leading-snug text-slate-400">{t("Tick to show or hide a part. Double-click a name to rename it.")}</p>}
+      {onToggle && <p className="border-t border-slate-100 px-4 py-2.5 text-[11px] leading-snug text-slate-400">{onRename ? t("Tick to show or hide a part. Double-click a name to rename it.") : t("Untick a part you do not want made: it is left out of your request.")}</p>}
       {limits && <p className="border-t border-slate-100 px-4 py-3 text-xs leading-snug text-slate-500">{t(limits)}</p>}
     </aside>
   );
@@ -229,10 +234,11 @@ export function PartControls({
         </div>
       </div>
       {!name && (
-        <div className="flex flex-col items-center gap-2 rounded-xl border border-dashed border-slate-200 px-4 py-5 text-center text-slate-500">
-          <MousePointerClick className="size-6 text-slate-300" aria-hidden />
-          <p className="text-sm">{t("Click a part in the 3D view or the parts list to change its texture.")}</p>
-        </div>
+        // One line: on a phone the materials under it (the model's wood) stay in view.
+        <p className="flex items-center gap-2 rounded-xl bg-slate-50 px-3 py-2 text-xs text-slate-500">
+          <MousePointerClick className="size-4 shrink-0 text-slate-400" aria-hidden />
+          {t("Click a part in the 3D view or the parts list to change its texture.")}
+        </p>
       )}
       {name && (
         <>

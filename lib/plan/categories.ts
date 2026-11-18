@@ -47,3 +47,24 @@ export function baseHeight(mount: Mount | undefined, ceiling: number, itemHeight
   if (mount === "wall") return Math.max(0, Math.min(ceiling - itemHeight, EYE_LEVEL - itemHeight / 2));
   return 0;
 }
+
+/** The kinds of furniture (models.furniture_type, supabase/models_listing.sql); the words find one in a search or
+ * a listing saved before the column. */
+export const FURNITURE_TYPES: { id: string; label: string; words: RegExp }[] = [
+  { id: "chairs", label: "Chairs", words: /chair|stool|كرسي|كراسي|كرسى/i },
+  { id: "sofas", label: "Sofas", words: /sofa|couch|كنبة|كنب|أريكة|اريكة|ركنة/i },
+  { id: "beds", label: "Beds", words: /\bbed|سرير|bedroom/i },
+  { id: "tables", label: "Tables", words: /table|desk|طاولة|ترابيزة|سفرة|مكتب/i },
+  { id: "storage", label: "Wardrobes & storage", words: /wardrobe|cupboard|closet|cabinet|خزانة|دولاب|نيش/i },
+  { id: "doors", label: "Doors", words: /door|باب/i },
+];
+/** A listing's type: the vendor's (models.furniture_type), else read from its name. */
+export const furnitureType = (m: string | { title: string; furniture_type?: string | null }) =>
+  (typeof m === "string" ? null : m.furniture_type) ?? FURNITURE_TYPES.find((type) => type.words.test(typeof m === "string" ? m : m.title))?.id ?? null;
+
+/** What shoppers see: a listing its vendor did not hide (models.listed, also applied by the backend), with a name,
+ * a picture and a full, plausible size (every side set, the longest at least 35 cm). */
+export function shopperReady(m: { title: string; listed?: boolean; thumbnail?: string | null; width_m: number | null; height_m: number | null; depth_m: number | null }) {
+  const sizes = [m.width_m, m.height_m, m.depth_m].map(Number);
+  return m.listed !== false && Boolean(m.title.trim()) && Boolean(m.thumbnail) && sizes.every((v) => v > 0.02) && Math.max(...sizes) >= 0.35;
+}

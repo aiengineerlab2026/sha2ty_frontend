@@ -9,6 +9,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { Check, ChevronDown, LogOut, Menu, PackageCheck, Shapes, Shield } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { getUser, logout, onAuthChange, type AuthUser } from "@/lib/auth/client";
+import { supabase } from "@/lib/supabase/client";
 import type { VendorProfile } from "@/lib/vendor/types";
 import { Logo, LogoMark } from "./Logo";
 import { AppDownloadDialog } from "@/components/home/AppDownload";
@@ -20,7 +21,7 @@ type NavItem = { href: string; label: string };
 /** "Get the app" opens the install popup (QR code + download link) instead of navigating. */
 const GET_APP = "#get-app";
 
-/** One header for everyone (guests, customers, vendors): the public catalogue. */
+/** Guests and customers: the catalogue, the plan builder and their requests. */
 const CATALOG_NAV: NavItem[] = [
   { href: "/catalog/models", label: "Models" },
   { href: "/catalog/paints", label: "Paints" },
@@ -28,6 +29,14 @@ const CATALOG_NAV: NavItem[] = [
   ...(WINDOWS_ENABLED ? [{ href: "/catalog/windows", label: "Windows" }] : []),
   { href: "/plan", label: "Plan" },
   { href: "/tasks", label: "Requests" },
+  { href: GET_APP, label: "Get the app" },
+];
+
+/** Vendors: the requests they bid on and their own studio, with the catalogue to browse. */
+const VENDOR_NAV: NavItem[] = [
+  { href: "/vendor/tasks", label: "Customer requests" },
+  { href: "/vendor", label: "My models" },
+  { href: "/catalog/models", label: "Catalogue" },
   { href: GET_APP, label: "Get the app" },
 ];
 
@@ -47,8 +56,21 @@ export function Header({ actions }: { vendor?: VendorProfile | null; actions?: R
   const [getApp, setGetApp] = useState(false);
   // Anyone signed in (customer or vendor).
   const [user, setUser] = useState<AuthUser | null>(null);
+  // A vendor (a row in vendors) gets the vendor navigation; customers and guests the shopping one.
+  const [vendorOf, setVendorOf] = useState<string | null>(null); // the user id known to be a vendor
+  useEffect(() => {
+    if (!user) return;
+    let live = true;
+    void supabase().from("vendors").select("id").eq("id", user.id).maybeSingle().then(({ data }) => live && setVendorOf(data ? user.id : null));
+    return () => {
+      live = false;
+    };
+  }, [user]);
+  const isVendor = Boolean(user && vendorOf === user.id);
   // Requests are a signed-in feature: guests do not see the link (the page itself asks them to log in).
-  const nav = CATALOG_NAV.filter((item) => user || item.href !== "/tasks");
+  const nav = isVendor ? VENDOR_NAV : CATALOG_NAV.filter((item) => user || item.href !== "/tasks");
+  // Log in / sign up come back to this page afterwards (the listing or design the visitor was on).
+  const here = pathname && !pathname.startsWith("/vendor/") && pathname !== "/" ? `?next=${encodeURIComponent(pathname)}` : "";
   const current = activeHref(pathname, nav);
   // The links show whenever they fit beside the brand and the account controls (measured, so a desktop never gets the
   // menu button for links that would fit); the menu button only when they do not. With page actions (the plan
@@ -56,6 +78,15 @@ export function Header({ actions }: { vendor?: VendorProfile | null; actions?: R
   const navRef = useRef<HTMLElement>(null);
   const linksRef = useRef<HTMLUListElement>(null);
   const [fits, setFits] = useState(true);
+  // Phones: the menu always shows (it also holds the account's pages); measured, so desktop never gets it for nothing.
+  const [narrow, setNarrow] = useState(false);
+  useEffect(() => {
+    const query = window.matchMedia("(max-width: 639px)");
+    const update = () => setNarrow(query.matches);
+    update();
+    query.addEventListener("change", update);
+    return () => query.removeEventListener("change", update);
+  }, []);
   useLayoutEffect(() => {
     const bar = navRef.current;
     const links = linksRef.current;
@@ -85,7 +116,7 @@ export function Header({ actions }: { vendor?: VendorProfile | null; actions?: R
     setAdmin(false);
     setUser(null);
     await logout();
-    router.push("/vendor/login");
+    router.push("/");
     router.refresh();
   };
 
@@ -107,8 +138,10 @@ export function Header({ actions }: { vendor?: VendorProfile | null; actions?: R
 
         {/* The links show only when the space left by the brand and the account controls fits them all (a container
             query on this nav, so a longer studio nav or a wider account area never overlaps); otherwise the menu. */}
-        <nav ref={navRef} className="relative flex h-full min-w-9 flex-1 items-center gap-4 xl:gap-6" aria-label={t("Main")}>
-          {(actions || !fits) && <MobileNav nav={nav} current={current} signedIn={Boolean(user)} admin={admin} wideOnly={Boolean(actions)} onGetApp={() => setGetApp(true)} />}
+        {/* overflow-x-clip: the hidden copy of the links that is measured never widens the page (right-to-left it stuck
+            out past the left edge, so phones could scroll sideways). */}
+        <nav ref={navRef} className="relative flex h-full min-w-9 flex-1 items-center gap-4 overflow-x-clip xl:gap-6" aria-label={t("Main")}>
+          {(actions || !fits || narrow) && <MobileNav nav={nav} current={current} signedIn={Boolean(user)} admin={admin} wideOnly={Boolean(actions)} onGetApp={() => setGetApp(true)} account={isVendor ? [] : [{ href: "/designs", label: "My designs" }, { href: "/orders", label: "Bought items" }]} onSignOut={() => void signOut()} />}
           {/* Kept laid out when hidden (invisible): its natural width is what is measured. */}
           <ul ref={linksRef} aria-hidden={!actions && !fits ? true : undefined} className={`h-full shrink-0 items-center gap-1 whitespace-nowrap ${showLinks}`}>
             {nav.map((item) => {
@@ -152,32 +185,32 @@ export function Header({ actions }: { vendor?: VendorProfile | null; actions?: R
           )}
           <LanguageSwitch />
           {user && <NotificationBell me={user.id} />}
-          {user && (
+          {user && !isVendor && (
             <Link
               href="/designs"
               title={t("My designs")}
-              className={`inline-flex h-9 items-center gap-1.5 rounded-lg px-2.5 font-medium text-slate-600 transition-colors hover:bg-slate-50 hover:text-brand-navy`}
+              className={`max-sm:hidden inline-flex h-9 items-center gap-1.5 rounded-lg px-2.5 font-medium text-slate-600 transition-colors hover:bg-slate-50 hover:text-brand-navy`}
             >
               <Shapes className="size-4" aria-hidden />
               <span className="sr-only 2xl:not-sr-only">{t("My designs")}</span>
             </Link>
           )}
-          <CartMenu />
+          {!isVendor && <CartMenu />}
           {user ? (
             <>
-              <Link
+              {!isVendor && <Link
                 href="/orders"
                 title={t("Bought items")}
-                className="inline-flex h-9 items-center gap-1.5 rounded-lg px-2.5 font-medium text-slate-600 transition-colors hover:bg-slate-50 hover:text-brand-navy"
+                className="max-sm:hidden inline-flex h-9 items-center gap-1.5 rounded-lg px-2.5 font-medium text-slate-600 transition-colors hover:bg-slate-50 hover:text-brand-navy"
               >
                 <PackageCheck className="size-4" aria-hidden />
                 <span className="sr-only 2xl:not-sr-only">{t("Bought items")}</span>
-              </Link>
+              </Link>}
               <button
                 type="button"
                 onClick={() => void signOut()}
                 title={user.email}
-                className="inline-flex h-9 items-center gap-1.5 rounded-lg px-3 font-medium text-slate-600 transition-colors hover:bg-slate-50 hover:text-red-600"
+                className="max-sm:hidden inline-flex h-9 items-center gap-1.5 rounded-lg px-3 font-medium text-slate-600 transition-colors hover:bg-slate-50 hover:text-red-600"
               >
                 <LogOut className="size-4" aria-hidden />
                 <span className="hidden sm:inline">{t("Sign out")}</span>
@@ -185,11 +218,11 @@ export function Header({ actions }: { vendor?: VendorProfile | null; actions?: R
             </>
           ) : (
             <>
-              <Link href="/vendor/login" className="hidden h-9 items-center rounded-lg px-3 font-medium text-slate-600 transition-colors hover:bg-slate-50 hover:text-brand-navy sm:inline-flex">
+              <Link href={`/vendor/login${here}`} className="hidden h-9 items-center rounded-lg px-3 font-medium text-slate-600 transition-colors hover:bg-slate-50 hover:text-brand-navy sm:inline-flex">
                 {t("Log in")}
               </Link>
               <Link
-                href="/vendor/signup"
+                href={`/vendor/signup${here}`}
                 className="inline-flex h-9 items-center rounded-lg bg-brand-amber px-3.5 font-semibold text-brand-navy shadow-sm transition hover:-translate-y-px hover:bg-[#e8952a] hover:shadow-md"
               >
                 {t("Sign up")}
@@ -218,10 +251,13 @@ function NavLink({ href, onGetApp, children, ...rest }: { href: string; onGetApp
   );
 }
 
-function MobileNav({ nav, current, signedIn, admin, wideOnly, onGetApp }: { nav: NavItem[]; current: string | null; signedIn: boolean; admin: boolean; wideOnly: boolean; onGetApp: () => void }) {
+function MobileNav({ nav, current, signedIn, admin, wideOnly, onGetApp, account, onSignOut }: { nav: NavItem[]; current: string | null; signedIn: boolean; admin: boolean; wideOnly: boolean; onGetApp: () => void;
+  /** Phones: the account's own pages (labelled here instead of bare icons in the bar), and signing out. */
+  account?: NavItem[]; onSignOut?: () => void }) {
   const t = useT();
+  const rtl = useLocale() === "ar";
   return (
-    <DropdownMenu>
+    <DropdownMenu dir={rtl ? "rtl" : "ltr"}>
       <DropdownMenuTrigger asChild>
         <button
           type="button"
@@ -231,7 +267,8 @@ function MobileNav({ nav, current, signedIn, admin, wideOnly, onGetApp }: { nav:
           <Menu className="size-5" />
         </button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" sideOffset={8} className="w-52 p-1.5">
+      {/* Opens toward the page (right-to-left: leftward) and never past the screen edge. */}
+      <DropdownMenuContent align="start" sideOffset={8} collisionPadding={8} className="w-52 p-1.5">
         {nav.map((item) =>
           item.href === GET_APP ? (
             <DropdownMenuItem key={item.href} onSelect={onGetApp} className="cursor-pointer">
@@ -245,6 +282,17 @@ function MobileNav({ nav, current, signedIn, admin, wideOnly, onGetApp }: { nav:
             </Link>
           </DropdownMenuItem>
           ),
+        )}
+        {signedIn && (account?.length || onSignOut) && (
+          <>
+            <DropdownMenuSeparator className="sm:hidden" />
+            {account?.map((item) => (
+              <DropdownMenuItem key={item.href} asChild className="sm:hidden">
+                <Link href={item.href} className="cursor-pointer">{t(item.label)}</Link>
+              </DropdownMenuItem>
+            ))}
+            {onSignOut && <DropdownMenuItem onSelect={onSignOut} className="cursor-pointer text-red-600 sm:hidden">{t("Sign out")}</DropdownMenuItem>}
+          </>
         )}
         {admin && (
           <>

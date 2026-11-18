@@ -7,6 +7,7 @@ import { woodType, type PartMaterial } from "@/lib/designs/materials";
 import dynamic from "next/dynamic";
 import { useMemo, useRef, useState, type ReactNode } from "react";
 import { isSoft, sized, type PartSize } from "@/lib/vendor/partSizes";
+import { cm } from "@/lib/designs/resize";
 import type { DesignSpec } from "@/lib/tasks";
 import { arabicName, isFitting, mainName } from "@/lib/designs/partNames";
 
@@ -15,8 +16,6 @@ const ModelViewer = dynamic(() => import("@/components/vendor/ModelViewer").then
   loading: () => <div className="h-[min(60vh,520px)] rounded-2xl border border-slate-200 bg-[#e4eaee]" />,
 });
 
-/** A length in metres as centimetres: whole numbers plain, a board's 1.8 kept. */
-const cm = (v: number | null | undefined) => (v == null ? "—" : String(Math.round(v * 1000) / 10));
 
 /** The customised model exactly as requested (the frozen version): the 3D model at its size, the overall dimensions
  * against the catalogue's, the one wood of the whole model and each part's material on it (what is used, no costs). */
@@ -87,7 +86,7 @@ export function DesignSpecView({ spec, download = false, camera = false, layout,
       const mat = spec.materials.find((x) => x.part_id === part.id);
       const size = rows?.find((r) => r.name === t(part.name));
       const cm = (v?: number) => (v == null ? "" : Math.round(v * 1000));
-      const key = `${name}|${JSON.stringify(mat ? { ...mat, part: undefined, part_id: undefined } : null)}|${part.requested !== false}|${cm(size?.width)}x${cm(size?.height)}x${cm(size?.depth)}`;
+      const key = `${name}|${part.variant?.id ?? ""}|${JSON.stringify(mat ? { ...mat, part: undefined, part_id: undefined } : null)}|${part.requested !== false}|${cm(size?.width)}x${cm(size?.height)}x${cm(size?.depth)}`;
       const seen = out.get(key);
       if (seen) seen.count += size?.count ?? 1;
       else out.set(key, { part, count: size?.count ?? 1, name, size });
@@ -123,6 +122,8 @@ export function DesignSpecView({ spec, download = false, camera = false, layout,
             <ModelViewer
               url={spec.glb_url}
               dimensions={d}
+              proportional={spec.resize_mode !== "independent"}
+              sizeNote={sameSize ? undefined : t("Requested size")}
               partSizes={partSizes}
               resetView={resetView}
               tall={layout === "page"}
@@ -189,7 +190,7 @@ export function DesignSpecView({ spec, download = false, camera = false, layout,
               </span>
             ))}
           </div>
-          {!sameSize && <p className="mt-2 text-[11px] tabular-nums text-slate-500">{t("Catalogue model “{title}”", { title: s.title })}: {cm(s.width_m)} × {cm(s.height_m)} × {cm(s.depth_m)} {t("cm")}</p>}
+          {!sameSize && <p className="mt-2 text-[11px] tabular-nums text-slate-500">{t("Catalogue model “{title}”", { title: s.title })}: <span dir="ltr" className="inline-block">{cm(s.width_m)} × {cm(s.height_m)} × {cm(s.depth_m)} {t("cm")}</span></p>}
           {wood && (
             <p className="mt-2 flex items-center gap-2 text-xs font-medium text-slate-700"><Swatch mat={wood} small /> {woodName(t, wood.material!)}</p>
           )}
@@ -203,7 +204,7 @@ export function DesignSpecView({ spec, download = false, camera = false, layout,
             const key = size?.key;
             const on = Boolean(lit && lit === key);
             const used = isWood
-              ? t("The model's wood")
+              ? woodName(t, mat!.material!)
               : mat?.material
                 ? materialUsed(t, mat.material)
                 : mat
@@ -228,6 +229,9 @@ export function DesignSpecView({ spec, download = false, camera = false, layout,
                     {used}
                     {mat?.mapUrl && !isWood && <> · <a href={mat.mapUrl} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} className="text-brand-navy underline">{t("Image")}</a></>}
                   </span>
+                  {part.variant && <span className="mt-1 inline-block rounded-md bg-brand-navy/5 px-1.5 py-0.5 text-[11px] font-semibold text-brand-navy">{t("Style: {style}", { style: t(part.variant.name) })}</span>}
+                  {/* A part the customer added (one the vendor offers for this model): optional, priced in the bid. */}
+                  {spec.part_document?.added?.some((a) => a.id === part.id) && <span className="ms-1 mt-1 inline-block rounded-md bg-amber-50 px-1.5 py-0.5 text-[11px] font-semibold text-amber-900 ring-1 ring-amber-200">{t("Optional part added by the customer")}</span>}
                   {size && <span className={`mt-1.5 ${pill}`} dir="ltr">{cm(size.width)} × {cm(size.height)} × {cm(size.depth)} <span className="font-normal text-slate-500">{t("cm")}</span></span>}
                 </span>
                 <span className="shrink-0 rounded-full bg-brand-navy/5 px-2 py-0.5 text-xs font-bold tabular-nums text-brand-navy">×{count}</span>
@@ -236,7 +240,7 @@ export function DesignSpecView({ spec, download = false, camera = false, layout,
           })}
         </ul>
         <p className="text-[11px] leading-relaxed text-slate-500">
-          {t("Sizes of one piece; pillows, the mattress and bedding are not included.")} {t("Click a part to highlight it on the model.")}
+          {listed.length < spec.parts.length ? t("Sizes of one piece; pillows, the mattress and bedding are not included.") : t("Sizes of one piece.")} {t("Click a part to highlight it on the model.")}
           {fittings > 0 && <> {t("{n} small fittings (handles, locks, keys…) are not listed.", { n: fittings })}</>}
         </p>
         <a href={`/catalog/models/${s.model_id}`} className="inline-block text-xs font-semibold text-brand-navy underline decoration-brand-amber/60 underline-offset-4">{t("Original catalogue listing")}</a>

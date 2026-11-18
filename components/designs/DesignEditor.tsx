@@ -10,12 +10,14 @@ import { Header } from "@/components/shatably/Header";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { appView, useInApp } from "@/lib/app";
 import { authSession } from "@/lib/auth/client";
-import { deleteDesign, designFromModel, designFromUserModel, getDesign, renameDesign, saveItemVersion, savePlanVersion } from "@/lib/designs/api";
+import { deleteDesign, guideWithOptions, priceGuide, type PriceGuide, designFromModel, designFromUserModel, getDesign, renameDesign, saveItemVersion, savePlanVersion } from "@/lib/designs/api";
 import { requestImplementation, requestTarget, updateRequestViews, type RequestTarget, type RequestViews } from "@/lib/tasks";
 import { makeRequestViews } from "@/lib/designs/requestViews";
-import { resized, stretch } from "@/lib/designs/resize";
+import { resized, sizeCm, stretch } from "@/lib/designs/resize";
+import { draftName, hasUnsavedChanges } from "@/lib/designs/unsaved";
 import type { Design, DesignData, DesignVersion, Dimensions, ItemDesign, ItemEdits, SourceModel } from "@/lib/designs/schema";
 import { fetchCatalogModel } from "@/lib/plan/api";
+import { formatPrice } from "@/lib/plan/pricing";
 import type { PartDocument } from "@/lib/vendor/parts";
 import { uploadPublicFile } from "@/lib/vendor/storage";
 import { Section } from "@/components/vendor/PartEditor";
@@ -34,6 +36,44 @@ const FACTOR: Record<Unit, number> = { m: 1, cm: 100, mm: 1000 };
 
 function sourceSize(source: SourceModel): Dimensions | null {
   return source.width_m && source.height_m && source.depth_m ? { width: source.width_m, height: source.height_m, depth: source.depth_m } : null;
+}
+
+/** What a request sends, in words (the saved version): size, wood, fabrics and colours by part, styles, the parts
+ * to make. The request dialog shows it before publishing; vendors get the same (DesignSpecView). */
+function designSummary(item: ItemDesign, parts: PartDocument | null, visible: string[] | null, t: ReturnType<typeof useT>): { label: string; value: string }[] {
+  const comps = parts?.components ?? item.components?.components ?? [];
+  const partName = (id: string) => t(comps.find((c) => c.id === id)?.name ?? id);
+  const removed = new Set(item.removed_parts ?? []);
+  const edits = Object.entries(item.material_edits ?? {}).filter(([id]) => !removed.has(id));
+  const wood = edits.map(([, e]) => e.material).find((m) => m?.kind === "wood");
+  // "Green linen: Chair Base, Chair Back": each fabric / paint once, with the parts it is on.
+  const byLook = new Map<string, string[]>();
+  for (const [id, e] of edits) {
+    const m = e.material;
+    if (!m || m.kind === "wood") continue;
+    const look = m.kind === "paint" ? `${t("Paint")}: ${m.color_name ? t(m.color_name) : m.name}` : `${m.name} (${t("Fabric")})`;
+    byLook.set(look, [...(byLook.get(look) ?? []), partName(id)]);
+  }
+  const styles = Object.entries(item.part_variants ?? {}).map(([id, v]) => {
+    const name = comps.find((c) => c.id === id)?.variants?.find((x) => x.id === v)?.name;
+    return name ? `${partName(id)}: ${t(name)}` : null;
+  }).filter(Boolean);
+  const all = comps.filter((c) => !removed.has(c.id)).map((c) => c.id);
+  // Parts the customer added: optional, each with the vendor's price difference (or priced in the bids).
+  const added = (item.components?.added ?? []).map((a) => {
+    const delta = parts?.addable?.find((x) => x.type === a.type)?.price_delta;
+    return `${partName(a.id)}${delta ? ` (${delta > 0 ? "+" : "−"}${formatPrice(Math.abs(delta))})` : ""}`;
+  });
+  const made = visible && visible.length < all.length ? visible : null;
+  const d = item.dimensions ?? sourceSize(item.source);
+  return [
+    { label: "Size", value: d ? `${sizeCm(d)} ${t("cm")} (${t("W × H × D")})${item.resize_mode === "independent" ? ` · ${t("sides changed separately")}` : ""}` : t("Catalogue size") },
+    { label: "Wood", value: wood ? `${wood.name}${wood.finish ? ` · ${wood.finish.name}` : ""}` : t("As in the catalogue model") },
+    { label: "Fabrics and colours", value: byLook.size ? [...byLook].map(([look, on]) => `${look}: ${on.join("، ")}`).join(" · ") : t("As in the catalogue model") },
+    { label: "Styles", value: styles.length ? styles.join(" · ") : t("Original") },
+    { label: "Parts to make", value: made ? made.map(partName).join("، ") : t("The whole model ({n} parts)", { n: all.length }) },
+    ...(added.length ? [{ label: "Optional parts you added", value: added.join("، ") }] : []),
+  ];
 }
 
 /** Same content, whatever the key order (to tell a real change from a save of the same state). */
@@ -61,9 +101,11 @@ export function DesignEditor({ id, model }: { id: string; model?: string }) {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // What a long save or request is doing now (big 3D files on a slow connection take a while): shown beside it.
+  const [stage, setStage] = useState<string | null>(null);
   const [title, setTitle] = useState("");
-  const [naming, setNaming] = useState<string | null>(null); // the first-save name dialog (its input)
   const [requesting, setRequesting] = useState(false);
+  const [shownParts, setShownParts] = useState<string[] | null>(null); // the parts shown when the request was opened
   // Who a request goes to (the model's original vendor only, or every vendor for Sha2ty's own models).
   const [target, setTarget] = useState<RequestTarget | null>(null);
   useEffect(() => {
@@ -95,6 +137,7 @@ export function DesignEditor({ id, model }: { id: string; model?: string }) {
   const show = useCallback((version: Shown) => {
     setShown(version);
     setDims(version.data.item?.dimensions ?? (version.data.item ? sourceSize(version.data.item.source) : null));
+    setProportional(version.data.item?.resize_mode !== "independent");
     setViewKey((k) => k + 1);
     editor.current = null;
   }, []);
@@ -150,6 +193,7 @@ export function DesignEditor({ id, model }: { id: string; model?: string }) {
       setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
       saving.current = false;
+      setStage(null);
       setBusy(false);
     }
   };
@@ -179,6 +223,7 @@ export function DesignEditor({ id, model }: { id: string; model?: string }) {
   const requestViews = async (designId: string, glbUrl: string | null, item: ItemDesign | undefined): Promise<RequestViews> => {
     if (!glbUrl || !item) throw new Error(t("Save the design first: the request is made from the saved model."));
     try {
+      setStage(t("Making the pictures for vendors…"));
       return await makeRequestViews(glbUrl, item, locale === "ar" ? "ar" : "en", `designs/${designId}/request`);
     } catch (caught) {
       throw new Error(t("Could not make the pictures of the model for the request: {error}", { error: caught instanceof Error ? caught.message : String(caught) }));
@@ -190,11 +235,14 @@ export function DesignEditor({ id, model }: { id: string; model?: string }) {
     const api = editor.current!;
     let glbUrl = shown?.glb_url ?? null;
     if (base || api.dirty() || !glbUrl) {
+      setStage(t("Preparing the 3D model…"));
       const blob = await api.exportGlb();
+      if (blob) setStage(t("Uploading the 3D model ({size} MB)…", { size: (blob.size / 1e6).toFixed(1) }));
       if (blob) glbUrl = await uploadPublicFile(userId!, new File([blob], "design.glb", { type: "model/gltf-binary" }), `${folder}/model`);
     }
     let thumbnailUrl: string | null = null;
     try {
+      setStage(t("Uploading the picture…"));
       const image = await api.thumbnail();
       if (image) thumbnailUrl = await uploadPublicFile(userId!, new File([image], `thumbnail.${image.type === "image/webp" ? "webp" : "png"}`, { type: image.type }), `${folder}/thumbnail`);
     } catch {
@@ -207,8 +255,8 @@ export function DesignEditor({ id, model }: { id: string; model?: string }) {
   const save = () => {
     if (saving.current) return;
     if (!designId) {
-      const source = shown?.data.item?.source;
-      setNaming(t("My {title}", { title: source?.title ?? "" }).trim());
+      // The first save needs no name: a draft with a temporary one (named later, e.g. when publishing a request).
+      void createNamed(draftName(shown?.data.item?.source.title ?? "", t), true);
       return;
     }
     void run(async () => {
@@ -247,7 +295,7 @@ export function DesignEditor({ id, model }: { id: string; model?: string }) {
     });
   };
 
-  const createNamed = (name: string) =>
+  const createNamed = (name: string, draft = false) =>
     run(async () => {
       const source = shown?.data.item?.source;
       if (!source) return;
@@ -256,27 +304,71 @@ export function DesignEditor({ id, model }: { id: string; model?: string }) {
       // The customer's own model: a new design of it, then this save as its first version.
       const made = source.source_type === "user"
         ? await designFromUserModel(source.model_id, name).then(async (d) => (await saveItemVersion(d.id, { item, glb_url: glbUrl, thumbnail_url: thumbnailUrl, note: "", clientToken: token.current }), d))
-        : await designFromModel(source.model_id, name, { item, glb_url: glbUrl, thumbnail_url: thumbnailUrl, note: "", clientToken: token.current });
+        : await designFromModel(source.model_id, name, { item, glb_url: glbUrl, thumbnail_url: thumbnailUrl, note: "", clientToken: token.current, draft });
       token.current = crypto.randomUUID();
       editor.current?.markClean?.();
       if (base) setViewKey((k) => k + 1);
       setBase(null);
-      setNaming(null);
       setDesignId(made.id);
       // The page now is this design (a refresh reopens it), without reloading the editor or its undo history.
       window.history.replaceState(null, "", `/designs/${made.id}`);
       if (made.current) setShown(made.current);
       await refresh(made.id);
-      return t("“{title}” saved.", { title: made.title });
+      return draft ? t("Saved as a draft. Give it a name above, or when you request bids.") : t("“{title}” saved.", { title: made.title });
     });
 
   /** Changes on screen that are not in the saved version (a request uses the saved version). */
-  const unsaved = () => {
-    if (base) return true;
-    if (editor.current?.dirty()) return true;
-    const saved = shown?.data.item?.dimensions;
-    return Boolean(dims && saved && stable(dims) !== stable(saved));
-  };
+  const unsaved = () =>
+    hasUnsavedChanges({
+      editorDirty: Boolean(editor.current?.dirty()),
+      newFile: Boolean(base),
+      dims,
+      savedDims: shown?.data.item?.dimensions,
+      sourceDims: shown?.data.item ? sourceSize(shown.data.item.source) : null,
+    });
+
+  // Leaving with unsaved changes asks first (a customisation is easily an hour's work): closing or reloading the tab
+  // (the browser's own prompt), a link to another page or design, and the browser's Back button. A saved design
+  // (nothing changed since) leaves without a word.
+  const pendingRef = useRef<() => boolean>(() => false);
+  useEffect(() => {
+    pendingRef.current = () => Boolean(shown?.data.item) && !saving.current && unsaved();
+  });
+  useEffect(() => {
+    const pending = () => pendingRef.current();
+    const leave = t("You have unsaved changes to this design. Leave without saving?");
+    const warn = (event: BeforeUnloadEvent) => {
+      if (pending()) event.preventDefault();
+    };
+    const onLink = (event: MouseEvent) => {
+      const a = (event.target as Element | null)?.closest?.("a[href]") as HTMLAnchorElement | null;
+      if (!a || a.target === "_blank" || event.button !== 0 || event.metaKey || event.ctrlKey) return;
+      const to = new URL(a.href, location.href);
+      if (to.origin !== location.origin || (to.pathname === location.pathname && to.search === location.search)) return;
+      if (pending() && !window.confirm(leave)) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+    };
+    // One extra entry for this page: Back first lands on it (same address) and is asked about, then really goes back.
+    history.pushState({ sha2tyGuard: true }, "", location.href);
+    const onBack = () => {
+      if (pending() && !window.confirm(leave)) {
+        history.pushState({ sha2tyGuard: true }, "", location.href); // stay
+        return;
+      }
+      window.removeEventListener("popstate", onBack);
+      history.back();
+    };
+    window.addEventListener("beforeunload", warn);
+    document.addEventListener("click", onLink, true);
+    window.addEventListener("popstate", onBack);
+    return () => {
+      window.removeEventListener("beforeunload", warn);
+      document.removeEventListener("click", onLink, true);
+      window.removeEventListener("popstate", onBack);
+    };
+  }, [t]);
 
   const rename = () =>
     run(async () => {
@@ -302,15 +394,52 @@ export function DesignEditor({ id, model }: { id: string; model?: string }) {
   const parts: PartDocument | null = (() => {
     if (base) return null; // a new file: its parts are read from it
     const own = item?.components ?? null;
-    if (!listingId || item?.base_glb_url || !liveParts?.components.length) return own;
+    if (!listingId || item?.base_glb_url || !liveParts?.components.length) return own && listingId && liveParts ? { ...own, addable: liveParts.addable } : own;
     if (!own?.components.length) return liveParts;
     const variants = new Map(liveParts.components.map((c) => [c.id, c.variants]));
-    return { ...own, components: own.components.map((c) => ({ ...c, variants: variants.get(c.id) ?? c.variants })) };
+    // What the vendor lets customers add or pick is the listing's now (never an older copy saved in the design).
+    return { ...own, addable: liveParts.addable, components: own.components.map((c) => ({ ...c, variants: variants.get(c.id) ?? c.variants })) };
   })();
+  // The price guide for this listing at the size on screen (re-asked half a second after the size settles).
+  const [guide, setGuide] = useState<PriceGuide | null | undefined>(undefined);
+  const guideKey = listingId && dims ? `${listingId}|${dims.width.toFixed(2)}|${dims.height.toFixed(2)}|${dims.depth.toFixed(2)}` : null;
+  useEffect(() => {
+    if (!guideKey || !listingId) return;
+    let live = true;
+    const timer = setTimeout(() => {
+      priceGuide(listingId, dims).then((g) => live && setGuide(g), () => live && setGuide(null));
+    }, 500);
+    return () => {
+      live = false;
+      clearTimeout(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the key holds listing and size
+  }, [guideKey]);
   const plan = shown?.data.plan;
   const kind = design?.kind ?? "item";
   const roomCount = Array.isArray(plan?.geometry.rooms) ? plan.geometry.rooms.length : 0;
   const original = item ? sourceSize(item.source) : null;
+
+  const askBids = () =>
+    unsaved()
+      ? setNotice(t("Save your changes first, so vendors see the model as it is now."))
+      : editor.current?.visibleParts?.().length === 0
+        ? setNotice(t("Show at least one part: the parts shown are the ones requested."))
+        : (setShownParts(editor.current?.visibleParts?.() ?? null), setRequesting(true));
+  // Where the customer is in the made-to-order flow (shown above the editor until a request exists).
+  const step = design ? 3 : 1; // saved: requesting bids is next
+  const steps = (
+    <ol className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500 max-lg:hidden" aria-label={t("How it works")}>
+      {["Customise", "Save", "Request bids", "Choose a vendor"].map((label, i) => (
+        <li key={label} className="inline-flex items-center gap-2">
+          {i > 0 && <span className="text-slate-300" aria-hidden>→</span>}
+          <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 font-medium ${i + 1 === step ? "bg-brand-navy text-white" : i + 1 < step ? "bg-emerald-50 text-emerald-700" : "bg-white ring-1 ring-slate-200"}`}>
+            <span className="tabular-nums">{i + 1}</span> {t(label)}
+          </span>
+        </li>
+      ))}
+    </ol>
+  );
 
   const requestCard = design?.kind === "item" && (
     <div className="space-y-3 rounded-2xl bg-brand-navy p-4 text-white shadow-sm">
@@ -328,13 +457,7 @@ export function DesignEditor({ id, model }: { id: string; model?: string }) {
       <button
         type="button"
         disabled={busy || (exclusive && target?.available === false)}
-        onClick={() =>
-          unsaved()
-            ? setNotice(t("Save your changes first, so vendors see the model as it is now."))
-            : editor.current?.visibleParts?.().length === 0
-              ? setNotice(t("Show at least one part: the parts shown are the ones requested."))
-              : setRequesting(true)
-        }
+        onClick={askBids}
         className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-white px-3 py-2 text-sm font-semibold text-brand-navy transition hover:bg-brand-amber disabled:opacity-60"
       >
         <Hammer className="size-4" aria-hidden /> {requestLabel}
@@ -394,8 +517,9 @@ export function DesignEditor({ id, model }: { id: string; model?: string }) {
                 <p className="min-w-0 flex-1 truncate px-2 text-xl font-semibold tracking-tight text-brand-navy max-lg:text-base">{t("Customising “{title}”", { title })}</p>
               )}
               {/* Save status beside the Save button it reports on, right-aligned with it. */}
+              {design?.draft && <span className="shrink-0 rounded-full bg-amber-100 px-2.5 py-1 text-xs font-semibold text-amber-900 ring-1 ring-amber-200" title={t("Saved without a name. Rename it here, or name it when you request bids.")}>{t("Draft")}</span>}
               <span className={`ms-auto rounded-full px-2.5 py-1 text-xs font-medium max-lg:hidden ${!design ? "bg-slate-100 text-slate-600" : "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200"}`}>
-                {!design ? t("Not saved yet") : t("Saved {date}", { date: new Date(design.updated_at).toLocaleString() })}
+                {busy && stage ? stage : !design ? t("Not saved yet") : t("Saved {date}", { date: new Date(design.updated_at).toLocaleString() })}
               </span>
               {/* Mobile app: the image matching shortcut beside View in camera. */}
               {inApp && match && <MatchButton {...match.props} compact />}
@@ -438,14 +562,26 @@ export function DesignEditor({ id, model }: { id: string; model?: string }) {
                 type="button"
                 disabled={busy}
                 onClick={save}
-                title={design ? t("Saves your changes to this design.") : t("The first save asks for a name and adds the model to My designs.")}
-                className="inline-flex shrink-0 items-center gap-2 rounded-xl bg-brand-amber px-5 py-2.5 text-sm font-semibold max-lg:h-10 max-lg:px-4 text-brand-navy shadow-sm shadow-brand-amber/30 transition hover:-translate-y-px hover:bg-[#e8952a] hover:shadow-md active:translate-y-0 disabled:opacity-60"
+                title={design ? t("Saves your changes to this design.") : t("Saves a draft in My designs. You can name it later.")}
+                className={`inline-flex shrink-0 items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-semibold max-lg:h-10 max-lg:px-4 ${item ? "max-lg:hidden" : ""} transition disabled:opacity-60 ${design?.kind === "item" ? "border border-slate-200 bg-white text-brand-navy shadow-sm hover:bg-slate-50" : "bg-brand-amber text-brand-navy shadow-sm shadow-brand-amber/30 hover:-translate-y-px hover:bg-[#e8952a] hover:shadow-md active:translate-y-0"}`}
               >
-                {busy ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <Save className="size-4" aria-hidden />} {t("Save")}
+                {busy ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <Save className="size-4" aria-hidden />} {design || kind !== "item" ? t("Save") : t("Save draft")}
               </button>
+              {design?.kind === "item" && (
+                // After saving, the next step: publish the saved design as a request for bids.
+                <button
+                  type="button"
+                  disabled={busy || (exclusive && target?.available === false)}
+                  onClick={askBids}
+                  className={`inline-flex shrink-0 items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-semibold max-lg:hidden transition disabled:opacity-60 ${!design ? "border border-slate-200 bg-white text-brand-navy" : "bg-brand-amber text-brand-navy shadow-sm shadow-brand-amber/30 hover:-translate-y-px hover:bg-[#e8952a] hover:shadow-md"}`}
+                >
+                  <Hammer className="size-4" aria-hidden /> <span className="max-sm:sr-only">{exclusive ? requestLabel : t("Request vendor bids")}</span>
+                </button>
+              )}
             </>
           )}
         </div>
+        {item && steps}
         {error && <p className="shrink-0 rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700 max-lg:mx-3 max-lg:mt-2">{error}</p>}
         {notice && <p role="status" onClick={() => setNotice(null)} className="shrink-0 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm text-emerald-800 max-lg:mx-3 max-lg:mt-2">{notice}</p>}
         {!shown && !error && <p className="text-sm text-slate-500">{t("Loading…")}</p>}
@@ -455,6 +591,7 @@ export function DesignEditor({ id, model }: { id: string; model?: string }) {
             key={viewKey}
             edit
             fill
+            shopper
             url={base ?? item.base_glb_url ?? item.source.glb_url}
             parts={parts}
             partVariants={base ? null : item.part_variants ?? null}
@@ -464,6 +601,21 @@ export function DesignEditor({ id, model }: { id: string; model?: string }) {
             designSize={dims}
             onDesignSize={setDims}
             proportional={proportional}
+            onProportional={setProportional}
+            priceGuide={listingId ? guide : null}
+            // Phones: Save, then Request bids, at the bottom of the screen (one hand).
+            phoneAction={
+              <div className="flex gap-2">
+                <button type="button" disabled={busy} onClick={save} className={`inline-flex h-12 flex-1 items-center justify-center gap-2 rounded-2xl text-sm font-semibold transition disabled:opacity-60 ${design && kind === "item" ? "border border-slate-200 bg-white text-brand-navy" : "bg-brand-amber text-brand-navy shadow-sm"}`}>
+                  {busy ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <Save className="size-4" aria-hidden />} {busy && stage ? <span className="truncate text-xs">{stage}</span> : design ? t("Save") : t("Save draft")}
+                </button>
+                {design && (
+                  <button type="button" disabled={busy || (exclusive && target?.available === false)} onClick={askBids} className="inline-flex h-12 flex-1 items-center justify-center gap-2 rounded-2xl bg-brand-amber text-sm font-semibold text-brand-navy shadow-sm disabled:opacity-60">
+                    <Hammer className="size-4" aria-hidden /> {t("Request bids")}
+                  </button>
+                )}
+              </div>
+            }
             removedParts={base ? [] : item.removed_parts ?? []}
             onApi={(api) => { editor.current = api; }}
             partsFooter={requestCard}
@@ -516,8 +668,22 @@ export function DesignEditor({ id, model }: { id: string; model?: string }) {
       {requesting && design && (
         <RequestDialog
           busy={busy}
+          stage={stage}
           title={requestLabel}
           intro={exclusive ? t("Sent only to {vendor}, who made the original model. Later edits to the design do not change this request.", { vendor: target?.vendor?.name || t("the vendor") }) : undefined}
+          // The guide with the saved options' prices on top (variants, added parts), as in the editor.
+          estimate={(() => {
+            const it = shown?.data.item;
+            const comps = parts?.components ?? [];
+            const extras = [
+              ...Object.entries(it?.part_variants ?? {}).map(([id, v]) => comps.find((c) => c.id === id)?.variants?.find((x) => x.id === v)?.price_delta),
+              ...(it?.components?.added ?? []).map((a) => parts?.addable?.find((x) => x.type === a.type)?.price_delta),
+            ];
+            const range = guideWithOptions(guide, extras);
+            return range && guide ? { ...guide, low: range.low, high: range.high } : guide;
+          })()}
+          draftTitle={design.draft ? shown?.data.item?.source.title ?? "" : null}
+          summary={shown?.data.item ? designSummary(shown.data.item, parts, shownParts, t) : []}
           onClose={() => setRequesting(false)}
           onSubmit={(body) =>
             void run(async () => {
@@ -527,46 +693,21 @@ export function DesignEditor({ id, model }: { id: string; model?: string }) {
               // The request is made from the saved model: its report pictures too.
               if (editor.current?.dirty?.()) throw new Error(t("Save your changes first: the request is made from the saved design."));
               if (!shown || shown.id !== design.current_version_id) throw new Error(t("Open the latest saved version to request it."));
+              // A draft is named now: the request (and the vendors) see this name.
+              if (design.draft && body.name) {
+                const named = await renameDesign(design.id, body.name);
+                setDesign(named);
+                setTitle(named.title);
+              }
               const views = await requestViews(design.id, shown.glb_url, shown.data.item);
-              const task = await requestImplementation(design.id, { ...body, part_ids: visible && total && visible.length < total ? visible : null, views });
+              setStage(t("Publishing the request…"));
+              const { name: _name, ...request } = body; // eslint-disable-line @typescript-eslint/no-unused-vars
+              const task = await requestImplementation(design.id, { ...request, part_ids: visible && total && visible.length < total ? visible : null, views });
               setRequesting(false);
               router.push(`/tasks/${task.id}`);
             })
           }
         />
-      )}
-      {naming !== null && (
-        <Dialog open onOpenChange={(open) => !open && !busy && setNaming(null)}>
-          <DialogContent className="sm:max-w-md">
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                if (naming.trim()) void createNamed(naming.trim());
-              }}
-              className="space-y-4"
-            >
-              <DialogHeader>
-                <DialogTitle>{t("Name your customised model")}</DialogTitle>
-                <DialogDescription>{t("It is saved in My designs under this name. You can rename it later.")}</DialogDescription>
-              </DialogHeader>
-              <input
-                autoFocus
-                value={naming}
-                onChange={(e) => setNaming(e.target.value)}
-                maxLength={200}
-                aria-invalid={!naming.trim()}
-                className="block w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
-              />
-              {!naming.trim() && <p className="text-xs text-red-700">{t("Enter a name.")}</p>}
-              <DialogFooter>
-                <button type="button" disabled={busy} onClick={() => setNaming(null)} className="rounded-lg border border-slate-200 px-3 py-2 text-sm">{t("Cancel")}</button>
-                <button type="submit" disabled={busy || !naming.trim()} className="inline-flex items-center gap-2 rounded-lg bg-brand-amber px-4 py-2 text-sm font-semibold text-brand-navy disabled:opacity-60">
-                  {busy && <Loader2 className="size-4 animate-spin" aria-hidden />} {t("Save")}
-                </button>
-              </DialogFooter>
-            </form>
-          </DialogContent>
-        </Dialog>
       )}
     </div>
   );
@@ -624,7 +765,7 @@ export function DimensionFields({
       </div>
       {stretched && (
         <p className="text-xs text-amber-800">
-          {t("These proportions differ from the model. It stays uniformly scaled and the difference is flagged for review, so cushions, legs and textures are not stretched.")}
+          {t("Width, height and depth were changed separately: the model is stretched to this size, and vendors are asked to check the proportions of cushions, legs and frame.")}
         </p>
       )}
       </Section>
@@ -633,8 +774,14 @@ export function DimensionFields({
 }
 
 /** What the customer adds to the model for vendors: what they want, where, budget and date. */
-function RequestDialog({ busy, title, intro, onClose, onSubmit }: { busy: boolean; title: string; intro?: string; onClose: () => void; onSubmit: (body: { description: string; location: string; budget_max: number | null; deadline: string | null; quantity: number }) => void }) {
+function RequestDialog({ busy, stage, title, intro, summary, draftTitle, estimate, onClose, onSubmit }: { busy: boolean; stage: string | null; title: string; intro?: string; summary: { label: string; value: string }[];
+  /** The price guide per piece (lib/designs/api priceGuide): shown × the pieces asked, as an estimate. */
+  estimate?: PriceGuide | null;
+  /** A draft: its name is asked here (prefilled with the listing's), null when it has one. */
+  draftTitle: string | null;
+  onClose: () => void; onSubmit: (body: { name?: string; description: string; location: string; budget_max: number | null; deadline: string | null; quantity: number }) => void }) {
   const t = useT();
+  const [name, setName] = useState(draftTitle ?? "");
   const [description, setDescription] = useState("");
   const [quantity, setQuantity] = useState("1");
   const [location, setLocation] = useState("");
@@ -647,7 +794,8 @@ function RequestDialog({ busy, title, intro, onClose, onSubmit }: { busy: boolea
         <form
           onSubmit={(e) => {
             e.preventDefault();
-            onSubmit({ description: description.trim(), location: location.trim(), budget_max: budget ? Number(budget) : null, deadline: deadline || null, quantity: Math.max(1, Math.round(Number(quantity) || 1)) });
+            if (draftTitle !== null && !name.trim()) return;
+            onSubmit({ ...(draftTitle !== null ? { name: name.trim() } : {}), description: description.trim(), location: location.trim(), budget_max: budget ? Number(budget) : null, deadline: deadline || null, quantity: Math.max(1, Math.round(Number(quantity) || 1)) });
           }}
           className="space-y-3"
         >
@@ -655,6 +803,13 @@ function RequestDialog({ busy, title, intro, onClose, onSubmit }: { busy: boolea
             <DialogTitle>{title}</DialogTitle>
             <DialogDescription>{intro ?? t("Vendors receive the saved model with its exact size, parts and materials. Later edits to the design do not change this request.")}</DialogDescription>
           </DialogHeader>
+          {draftTitle !== null && (
+            <label className="block text-sm">
+              {t("Name your design")}
+              <input required autoFocus value={name} onChange={(e) => setName(e.target.value)} maxLength={200} placeholder={t("e.g. Dining chairs, green linen")} className="mt-1 w-full rounded-lg border border-slate-200 px-2 py-1.5" />
+              <span className="mt-0.5 block text-xs text-slate-500">{t("It is still a draft: vendors see this name.")}</span>
+            </label>
+          )}
           <label className="block text-sm">
             {t("What should the vendor know?")}
             <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={4} maxLength={4000} placeholder={t("Materials you prefer, delivery, installation…")} className="mt-1 w-full rounded-lg border border-slate-200 px-2 py-1.5" />
@@ -679,6 +834,31 @@ function RequestDialog({ busy, title, intro, onClose, onSubmit }: { busy: boolea
               <input type="date" min={today} value={deadline} onChange={(e) => setDeadline(e.target.value)} className="mt-1 w-full rounded-lg border border-slate-200 px-2 py-1.5" />
             </label>
           </div>
+          {/* Everything vendors will see, checked before it goes out. */}
+          <div className="max-h-56 overflow-y-auto rounded-xl bg-slate-50 p-3 ring-1 ring-slate-200">
+            <p className="text-xs font-semibold text-brand-navy">{t("Vendors will see")}</p>
+            <dl className="mt-2 grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 text-xs">
+              {[
+                ...summary,
+                { label: "Quantity", value: t("{n} pieces", { n: Math.max(1, Math.round(Number(quantity) || 1)) }) },
+                {
+                  label: "Estimated price",
+                  value: estimate?.low != null && estimate.high != null
+                    ? t("{low} – {high} for {n} pieces (estimate; vendors set the price)", { low: formatPrice(estimate.low * Math.max(1, Math.round(Number(quantity) || 1))), high: formatPrice(estimate.high * Math.max(1, Math.round(Number(quantity) || 1))), n: Math.max(1, Math.round(Number(quantity) || 1)) })
+                    : t("Price determined by vendor bids"),
+                },
+                { label: "Budget", value: budget ? t("up to {price}", { price: formatPrice(Number(budget)) }) : t("Open") },
+                { label: "Location", value: location.trim() || "—" },
+                { label: "Wanted by", value: deadline ? new Date(deadline).toLocaleDateString() : t("Flexible") },
+              ].map((row) => (
+                <div key={row.label} className="contents">
+                  <dt className="text-slate-500">{t(row.label)}</dt>
+                  <dd className="font-medium text-slate-800">{row.value}</dd>
+                </div>
+              ))}
+            </dl>
+          </div>
+          {busy && stage && <p role="status" className="flex items-center gap-2 text-xs text-slate-600"><Loader2 className="size-3.5 animate-spin" aria-hidden />{stage}</p>}
           <DialogFooter>
             <button type="button" disabled={busy} onClick={onClose} className="rounded-lg border border-slate-200 px-3 py-2 text-sm">{t("Cancel")}</button>
             <button type="submit" disabled={busy} className="inline-flex items-center gap-2 rounded-lg bg-brand-amber px-4 py-2 text-sm font-semibold text-brand-navy disabled:opacity-60">

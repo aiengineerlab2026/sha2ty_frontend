@@ -22,6 +22,7 @@ import { ImageCarousel } from "@/components/shatably/ImageCarousel";
 import { Reviews } from "@/components/shatably/Reviews";
 import { useVariantUrls } from "@/lib/catalog/variants";
 import { MatchButton } from "@/components/match/MatchWizard";
+import { cm } from "@/lib/designs/resize";
 
 export type CatalogKind = "models" | "paints" | "carpets" | "windows";
 
@@ -118,7 +119,6 @@ function ModelView({ model, signedIn }: { model: CatalogModel; signedIn: boolean
           )}
           <div className="flex flex-wrap gap-2">
             <MatchButton model={model} />
-            {model.glb_url && <CustomiseButton modelId={model.id} />}
           </div>
         </div>
       }
@@ -127,7 +127,10 @@ function ModelView({ model, signedIn }: { model: CatalogModel; signedIn: boolean
       price={model.price == null ? null : formatPrice(model.price, model.price_unit ?? "item")}
       title={model.title}
       cart={line("model", model.id, model.title, model.price, model.price_unit ?? "item", model.width_m && model.depth_m ? model.width_m * model.depth_m : null)}
-      facts={dims ? [["Width", `${dims.width.toFixed(2)} m`], ["Height", `${dims.height.toFixed(2)} m`], ...(dims.depth ? [["Depth", `${dims.depth.toFixed(2)} m`] as [string, string]] : [])] : [["Size", t("Not set")]]}
+      // Made to order: customising and asking vendors for bids is the main action; the cart only for a priced piece as listed.
+      primary={model.glb_url ? <CustomiseButton modelId={model.id} /> : undefined}
+      secondaryCart={model.glb_url ? model.price != null : undefined}
+      facts={dims ? [["Width", `${cm(dims.width)} ${t("cm")}`], ["Height", `${cm(dims.height)} ${t("cm")}`], ...(dims.depth ? [["Depth", `${cm(dims.depth)} ${t("cm")}`] as [string, string]] : [])] : [["Size", t("Not set")]]}
     >
       {description ? (
         <div className="text-sm leading-relaxed text-slate-600 [&_h3]:mb-1 [&_h3]:mt-3 [&_h3]:text-base [&_h3]:font-semibold [&_h3]:text-brand-navy [&_li]:ms-5 [&_ol]:list-decimal [&_ul]:list-disc" dangerouslySetInnerHTML={{ __html: description }} />
@@ -232,6 +235,8 @@ function Layout({
   price,
   facts,
   cart,
+  primary,
+  secondaryCart,
   children,
 }: {
   /** Kept for callers; the plan builder link is the same for guests and members. */
@@ -246,6 +251,10 @@ function Layout({
   facts: [string, string][];
   /** The line "Add to cart" adds (guests are sent to log in by addToCart). */
   cart: CartLine;
+  /** The main action instead of "Add to cart" (a customisable model: customise and request bids). */
+  primary?: ReactNode;
+  /** With `primary`: also offer the listed piece in the cart, as a secondary button. */
+  secondaryCart?: boolean;
   children: ReactNode;
 }) {
   const t = useT();
@@ -275,8 +284,20 @@ function Layout({
           ))}
         </dl>
         {children}
+        {primary && (
+          // How made-to-order works, in four steps, beside the action that starts it.
+          <ol className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
+            {["Customise", "Publish a request", "Receive bids", "Choose a vendor"].map((step, i) => (
+              <li key={step} className="flex items-center gap-2 rounded-xl bg-white px-2.5 py-2 ring-1 ring-slate-200">
+                <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-brand-amber/20 text-[11px] font-bold text-[#9a5b0b]">{i + 1}</span>
+                <span className="font-medium text-slate-700">{t(step)}</span>
+              </li>
+            ))}
+          </ol>
+        )}
         <div className="flex flex-wrap gap-3">
-          <AddToCart line={cart} />
+          {primary ?? <AddToCart line={cart} />}
+          {primary && secondaryCart && <AddToCart line={cart} secondary />}
           {/* Anyone can design; saving the plan asks guests to log in. */}
           <Link
             href="/plan"
@@ -302,14 +323,14 @@ function CustomiseButton({ modelId }: { modelId: string }) {
       onClick={() =>
         void authSession().then(({ data }) => router.push(data.session ? target : `/vendor/login?next=${encodeURIComponent(target)}`))
       }
-      className="inline-flex h-10 items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-brand-navy shadow-sm hover:bg-slate-50"
+      className="inline-flex h-11 items-center gap-2 rounded-xl bg-brand-amber px-5 text-sm font-semibold text-brand-navy shadow-sm transition hover:-translate-y-px hover:bg-[#e8952a] hover:shadow-md"
     >
-      <Paintbrush className="size-4" aria-hidden /> {t("Customise")}
+      <Paintbrush className="size-4" aria-hidden /> {t("Customise and request bids")}
     </button>
   );
 }
 
-function AddToCart({ line }: { line: CartLine }) {
+function AddToCart({ line, secondary = false }: { line: CartLine; secondary?: boolean }) {
   const t = useT();
   const [added, setAdded] = useState(false);
   return (
@@ -321,10 +342,10 @@ function AddToCart({ line }: { line: CartLine }) {
           setTimeout(() => setAdded(false), 1500);
         });
       }}
-      className="inline-flex h-11 items-center gap-2 rounded-xl bg-brand-amber px-5 text-sm font-semibold text-brand-navy shadow-sm transition hover:-translate-y-px hover:bg-[#e8952a] hover:shadow-md"
+      className={secondary ? "inline-flex h-11 items-center gap-2 rounded-xl border border-slate-200 bg-white px-5 text-sm font-semibold text-brand-navy shadow-sm transition-colors hover:bg-slate-50" : "inline-flex h-11 items-center gap-2 rounded-xl bg-brand-amber px-5 text-sm font-semibold text-brand-navy shadow-sm transition hover:-translate-y-px hover:bg-[#e8952a] hover:shadow-md"}
     >
       {added ? <Check className="size-4" aria-hidden /> : <ShoppingCart className="size-4" aria-hidden />}
-      {added ? t("Added to cart") : t("Add to cart")}
+      {added ? t("Added to cart") : secondary ? t("Add to cart as listed") : t("Add to cart")}
     </button>
   );
 }

@@ -39,6 +39,8 @@ export function planCost(geometry: PlanGeometry, items: PlacedItem[]): { lines: 
     else lines.set(line.key, { ...line, total: null });
   };
   for (const item of items) {
+    // A customised design is made to order (a request and vendors' bids), never bought from the cart.
+    if (item.designId) continue;
     const unit = item.price_unit ?? "item";
     const footprint = (item.size?.width ?? item.width_m) * (item.size?.depth ?? item.depth_m);
     add({ key: `model:${item.modelId}`, kind: "model", refId: item.modelId, name: item.title, unit, price: item.price ?? null, quantity: unit === "m2" ? footprint : 1 });
@@ -127,3 +129,11 @@ export function finishUsage(geometry: PlanGeometry, paintId: string): FinishUsag
 
 /** Whole tiles needed to cover `area` m² with tiles of `tileW` × `tileH` m (cut pieces count as whole tiles). */
 export const tilesFor = (area: number, tileW: number, tileH: number) => (area > 0 ? Math.ceil(area / (tileW * tileH) - 1e-9) : 0);
+
+/** What the customer pays for the whole request, and per piece, from a bid quoted as a total or per piece (older
+ * bids have no quantity: a total for the requested quantity). */
+export function bidTotals(bid: { price: number; price_basis?: "total" | "per_item" | null; quantity?: number | null }, requested: number) {
+  const quantity = bid.quantity ?? requested;
+  const total = bid.price_basis === "per_item" ? bid.price * quantity : bid.price;
+  return { quantity, total, each: total / Math.max(quantity, 1) };
+}

@@ -43,6 +43,21 @@ export function uniformFactor(ratios: number[]): number {
   return Math.exp(usable.reduce((sum, r) => sum + Math.log(r), 0) / usable.length);
 }
 
+/** The scale on top of a normalised model (`size`) that shows it at `target`, so the 3D model and the numbers on
+ * screen are the same: one factor per axis when its shape is within STRETCH_TOLERANCE of the target, or when
+ * `stretch` (the customer sized each side on purpose); otherwise one factor for all (the planner's rule: no visible
+ * stretching of a model whose shape differs a lot). A target without depth keeps the model's own depth ratio. */
+export function fitScale(target: CatalogSize | null | undefined, size: Dimensions, stretch = false): [number, number, number] {
+  if (!target) return [1, 1, 1];
+  const w = target.width / size.width;
+  const h = target.height / size.height;
+  const k = uniformFactor([w, h, ...(target.depth ? [target.depth / size.depth] : [])]);
+  const d = target.depth ? target.depth / size.depth : k;
+  const ratios: [number, number, number] = [w, h, d];
+  if (!ratios.every((r) => r > 0 && Number.isFinite(r))) return [1, 1, 1];
+  return stretch || Math.max(...ratios) / Math.min(...ratios) <= 1 + STRETCH_TOLERANCE ? ratios : [k, k, k];
+}
+
 /**
  * Wrap a loaded model at its real size, Y-up, standing on Y = 0 and centred on X/Z. When the
  * catalogue size matches the model's proportions, one factor makes it that size. When it does not,

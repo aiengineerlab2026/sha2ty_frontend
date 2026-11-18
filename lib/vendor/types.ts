@@ -37,6 +37,9 @@ export interface CatalogModel {
   price?: number | null;
   price_unit?: PriceUnit;
   category?: string;
+  /** The catalogue's type filter, and false when the vendor hid the listing from the shop (supabase/models_listing.sql). */
+  furniture_type?: string | null;
+  listed?: boolean;
   shape?: "straight" | "l_left" | "l_right";
   length2_m?: number | null;
   source: ModelSource;

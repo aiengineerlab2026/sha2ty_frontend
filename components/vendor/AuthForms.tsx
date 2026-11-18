@@ -58,7 +58,7 @@ export function LoginForm() {
 
   return (
     <form onSubmit={submit} noValidate className="space-y-5">
-      <AuthInput label={t("Email")} type="email" icon={Mail} value={email} onChange={setEmail} error={errors.email} placeholder={t("you@studio.com")} autoComplete="email" autoFocus />
+      <AuthInput label={t("Email")} type="email" icon={Mail} value={email} onChange={setEmail} error={errors.email} placeholder={t("you@example.com")} autoComplete="email" autoFocus />
       <AuthInput
         label={t("Password")}
         type="password"
@@ -185,14 +185,28 @@ export function SignupForm() {
             key={option}
             className={`flex cursor-pointer flex-col items-center rounded-lg px-3 py-2 text-center transition ${kind === option ? "bg-white shadow-sm ring-1 ring-slate-200" : "text-slate-500 hover:text-slate-700"}`}
           >
-            <input type="radio" name="kind" value={option} checked={kind === option} onChange={() => setKind(option)} className="sr-only" />
+            <input
+              type="radio"
+              name="kind"
+              value={option}
+              checked={kind === option}
+              onChange={() => {
+                setKind(option);
+                // The side panel follows (shopper or vendor pitch); ?next= is kept.
+                const query = new URLSearchParams(params.toString());
+                if (option === "vendor") query.set("as", "vendor");
+                else query.delete("as");
+                router.replace(`?${query.toString()}`, { scroll: false });
+              }}
+              className="sr-only"
+            />
             <span className="text-sm font-semibold text-brand-navy">{option === "customer" ? t("Customer") : t("Vendor")}</span>
             <span className="text-xs">{option === "customer" ? t("Plan and furnish your home") : t("Sell your products")}</span>
           </label>
         ))}
       </fieldset>
       <AuthInput dense label={t("Full name")} icon={UserRound} value={fullName} onChange={setFullName} error={live("fullName")} placeholder={t("Nour Hassan")} autoComplete="name" autoFocus />
-      <AuthInput dense label={vendor ? t("Work email") : t("Email")} type="email" icon={Mail} value={email} onChange={setEmail} error={live("email")} placeholder={t("you@studio.com")} autoComplete="email" />
+      <AuthInput dense label={vendor ? t("Work email") : t("Email")} type="email" icon={Mail} value={email} onChange={setEmail} error={live("email")} placeholder={vendor ? t("you@studio.com") : t("you@example.com")} autoComplete="email" />
       {vendor && (
         <>
           <AuthInput dense label={t("Company name")} icon={Building2} value={name} onChange={setName} error={live("name")} placeholder={t("Cairo Studio")} autoComplete="organization" />
@@ -253,7 +267,7 @@ export function SignupForm() {
       )}
       <div className="space-y-3 pt-1 sm:col-span-2">
         <Submit busy={busy} dense>
-          {busy ? t("Creating account…") : vendor ? t("Request vendor account") : t("Create account")}
+          {busy ? t("Creating account…") : vendor ? t("Create vendor account") : t("Create account")}
         </Submit>
         <SwitchLink text="Already have an account?" href={nextPath ? `/vendor/login?next=${encodeURIComponent(nextPath)}` : "/vendor/login"} action="Log in" />
       </div>
@@ -342,7 +356,7 @@ export function ResetPasswordForm() {
   }
   return (
     <form onSubmit={request} noValidate className="space-y-5">
-      <AuthInput label={t("Email")} type="email" icon={Mail} value={email} onChange={setEmail} error={errors.email} placeholder={t("you@studio.com")} autoComplete="email" autoFocus />
+      <AuthInput label={t("Email")} type="email" icon={Mail} value={email} onChange={setEmail} error={errors.email} placeholder={t("you@example.com")} autoComplete="email" autoFocus />
       {error && <ErrorNote>{error}</ErrorNote>}
       <Submit busy={busy}>{busy ? t("Sending…") : t("Send reset link")}</Submit>
       <SwitchLink text="Remembered it?" href="/vendor/login" action="Back to log in" />
@@ -462,5 +476,5 @@ export function LoginIntro({ part }: { part: "title" | "subtitle" }) {
   const t = useT();
   const saving = useSearchParams().get("next")?.startsWith("/plan");
   if (part === "title") return <>{saving ? t("Log in to save your plan") : t("Welcome back")}</>;
-  return <>{saving ? t("Your design is kept. After logging in you'll name it and it will be saved.") : t("Log in to manage your catalogue and floor plans.")}</>;
+  return <>{saving ? t("Your design is kept. After logging in you'll name it and it will be saved.") : t("Log in to your sha2ty account.")}</>;
 }

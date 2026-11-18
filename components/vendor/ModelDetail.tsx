@@ -17,7 +17,7 @@ import { WoodsField } from "./WoodsField";
 import { CategoryPicker } from "./CategoryPicker";
 import { VariantsEditor } from "./VariantsEditor";
 import { ShapeField, type ModelShape } from "./ShapeField";
-import { categoryOf, type ModelCategory } from "@/lib/plan/categories";
+import { categoryOf, FURNITURE_TYPES, furnitureType, type ModelCategory } from "@/lib/plan/categories";
 import type { ModelStateName, ModelStates, PriceUnit } from "@/lib/vendor/types";
 import { StateToggle } from "./StateToggle";
 import { RichText } from "./RichText";
@@ -48,6 +48,9 @@ export function ModelDetail({ id }: { id: string }) {
   const [price, setPrice] = useState("");
   const [priceUnit, setPriceUnit] = useState<PriceUnit>("item");
   const [category, setCategory] = useState<ModelCategory>("furniture");
+  // The catalogue's type filter and whether shoppers see it (supabase/models_listing.sql).
+  const [kind, setKind] = useState<string>("other");
+  const [listed, setListed] = useState(true);
   const [woods, setWoods] = useState<string[] | null>(null);
   const [shape, setShape] = useState<ModelShape>("straight");
   const [length2, setLength2] = useState("");
@@ -131,6 +134,8 @@ export function ModelDetail({ id }: { id: string }) {
         setPrice(next.price == null ? "" : String(next.price));
         setPriceUnit(next.price_unit ?? "item");
         setCategory(categoryOf(next.category));
+        setKind(furnitureType(next) ?? "other");
+        setListed(next.listed !== false);
         setWoods(next.woods ?? null);
         setShape(next.shape ?? "straight");
         setLength2(metersToInput(next.length2_m));
@@ -145,6 +150,13 @@ export function ModelDetail({ id }: { id: string }) {
     setError(null);
     setSaved(false);
     try {
+      // Variants customers would be offered must each open and look different (no "Curved back" that is the straight
+      // one): checked before anything is published.
+      const problems = !showingOpen ? (await editor.current?.checkVariants?.()) ?? [] : [];
+      if (problems.length) {
+        setError(t("Fix the part variants before saving: {problems}", { problems: problems.join(" · ") }));
+        return;
+      }
       // The open state on screen: its edits go into its own file; the closed one was saved when the vendor left it.
       const states = showingOpen ? await openFields() : null;
       const materials = !showingOpen && editor.current && vendor && model.glb_url
@@ -161,6 +173,9 @@ export function ModelDetail({ id }: { id: string }) {
           price: priceOrNull(price),
           price_unit: priceUnit,
           category,
+          // Only when changed: saving keeps working before models_listing.sql adds the columns.
+          ...(kind !== (furnitureType(model) ?? "other") ? { furniture_type: kind } : {}),
+          ...(listed !== (model.listed !== false) ? { listed } : {}),
           shape,
           length2_m: shape === "straight" ? null : numberOrNull(length2),
           updated_at: new Date().toISOString(),
@@ -175,7 +190,7 @@ export function ModelDetail({ id }: { id: string }) {
         setError(updated.error.message);
         return;
       }
-      setModel({ ...model, ...newFile, ...(materials?.fields ?? {}), ...(states ? { states } : {}), woods: vendor?.platform ? null : woods, title: title.trim() || model.title } as CatalogModel);
+      setModel({ ...model, furniture_type: kind, listed, ...newFile, ...(materials?.fields ?? {}), ...(states ? { states } : {}), woods: vendor?.platform ? null : woods, title: title.trim() || model.title } as CatalogModel);
       setReplaced(null);
       if (materials?.thumbnailError) {
         setError(t("Saved, but the model image could not be updated ({error}). The previous image is kept; save again to retry.", { error: materials.thumbnailError }));
@@ -207,6 +222,21 @@ export function ModelDetail({ id }: { id: string }) {
       </Card>
       <Card title={t("Classification")} icon={<Shapes className="size-4" aria-hidden />}>
         <CategoryPicker value={category} onChange={setCategory} />
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="space-y-1.5">
+            <Label htmlFor="model-kind">{t("Type")}</Label>
+            <select id="model-kind" value={kind} onChange={(e) => setKind(e.target.value)} className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm">
+              {[...FURNITURE_TYPES, { id: "other", label: "Other" }].map((option) => <option key={option.id} value={option.id}>{t(option.label)}</option>)}
+            </select>
+          </div>
+          <label className="flex items-start gap-2.5 rounded-xl border border-slate-200 bg-white p-3 text-sm">
+            <input type="checkbox" checked={listed} onChange={(e) => setListed(e.target.checked)} className="mt-0.5 size-4 accent-brand-amber" />
+            <span>
+              <span className="block font-semibold text-brand-navy">{t("Show in the shop")}</span>
+              <span className="block text-xs text-slate-500">{t("Untick for drafts and tests: shoppers do not see the listing; links to it still work.")}</span>
+            </span>
+          </label>
+        </div>
       </Card>
       <Card title={t("Shape & specs")} icon={<Ruler className="size-4" aria-hidden />}>
         <ShapeField shape={shape} onShape={setShape} length2={length2} onLength2={setLength2} />

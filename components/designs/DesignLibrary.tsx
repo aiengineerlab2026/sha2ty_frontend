@@ -114,7 +114,10 @@ export function DesignLibrary() {
                     )}
                   </div>
                   <div className="p-3">
-                    <p className="truncate font-semibold text-brand-navy">{design.title || t("Untitled design")}</p>
+                    <p className="flex items-center gap-1.5 font-semibold text-brand-navy">
+                      {design.draft && <span className="shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-900">{t("Draft")}</span>}
+                      <span className="truncate">{design.title || t("Untitled design")}</span>
+                    </p>
                     <p className="mt-0.5 text-xs text-slate-500">
                       {t({ item: "Item", room: "Room", apartment: "Apartment" }[design.kind])} ·{" "}
                       {new Date(design.updated_at).toLocaleDateString()}

@@ -65,16 +65,30 @@ export interface TaskRow {
   created_at: string;
 }
 
-export interface BidRow {
+/** A bid's terms as fields (supabase/bid_terms.sql); `note` holds anything else. */
+export interface BidTerms {
+  price: number;
+  /** "per_item": `price` is for one piece (the total is price × quantity); "total": for the whole quantity. */
+  price_basis: "total" | "per_item";
+  quantity: number | null;
+  days: number;
+  material: string;
+  fabric: string;
+  installation: boolean | null;
+  warranty: string;
+  payment_terms: string;
+  note: string;
+}
+
+export interface BidRow extends BidTerms {
   id: string;
   task_id: string;
   vendor_id: string;
-  price: number;
-  days: number;
-  note: string;
   status: BidStatus;
   created_at: string;
 }
+
+export { bidTotals } from "@/lib/plan/pricing";
 
 export async function publishTask(input: {
   planId: string;
@@ -114,8 +128,8 @@ export async function loadTask(id: string) {
   return { task: data as TaskRow | null, bids: (bids.data ?? []) as BidRow[] };
 }
 
-export async function placeBid(taskId: string, vendorId: string, price: number, days: number, note: string) {
-  const { error } = await supabase().from("task_bids").insert({ task_id: taskId, vendor_id: vendorId, price, days, note });
+export async function placeBid(taskId: string, vendorId: string, terms: BidTerms) {
+  const { error } = await supabase().from("task_bids").insert({ task_id: taskId, vendor_id: vendorId, ...terms });
   if (error) throw new Error(error.message);
 }
 
@@ -189,7 +203,7 @@ export const listProposals = (taskId: string) => backend<Proposal[]>(`/api/tasks
 export const decideProposal = (id: string, accept: boolean) => backend<Proposal>(`/api/proposals/${id}/decision`, { method: "POST", body: JSON.stringify({ accept }) });
 
 /** Revise or withdraw one's own bid (or submit it again after withdrawing) while the task is open. */
-export async function reviseBid(bidId: string, patch: { price?: number; days?: number; note?: string; status?: "submitted" | "withdrawn" }) {
+export async function reviseBid(bidId: string, patch: Partial<BidTerms> & { status?: "submitted" | "withdrawn" }) {
   const { error } = await supabase().from("task_bids").update({ ...patch, updated_at: new Date().toISOString() }).eq("id", bidId);
   if (error) throw new Error(error.message);
 }

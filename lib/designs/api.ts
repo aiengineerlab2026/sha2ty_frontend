@@ -34,11 +34,12 @@ export const getVersion = (id: string, number: number) => call<DesignVersion & {
 export const designFromModel = (
   modelId: string,
   title = "",
-  first?: { item: ItemEdits; glb_url?: string | null; thumbnail_url?: string | null; note?: string; clientToken: string },
+  first?: { item: ItemEdits; glb_url?: string | null; thumbnail_url?: string | null; note?: string; clientToken: string; draft?: boolean },
 ) =>
   post<Design>("/from-model", {
     model_id: modelId,
     title,
+    ...(first?.draft ? { draft: true } : {}),
     ...(first ? { item: first.item, glb_url: first.glb_url ?? null, thumbnail_url: first.thumbnail_url ?? null, note: first.note ?? "", client_token: first.clientToken } : {}),
   });
 
@@ -63,3 +64,8 @@ export const restoreVersion = (id: string, number: number, clientToken: string) 
 export const duplicateDesign = (id: string, title = "", number?: number) => post<Design>(`/${id}/duplicate`, { title, ...(number ? { number } : {}) });
 export const renameDesign = (id: string, title: string) => call<Design>(`/${id}`, { method: "PATCH", body: JSON.stringify({ title }) });
 export const deleteDesign = (id: string) => call<{ status: string }>(`/${id}`, { method: "DELETE" });
+
+export type { PriceGuide } from "./priceGuide";
+export { guideWithOptions } from "./priceGuide";
+export const priceGuide = (modelId: string, size: { width: number; height: number; depth: number } | null) =>
+  call<import("./priceGuide").PriceGuide>(`/price-guide?${new URLSearchParams({ model_id: modelId, ...(size ? { width: String(size.width), height: String(size.height), depth: String(size.depth) } : {}) })}`);
