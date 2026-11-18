@@ -11,8 +11,8 @@ import type { MaterialEdit } from "@/lib/vendor/parts";
 export async function makeRequestViews(glbUrl: string, item: ItemDesign, lang: "ar" | "en", folder: string): Promise<RequestViews> {
   const views = await captureViews({ glbUrl, item, lang });
   const up = (blob: Blob, name: string) => uploadPublicFile("", new File([blob], name, { type: blob.type || "image/png" }), folder);
-  const [closed_url, open_url, pictures_url, ...detail_urls] = await Promise.all([up(views.closed, "closed.png"), up(views.open, "open.png"), up(views.pictures, "parts.jpg"), ...views.details.map((d, i) => up(d, `detail-${i + 1}.png`))]);
-  return { overall: views.overall, detail_groups: views.detailGroups, closed_url, open_url, pictures_url, pic_size: PARTS_SHEET.size, pic_cols: PARTS_SHEET.cols, detail_urls, scale_known: views.scaleKnown, opened: views.opened, parts: views.parts, version: views.version };
+  const [closed_url, ortho_url, open_url, pictures_url, ...detail_urls] = await Promise.all([up(views.closed, "closed.png"), up(views.ortho, "ortho.png"), up(views.open, "open.png"), up(views.pictures, "parts.jpg"), ...views.details.map((d, i) => up(d, `detail-${i + 1}.png`))]);
+  return { overall: views.overall, detail_groups: views.detailGroups, closed_url, ortho_url, open_url, pictures_url, checks: views.checks, pic_size: PARTS_SHEET.size, pic_cols: PARTS_SHEET.cols, detail_urls, scale_known: views.scaleKnown, opened: views.opened, parts: views.parts, version: views.version };
 }
 
 /** Pictures to make again: none, older than this app's, or without the parts' pictures (whatever version they claim:

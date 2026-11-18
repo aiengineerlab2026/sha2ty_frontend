@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { shopName } from "../partNames";
 import { meshNameAr } from "../../vendor/meshNames";
 
 test("mesh names from generated files read as Arabic furniture parts, never as generic parts", () => {
@@ -14,4 +15,13 @@ test("mesh names from generated files read as Arabic furniture parts, never as g
   assert.equal(meshNameAr("Base_Plinth"), "قاعدة");
   assert.equal(meshNameAr("Zorbulator_3"), null); // unknown: shown as it is
   assert.equal(meshNameAr("Left"), null); // no part word
+});
+
+test("the report names a part the way a carpenter asks for it", () => {
+  const part = { name: "Left door", name_ar: "باب أيسر", main_name: "Door", main_name_ar: "باب", group: "doors" };
+  assert.equal(shopName(part, "ar"), "باب أيسر");
+  assert.equal(shopName(part, "en"), "Left door");
+  assert.equal(shopName({ name: "Part 3", name_ar: "جزء 3", main_name: "Part", main_name_ar: "جزء", group: "doors" }, "ar"), "باب 3");
+  assert.equal(shopName({ name: "Part 3", name_ar: "", main_name: "Part", main_name_ar: "", group: "doors" }, "ar"), "باب 3");
+  assert.equal(shopName({ name: "Part 3", name_ar: "جزء 3", main_name: "Part", main_name_ar: "جزء", group: "shelves" }, "en"), "Shelf 3");
 });

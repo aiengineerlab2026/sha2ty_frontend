@@ -162,7 +162,7 @@ export const requestImplementation = (designId: string, body: { description: str
 
 /** The closed / opened pictures of the saved model and its measured parts, for the request report's
  * "3D Model Views & Dimensions" (lib/designs/captureViews.ts). */
-export type RequestViews = { detail_groups?: string[]; overall?: { width: number; height: number; depth: number }; pictures_url?: string; pic_size?: number; pic_cols?: number; closed_url: string; open_url: string; detail_urls: string[]; scale_known: boolean; opened: number; parts: import("@/lib/designs/viewParts").ViewPart[]; version: number };
+export type RequestViews = { detail_groups?: string[]; overall?: { width: number; height: number; depth: number }; pictures_url?: string; pic_size?: number; pic_cols?: number; closed_url: string; open_url: string; ortho_url?: string; detail_urls: string[]; checks?: import("@/lib/designs/measure").Check[]; scale_known: boolean; opened: number; parts: import("@/lib/designs/viewParts").ViewPart[]; version: number };
 
 /** New pictures for the design's open requests after a save moved them to its newest version. */
 export const updateRequestViews = (designId: string, views: RequestViews) =>

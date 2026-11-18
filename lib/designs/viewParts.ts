@@ -1,7 +1,8 @@
 import { Box3, Color, Mesh, MeshStandardMaterial, Vector3, type Material } from "three";
 import type { MaterialEdit } from "../vendor/parts";
 import { offsetsOf, type AddedSpec, type Side } from "../vendor/parts3d";
-import { arabicName, isFitting, mainName } from "./partNames";
+import { arabicName, isFitting, isSoft, mainName } from "./partNames";
+import { partSize } from "./measure";
 
 /** One row of the request report's parts table (backend app/api/marketplace.py ViewPart): sizes in cm. */
 export type ViewPart = {
@@ -54,18 +55,10 @@ const cm = (m: number) => Math.round(m * 1000) / 10;
 function atTopOrBottom(meshes: Mesh[], bounds: Box3): boolean {
   const box = meshes.reduce((b, m) => b.union(new Box3().setFromObject(m)), new Box3());
   const near = 0.03 * (bounds.max.y - bounds.min.y);
-  const wide = box.max.x - box.min.x >= 0.9 * (bounds.max.x - bounds.min.x); // spans the whole width: a body panel
-  return wide || box.max.y >= bounds.max.y - near || box.min.y <= bounds.min.y + near;
+  // Only where it sits: a shelf spans the whole inside width too.
+  return box.max.y >= bounds.max.y - near || box.min.y <= bounds.min.y + near;
 }
 
-
-/** A mesh's size along its own axes in metres (rotation and parent transforms included): its geometry's box times
- * the scale its world matrix gives each axis. `local` × `world scale` stays right for a rotated part, where a world
- * box would measure the turned part's diagonal. */
-export function meshSize(mesh: Mesh): Vector3 {
-  if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
-  return mesh.geometry.boundingBox!.getSize(new Vector3()).multiply(new Vector3().setFromMatrixScale(mesh.matrixWorld));
-}
 
 function colorOf(material: Material | Material[]): string | null {
   const m = (Array.isArray(material) ? material[0] : material) as MeshStandardMaterial;
@@ -106,12 +99,7 @@ export function partsTable({ slots, names, namesAr = new Map(), added, mpu, edit
     let size: Vector3;
     let quantity = 1;
     if (spec) size = new Vector3(...spec.size).multiply(mpu);
-    else {
-      const sizes = meshes.map(meshSize);
-      const alike = sizes.every((s) => s.distanceTo(sizes[0]) <= 0.01 * sizes[0].length() + 1e-4);
-      if (alike) [size, quantity] = [sizes[0], sizes.length];
-      else size = meshes.reduce((box, m) => box.union(new Box3().setFromObject(m)), new Box3()).getSize(new Vector3());
-    }
+    else ({ size, quantity } = partSize(meshes)); // on the furniture's axes, whatever the piece's own turn
     const edit = edits[id];
     let offsets: ViewPart["offsets"] = null;
     if (spec?.space) {
@@ -121,7 +109,8 @@ export function partsTable({ slots, names, namesAr = new Map(), added, mpu, edit
     }
     const name = names.get(id) ?? meshes[0].name ?? id;
     const nameAr = arabicName(name, namesAr.get(id));
-    const shown = Boolean(spec) || (!accessories.has(id) && Math.max(size.x, size.y, size.z) >= minShare * biggest);
+    const soft = isSoft(name) || isSoft(nameAr); // bedding: not in the close-ups or the parts list
+    const shown = !soft && (Boolean(spec) || (!accessories.has(id) && Math.max(size.x, size.y, size.z) >= minShare * biggest));
     const roughness = edit?.roughness;
     rows.push({
       id,
@@ -166,129 +155,113 @@ export function partsTable({ slots, names, namesAr = new Map(), added, mpu, edit
 
 export const fmt = (cm: number) => (Math.abs(cm - Math.round(cm)) < 0.05 ? String(Math.round(cm)) : cm.toFixed(1));
 
-/** A part's label: its name, its size (a board: its two face sizes and its thickness) and, for an added part, how far
- * it sits from the compartment's faces. The same numbers as the parts table. */
-export function labelLines(p: ViewPart, lang: "ar" | "en"): string[] {
-  const w = lang === "ar"
-    ? { W: "عرض", H: "ارتفاع", D: "عمق", T: "سُمك", cm: "سم", top: "من الأعلى", bottom: "من الأسفل", left: "من اليسار", right: "من اليمين" }
-    : { W: "W", H: "H", D: "D", T: "T", cm: "cm", top: "Top offset", bottom: "Bottom offset", left: "Left offset", right: "Right offset" };
-  const dims: [string, number][] = [[w.W, p.width], [w.H, p.height], [w.D, p.depth]];
-  const thin = p.thickness ? dims.reduce((m, d, i) => (d[1] < dims[m][1] ? i : m), 0) : -1;
-  const size = dims.filter((_, i) => i !== thin).map(([k, v]) => `${k}: ${fmt(v)}`).join(" × ") + (thin >= 0 ? ` · ${w.T}: ${fmt(p.thickness)}` : "") + ` ${w.cm}`;
-  const lines = [lang === "ar" ? p.name_ar : p.name, size];
-  if (p.offsets) {
-    const sides = (["top", "bottom", "left", "right"] as const).filter((k) => p.offsets?.[k] !== undefined && (k === "top" || k === "bottom" || p.offsets[k]! > 0.05));
-    if (sides.length) lines.push(sides.map((k) => `${w[k]}: ${fmt(p.offsets![k]!)}`).join(" · ") + ` ${w.cm}`);
-  }
-  return lines;
+/** 6: separate W / H / D dimension lines on each part, outside the model (5: labels beside the parts; 4: part pictures). */
+export const VIEWS_VERSION = 10; // 10: close-ups at 1600 px, four to a page (9: thickness drawn, one size a row, critical / warning / info)
+/** The pictures (lib/designs/captureViews.ts): square, printed about 18 cm wide, one a page. */
+export const PICTURE = { W: 2400, H: 2400 };
+
+export type Pt = { x: number; y: number };
+export type Rect = { x: number; y: number; width: number; height: number };
+/** Where the measured geometry is on the picture: `data[row * cols + col]` is 1 where a `cell`-px square is covered. */
+export type Mask = { cell: number; cols: number; rows: number; data: Uint8Array };
+/** One dimension: the measured edge (`from`, `to`), the dimension line set off from it (`a`, `b`, along `n`), its label. */
+export type Dim = { from: Pt; to: Pt; a: Pt; b: Pt; n: Pt; label: Rect; text: string; color: string; short: boolean; along: boolean };
+
+export const ARROW = 34; // arrow head length, px
+const LEADER = 36; // the first set-off from the edge, px
+const STEP = 28;
+
+export function blocked(mask: Mask, r: Rect): boolean {
+  const c0 = Math.max(0, Math.floor(r.x / mask.cell)), c1 = Math.min(mask.cols - 1, Math.floor((r.x + r.width) / mask.cell));
+  const r0 = Math.max(0, Math.floor(r.y / mask.cell)), r1 = Math.min(mask.rows - 1, Math.floor((r.y + r.height) / mask.cell));
+  for (let y = r0; y <= r1; y++) for (let x = c0; x <= c1; x++) if (mask.data[y * mask.cols + x]) return true;
+  return false;
 }
 
-/** The pictures' layout (lib/designs/captureViews.ts): 2400 × 1600, the model in the middle half, labels in a column
- * on each side. Version 2: dimensions written beside the parts (version 1 pictures had numbered markers; the report
- * never shows those). */
-export const VIEWS_VERSION = 5; // 5: square pictures, labels beside the parts, a view per group (4: part pictures; 3: Arabic names)
-export const PICTURE = { W: 2400, H: 2400, GAP: 18, TOP: 16, BOTTOM: 1600 - 110, COLUMN: 0.28 * 2400 - 40 };
-/** Label text sizes (px): readable once the 2400 px picture is printed about 18 cm wide. */
-export const LABEL_FONT = { name: 34, size: 38, line: 48 };
-
-export type LabelBox = { id: string; anchor: { x: number; y: number }; width: number; height: number; added: boolean; size: number };
-export type PlacedLabel = LabelBox & { x: number; y: number; side: 0 | 1 };
-
-/** Where each label goes: in the column on its part's side (the other one when that is full), in the order of the
- * parts' heights so leaders never cross, pushed apart so none overlap, kept in the picture. At most `capacity`, by
- * the order given (most important first); what does not fit is returned in `left` (it gets a close-up), never
- * dropped. */
-export function placeLabels(items: LabelBox[], capacity: number): { placed: PlacedLabel[]; left: string[] } {
-  const { W, GAP, TOP, BOTTOM } = PICTURE;
-  const room = BOTTOM - TOP;
-  const columns: LabelBox[][] = [[], []];
-  const used = [0, 0];
-  const left: string[] = [];
-  for (const [i, it] of items.entries()) {
-    const want: 0 | 1 = it.anchor.x < W / 2 ? 0 : 1;
-    const side = [want, (1 - want) as 0 | 1].find((s) => used[s] + it.height + GAP <= room);
-    if (i >= capacity || side === undefined) {
-      left.push(it.id);
-      continue;
-    }
-    columns[side].push(it);
-    used[side] += it.height + GAP;
-  }
-  const placed: PlacedLabel[] = [];
-  for (const side of [0, 1] as const) {
-    const column = columns[side].sort((a, b) => a.anchor.y - b.anchor.y).map((it) => ({ ...it, side, x: side === 0 ? 24 : W - 24 - it.width, y: 0 }));
-    let y = TOP;
-    for (const it of column) {
-      it.y = Math.max(y, Math.min(it.anchor.y - it.height / 2, BOTTOM - it.height));
-      y = it.y + it.height + GAP;
-    }
-    for (let i = column.length - 1, limit = BOTTOM; i >= 0; i--) { // pushed past the bottom: back up
-      column[i].y = Math.min(column[i].y, limit - column[i].height);
-      limit = column[i].y - GAP;
-    }
-    placed.push(...column);
-  }
-  return { placed, left };
-}
-
-/** A label to place beside its part: its part's rectangle on the picture (px), the point its leader ends at, its size. */
-export type NearLabel = { id: string; part: { x0: number; y0: number; x1: number; y1: number }; anchor: { x: number; y: number }; width: number; height: number };
-export type NearPlaced = NearLabel & { x: number; y: number };
-
-/** Whether the segment a–b passes through the rectangle r (a little inside its edge). */
-const through = (a: { x: number; y: number }, b: { x: number; y: number }, r: { x: number; y: number; width: number; height: number }) => {
-  const inset = 4;
-  const x0 = r.x + inset, y0 = r.y + inset, x1 = r.x + r.width - inset, y1 = r.y + r.height - inset;
-  for (let i = 0; i <= 24; i++) {
-    const x = a.x + ((b.x - a.x) * i) / 24, y = a.y + ((b.y - a.y) * i) / 24;
-    if (x > x0 && x < x1 && y > y0 && y < y1) return true;
+const lineBlocked = (mask: Mask, a: Pt, b: Pt, pad: number) => {
+  const steps = Math.max(1, Math.ceil(Math.hypot(b.x - a.x, b.y - a.y) / 6));
+  for (let i = 0; i <= steps; i++) {
+    const x = a.x + ((b.x - a.x) * i) / steps, y = a.y + ((b.y - a.y) * i) / steps;
+    if (blocked(mask, { x: x - pad, y: y - pad, width: 2 * pad, height: 2 * pad })) return true;
   }
   return false;
 };
-const crosses = (a: { x: number; y: number }, b: { x: number; y: number }, c: { x: number; y: number }, d: { x: number; y: number }) => {
-  const turn = (p: typeof a, q: typeof a, r: typeof a) => Math.sign((q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x));
+
+/** Whether the segment a–b passes through the rectangle r (a little inside its edge). */
+const through = (a: Pt, b: Pt, r: Rect) => {
+  const steps = Math.max(2, Math.ceil(Math.hypot(b.x - a.x, b.y - a.y) / 6));
+  for (let i = 0; i <= steps; i++) {
+    const x = a.x + ((b.x - a.x) * i) / steps, y = a.y + ((b.y - a.y) * i) / steps;
+    if (x > r.x && x < r.x + r.width && y > r.y && y < r.y + r.height) return true;
+  }
+  return false;
+};
+const crosses = (a: Pt, b: Pt, c: Pt, d: Pt) => {
+  const turn = (p: Pt, q: Pt, r: Pt) => Math.sign((q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x));
   return turn(a, b, c) * turn(a, b, d) < 0 && turn(c, d, a) * turn(c, d, b) < 0;
 };
+const overlap = (a: Rect, b: Rect, gap: number) => a.x < b.x + b.width + gap && b.x < a.x + a.width + gap && a.y < b.y + b.height + gap && b.y < a.y + a.height + gap;
+const pad = (r: Rect, by: number): Rect => ({ x: r.x - by, y: r.y - by, width: r.width + 2 * by, height: r.height + 2 * by });
 
-/** Each label beside its part, never shrunk: the first of a few places around the part (above, below, beside, then
- * further out) that stays inside the picture (`margin`), overlaps no placed label, covers no other part's anchor point
- * and whose leader crosses no other leader. What finds no clean place is returned in `left` (it goes to another view). */
-export function placeNear(items: NearLabel[], size: { w: number; h: number }, margin = 24, gap = 14): { placed: NearPlaced[]; left: string[] } {
-  const placed: NearPlaced[] = [];
-  const left: string[] = [];
-  const leaders: [{ x: number; y: number }, { x: number; y: number }][] = [];
-  const end = (r: { x: number; y: number; width: number; height: number }, to: { x: number; y: number }) => ({ x: Math.min(Math.max(to.x, r.x), r.x + r.width), y: Math.min(Math.max(to.y, r.y), r.y + r.height) });
-  for (const it of items) {
-    const { x0, y0, x1, y1 } = it.part;
-    const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
-    const spots: { x: number; y: number }[] = [];
-    for (const out of [gap, gap + 70, gap + 160]) {
-      spots.push(
-        { x: cx - it.width / 2, y: y0 - out - it.height }, // above
-        { x: cx - it.width / 2, y: y1 + out }, // below
-        { x: x1 + out, y: cy - it.height / 2 }, // beside
-        { x: x0 - out - it.width, y: cy - it.height / 2 },
-      );
-    }
-    spots.push({ x: cx - it.width / 2, y: cy - it.height / 2 }); // on the part itself (a big panel)
-    const spot = spots.find((s) => {
-      const r = { ...s, width: it.width, height: it.height };
-      if (s.x < margin || s.y < margin || s.x + it.width > size.w - margin || s.y + it.height > size.h - margin) return false;
-      if (placed.some((p) => s.x < p.x + p.width + gap && p.x < s.x + it.width + gap && s.y < p.y + p.height + gap && p.y < s.y + it.height + gap)) return false;
-      if (items.some((o) => o.id !== it.id && o.anchor.x > s.x - 6 && o.anchor.x < s.x + it.width + 6 && o.anchor.y > s.y - 6 && o.anchor.y < s.y + it.height + 6)) return false;
-      const a = end(r, it.anchor);
-      if (leaders.some(([p, q]) => crosses(a, it.anchor, p, q))) return false;
-      // Its leader passes through no placed label, and it covers no placed leader.
-      if (placed.some((p) => through(a, it.anchor, p))) return false;
-      return !leaders.some(([p, q]) => through(p, q, r));
-    });
-    if (!spot) {
-      left.push(it.id);
-      continue;
-    }
-    const done = { ...it, ...spot };
-    placed.push(done);
-    leaders.push([end(done, it.anchor), it.anchor]);
+/** Dimension lines on one picture, from the projected corners of each measured box: each along the box edge on the
+ * outside of its silhouette, set off further out until its line and label touch no measured geometry (`mask`), no other
+ * label and no other dimension line, inside the picture. Never shrinks the text: what finds no place returns null (the
+ * caller tries a wider view or fewer parts). */
+export class DimLayout {
+  readonly dims: Dim[] = [];
+  private rects: Rect[] = [];
+  private lines: [Pt, Pt][] = [];
+  private extensions: [Pt, Pt][] = [];
+  constructor(private size: { w: number; h: number }, private mask: Mask, private margin = 28) {}
+
+  /** A place nothing may cover (the legend, a notice). */
+  block(r: Rect) {
+    this.rects.push(r);
   }
-  return { placed, left };
+
+  /** `corners`: the box's 8 corners on the picture, corner i at the max of axis k when bit k of i is set. */
+  place(corners: Pt[], axis: 0 | 1 | 2, text: string, width: number, height: number, color: string): Dim | null {
+    const bit = 1 << axis;
+    const c = { x: corners.reduce((s, p) => s + p.x, 0) / 8, y: corners.reduce((s, p) => s + p.y, 0) / 8 };
+    const edges = [0, 1, 2, 3, 4, 5, 6, 7].filter((i) => !(i & bit)).map((i) => {
+      const from = corners[i], to = corners[i | bit];
+      const len = Math.hypot(to.x - from.x, to.y - from.y);
+      if (len < 1) return null; // the axis points at the camera: no edge to measure along (a thin board's ~3 px edge still is one)
+      let n = { x: -(to.y - from.y) / len, y: (to.x - from.x) / len };
+      const out = n.x * ((from.x + to.x) / 2 - c.x) + n.y * ((from.y + to.y) / 2 - c.y);
+      if (out < 0) n = { x: -n.x, y: -n.y };
+      return { from, to, len, n, out: Math.abs(out) };
+    }).filter((e): e is NonNullable<typeof e> => e !== null).sort((a, b) => b.out - a.out); // the silhouette's edges first
+    const { w, h } = this.size, m = this.margin;
+    const inside = (p: Pt) => p.x >= m && p.y >= m && p.x <= w - m && p.y <= h - m;
+    // Upright labels first; then, on a near-vertical line, the text written along it (as on a technical drawing: it
+    // needs only its height beside the line). Nearest first: each set-off on every edge before a further one.
+    for (const along of [false, true]) for (let off = LEADER; off < Math.max(w, h) / 2; off += STEP) {
+      for (const e of edges) {
+        const d = { x: (e.to.x - e.from.x) / e.len, y: (e.to.y - e.from.y) / e.len };
+        if (along && Math.abs(d.y) < 0.94) continue; // only within 20° of vertical: its box stays tight
+        const [lw, lh] = along ? [height, width] : [width, height];
+        const short = e.len < 2 * ARROW + 24; // arrows outside, pointing in
+        const tail = short ? ARROW + 30 : 0;
+        const a = { x: e.from.x + e.n.x * off, y: e.from.y + e.n.y * off }, b = { x: e.to.x + e.n.x * off, y: e.to.y + e.n.y * off };
+        const a2 = { x: a.x - d.x * tail, y: a.y - d.y * tail }, b2 = { x: b.x + d.x * tail, y: b.y + d.y * tail };
+        if (!inside(a2) || !inside(b2)) continue; // off the picture
+        // The label just beyond the line's middle.
+        const away = Math.abs(e.n.x) * lw / 2 + Math.abs(e.n.y) * lh / 2 + 12;
+        const label = { x: (a.x + b.x) / 2 + e.n.x * away - lw / 2, y: (a.y + b.y) / 2 + e.n.y * away - lh / 2, width: lw, height: lh };
+        if (!inside(label) || !inside({ x: label.x + lw, y: label.y + lh })) continue;
+        if (blocked(this.mask, pad(label, 10)) || lineBlocked(this.mask, a2, b2, 6)) continue;
+        if (this.rects.some((r) => overlap(r, label, 16) || through(a2, b2, pad(r, 8)) || through(e.from, a, r) || through(e.to, b, r))) continue;
+        if (this.lines.some(([p, q]) => crosses(a2, b2, p, q) || through(p, q, pad(label, 8)))) continue;
+        if (this.extensions.some(([p, q]) => through(p, q, label))) continue;
+        const dim = { from: e.from, to: e.to, a, b, n: e.n, label, text, color, short, along };
+        this.dims.push(dim);
+        this.rects.push(label);
+        this.lines.push([a2, b2]);
+        this.extensions.push([e.from, a], [e.to, b]);
+        return dim;
+      }
+    }
+    return null;
+  }
 }

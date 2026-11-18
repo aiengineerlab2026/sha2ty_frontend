@@ -1,24 +1,28 @@
-import { Box3, DirectionalLight, EdgesGeometry, Group, LineBasicMaterial, LineSegments, Mesh, MeshBasicMaterial, NeutralToneMapping, PerspectiveCamera, PMREMGenerator, Raycaster, SRGBColorSpace, Scene, Vector3, WebGLRenderer, type Object3D } from "three";
+import { Box3, DirectionalLight, EdgesGeometry, Group, LineBasicMaterial, LineSegments, Mesh, MeshBasicMaterial, NeutralToneMapping, OrthographicCamera, PerspectiveCamera, PMREMGenerator, Raycaster, SRGBColorSpace, Scene, Vector3, WebGLRenderer, type Object3D } from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 import { normalizeModel, uniformFactor } from "@/lib/plan/modelNormalization";
 import { applyAnimations, attachmentsFrom, enabledAnimations, refine } from "@/lib/vendor/animation";
 import type { ItemDesign } from "@/lib/designs/schema";
-import { fmt, labelLines, partsTable, placeNear, PARTS_SHEET, PICTURE, VIEWS_VERSION, type NearLabel, type ViewPart } from "@/lib/designs/viewParts";
+import { axisTexts, checkMeasurements, partSize, tableRows, type Check, type RestBox } from "@/lib/designs/measure";
+import { shopName } from "@/lib/designs/partNames";
+import { ARROW, DimLayout, fmt, partsTable, PARTS_SHEET, PICTURE, VIEWS_VERSION, type Dim, type Mask, type Pt, type Rect, type ViewPart } from "@/lib/designs/viewParts";
 
-/** The pictures of a saved customised model for its implementation request: closed with its overall size; opened
- * (every movable part) with each part's dimensions written beside it; and close-ups for the parts whose labels do not
- * fit clearly in the opened picture. Rendered from the saved version's own file in a scene of their own (the editor's
+/** The pictures of a saved customised model for its implementation request: closed with its overall width, height
+ * and depth; front, side and top orthographic views with the same; opened (every movable part); and a close-up of each
+ * row of the parts table (one part, "× n" for alike ones) with that row's own width, height and depth as dimension
+ * lines outside the model. Every number comes from the mesh geometry and its transforms (lib/designs/measure.ts),
+ * never from a picture, and is the table's own. Also the measurement checks the PDF lists. Rendered from the saved version's own file in a scene of their own (the editor's
  * scene and open / closed state are never touched), the same way every time. Throws when the file or any saved part
  * is missing: a request never goes out with an incomplete report. */
-export type CapturedViews = { pictures: Blob; overall: { width: number; height: number; depth: number }; closed: Blob; open: Blob; details: Blob[]; detailGroups: string[]; parts: ViewPart[]; scaleKnown: boolean; opened: number; version: number };
+export type CapturedViews = { pictures: Blob; overall: { width: number; height: number; depth: number }; closed: Blob; open: Blob; details: Blob[]; detailGroups: string[]; ortho: Blob; checks: Check[]; parts: ViewPart[]; scaleKnown: boolean; opened: number; version: number };
 
 const { W, H } = PICTURE;
-const MAX_DETAILS = 12;
-/** Labels in the opened picture and in each close-up: a picture stays readable; the rest get close-ups. */
-const PER_VIEW = 6; // labels in one picture at most: readable, never crowded
+const MAX_DETAILS = 60;
+/** A close-up's size (px): smaller than the overall views with the same 54 px text, so four fit on a PDF page with the
+ * text still about 8–10 pt printed (backend request_report LABEL_PX, MIN_LABEL_PT). */
+const DETAIL = 1600; // pages of close-ups at most (backend DesignViews.detail_urls)
 const NAVY = "#172033";
-const AMBER = "#f2a33a";
 const FONT = "system-ui, 'Segoe UI', Tahoma, Arial, sans-serif";
 
 export async function captureViews({ glbUrl, item, lang }: { glbUrl: string; item: ItemDesign; lang: "ar" | "en" }): Promise<CapturedViews> {
@@ -72,14 +76,26 @@ export async function captureViews({ glbUrl, item, lang }: { glbUrl: string; ite
     renderer.toneMapping = NeutralToneMapping; // hues as they are: brighter light, same colours
     const scene = new Scene();
     scene.environment = environment;
-    scene.environmentIntensity = 0.85;
-    const key = new DirectionalLight(0xffffff, 0.75);
+    scene.environmentIntensity = 0.95;
+    // A studio set: a strong key from the front right, a soft fill, a rim from behind that lifts the edges off the white.
+    const key = new DirectionalLight(0xffffff, 1.1);
     key.position.set(4, 8, 6);
-    const fill = new DirectionalLight(0xffffff, 0.3);
+    const fill = new DirectionalLight(0xffffff, 0.45);
     fill.position.set(-5, 3, 4);
-    scene.add(key, fill, sized);
+    const rim = new DirectionalLight(0xffffff, 0.4);
+    rim.position.set(0, 5, -7);
+    scene.add(key, fill, rim, sized);
     const meshesOf = new Map<string, Mesh[]>();
     for (const s of slots) meshesOf.set(s.id, [...(meshesOf.get(s.id) ?? []), s.mesh]);
+    // At rest (before anything opens): each part's box in cm for the checks, and how its own axes lie on the
+    // furniture's (what each dimension line in its close-up is labelled).
+    const restBoxes = new Map<string, RestBox>();
+    const axesOf = new Map<string, ReturnType<typeof partSize>["axes"]>();
+    for (const [id, ms] of meshesOf) {
+      const b = ms.reduce((box, m) => box.union(new Box3().setFromObject(m)), new Box3());
+      restBoxes.set(id, { min: b.min.toArray().map((v) => v * 100) as RestBox["min"], max: b.max.toArray().map((v) => v * 100) as RestBox["max"] });
+      axesOf.set(id, partSize(ms).axes);
+    }
 
     // 0. Each main part on its own (the model at rest): the others hidden, the part turned to show its face and
     // its thickness, fitted to its square, with its own material. One sheet (PARTS_SHEET), cell `pic`.
@@ -89,87 +105,75 @@ export async function captureViews({ glbUrl, item, lang }: { glbUrl: string; ite
     renderer.setSize(W, H, false);
 
     const camera = new PerspectiveCamera(30, W / H, 0.01, 1000);
+    const all = slots.map((s) => s.mesh);
+    const shot: Shot = { renderer, scene, camera, all };
+    const word = lang === "ar" ? { w: "العرض", h: "الارتفاع", d: "العمق", cm: "سم" } : { w: "Width", h: "Height", d: "Depth", cm: "cm" };
 
-    // 1. Closed: a three-quarter view from the front right, the model filling most of the picture, only its
-    // overall size on its outer edges.
-    fit(camera, whole, new Vector3(1.1, 0.7, 1.9), 0.74);
-    renderer.render(scene, camera);
-    const closed = await annotate(renderer.domElement, (ctx) => overall(ctx, camera, whole, scaleKnown, lang));
+    // 1. Closed: the model as large as its three overall dimensions (width, height, depth: each its own line) allow.
+    const s = whole.getSize(new Vector3());
+    const approx = scaleKnown ? "" : "≈";
+    const overallMeasure: Measure = {
+      corners: corners(whole),
+      texts: [[word.w, s.x], [word.h, s.y], [word.d, s.z]].map(([k, v]) => `${k} ${approx}${fmt((v as number) * 100)} ${word.cm}`),
+      color: NAVY,
+    };
+    const warning = scaleKnown ? undefined : lang === "ar" ? "المقاس الحقيقي غير معروف: أكّد كل المقاسات" : "Real size unknown: confirm every dimension";
+    const closed = await view(shot, { keep: new Set(all), hide: new Set(), outline: all, measures: [overallMeasure], frame: whole, fills: [0.8, 0.7, 0.6, 0.5], dirs: DIRS, lang, warning });
+    if (!closed) throw new Error("The model's overall dimensions could not be drawn clearly.");
+    // Front, side and top, orthographic: each with the two overall sizes it shows true to length.
+    const ortho = await orthoViews(shot, whole, overallMeasure.texts, lang);
 
-    // 2. Opened: every movable part open; of a few views from the front, the one that shows the most parts. The
-    // overview gives the main structure's sizes; each group of parts then gets views of its own (below).
+    // 2. Opened: every movable part open, from the front angle that shows the most parts; the whole model large and
+    // clean (no dimensions: each part gets its own close-up below).
     const opened = enabledAnimations(config);
-    const moved = new Set(opened.flatMap((a) => [a.component, ...a.follow])); // their open box is not their own edges
     const doors = new Set(opened.filter((a) => a.type === "rotation").flatMap((a) => [a.component, ...a.follow]));
     applyAnimations(slots, model, config, Object.fromEntries(opened.map((a) => [a.id, 1])));
     sized.updateMatrixWorld(true);
     const openBox = new Box3().setFromObject(sized);
     const boxes = new Map<string, Box3>();
-    for (const s of slots) boxes.set(s.id, (boxes.get(s.id) ?? new Box3()).union(new Box3().setFromObject(s.mesh)));
+    for (const sl of slots) boxes.set(sl.id, (boxes.get(sl.id) ?? new Box3()).union(new Box3().setFromObject(sl.mesh)));
     const labelled = parts.filter((p) => p.shown && boxes.has(p.id));
     const dirs = opened.length ? [[0.55, 0.45, 1.5], [-0.55, 0.45, 1.5], [0.25, 0.3, 1.6], [0.9, 0.6, 1.3], [-0.9, 0.6, 1.3]] : [[-1, 0.55, 1.4], [-0.6, 0.9, 1.2]];
     let best = { dir: new Vector3(...dirs[0]), seen: -1 };
     for (const v of dirs) {
       const dir = new Vector3(...v);
-      fit(camera, openBox, dir, 0.76);
+      fit(camera, openBox, dir, 0.86);
       const seen = labelled.filter((p) => visible(camera, boxes.get(p.id)!, meshesOf.get(p.id)!, sized)).length;
       if (seen > best.seen) best = { dir, seen };
     }
-    const all = slots.map((s) => s.mesh);
-    const done = new Set<string>();
-    /** One view: `keep` measured (their own materials, outlined), doors hidden when `hideDoors`, the rest faint;
-     * the camera on `box`; each label beside its part (placeNear). Returns the picture and the parts labelled. */
-    const view = async (measured: ViewPart[], box: Box3, fill: number, hideDoors: boolean) => {
-      const keep = new Set(measured.flatMap((p) => meshesOf.get(p.id) ?? []));
-      const restore = stage(all, keep, hideDoors ? new Set([...doors].flatMap((id) => meshesOf.get(id) ?? [])) : new Set(), measured, meshesOf, scene);
-      try {
-        fit(camera, box, best.dir, fill);
-        renderer.render(scene, camera);
-      } finally {
-        restore();
-      }
-      let placed: string[] = [];
-      const blob = await annotate(renderer.domElement, (ctx) => {
-        placed = labels(ctx, camera, measured, boxes, lang, moved);
-        legend(ctx, lang);
-      });
-      placed.forEach((id) => done.add(id));
-      return { blob, placed };
-    };
-    // The overview: the body's main parts (the largest few), the whole open model in view.
-    const structure = labelled.filter((p) => p.group === "structure").sort((a, b) => volume(b) - volume(a)).slice(0, PER_VIEW);
-    const open = (await view(structure, openBox, 0.76, false)).blob;
+    const open = (await view(shot, { keep: new Set(all), hide: new Set(), outline: all, measures: [], frame: openBox, fills: [0.86], dirs: [best.dir], lang }))!;
 
-    // 3. Details: each group (doors, drawers, shelves, the rest of the body, other parts) a few near each other per
-    // view, framed on them; what is in the way faint or hidden (doors, for what is inside). Until every part has its
-    // dimensions written in a picture; a crowded view is split, its text never made smaller.
+    // 3. Close-ups: one a row of the parts table (tableRows: alike parts once, "× n", the range of their sizes), in
+    // its order, so each picture shows exactly its row's numbers. One part a picture (never two parts' measurements
+    // together), its own width, height and depth on its own edges; a board's thinnest side (its thickness) left out.
+    // Doors hidden for what is inside them, the other parts faint. A part that does not fit cleanly gets a wider view;
+    // the text is never made smaller.
+    const rows = tableRows(parts.filter((p) => p.main && boxes.has(p.id)), lang);
+    if (rows.length > MAX_DETAILS) throw new Error(`Too many parts to show clearly (${rows.length} close-ups; at most ${MAX_DETAILS}).`);
     const details: Blob[] = [];
     const detailGroups: string[] = [];
-    for (const group of ["doors", "drawers", "shelves", "structure", "accessories"]) {
-      let left = labelled.filter((p) => p.group === group && !done.has(p.id));
-      while (left.length) {
-        if (details.length >= MAX_DETAILS) throw new Error(`Too many parts to show clearly (${left.length} left after ${MAX_DETAILS} detail views).`);
-        const first = left.reduce((m, p) => (centerOf(boxes, p).y > centerOf(boxes, m).y ? p : m), left[0]); // from the top
-        const near = [...left].sort((a, b) => centerOf(boxes, a).distanceTo(centerOf(boxes, first)) - centerOf(boxes, b).distanceTo(centerOf(boxes, first)));
-        let cluster = near.slice(0, PER_VIEW);
-        let shot = await view(cluster, frameOf(cluster, boxes, openBox), 0.66, group !== "doors");
-        while (!shot.placed.length && cluster.length > 1) {
-          cluster = cluster.slice(0, Math.ceil(cluster.length / 2)); // too crowded: fewer parts, the same text size
-          shot = await view(cluster, frameOf(cluster, boxes, openBox), 0.66, group !== "doors");
-        }
-        if (!shot.placed.length) throw new Error("A part's dimensions could not be shown clearly.");
-        details.push(shot.blob);
-        detailGroups.push(group);
-        left = left.filter((p) => !done.has(p.id));
-      }
+    const hideDoors = new Set([...doors].flatMap((id) => meshesOf.get(id) ?? []));
+    for (const row of rows) {
+      const p = row.parts[0];
+      const ms = meshesOf.get(p.id)!;
+      const material = p.material || p.board || p.paint;
+      const names = [...new Set(row.parts.map((part) => shopName(part, lang)))].join(" / ");
+      const name = `${names} × ${row.quantity}` + (material ? ` · ${material}` : "") + (p.added ? (lang === "ar" ? " (مضاف)" : " (added)") : "");
+      const blob = await view(shot, {
+        keep: new Set(ms), hide: p.group === "doors" ? new Set() : hideDoors, outline: ms,
+        measures: [{ corners: partCorners(ms, p.quantity > 1, boxes.get(p.id)!), texts: axisTexts(row, axesOf.get(p.id)!, lang), color: NAVY, name, meshes: ms }],
+        frame: frameOf([p], boxes, openBox), fills: [0.62, 0.5, 0.4, 0.32], dirs: DIRS, lang, legend: true, size: DETAIL,
+      });
+      if (!blob) throw new Error(`The dimensions of ${p.name} could not be drawn clearly.`);
+      details.push(blob);
+      detailGroups.push(p.group);
     }
-    // Every part the table marks as shown has its dimensions written in one of the pictures.
-    const missingLabels = labelled.filter((p) => !done.has(p.id));
-    if (missingLabels.length) throw new Error(`The dimensions of ${missingLabels.length} part(s) could not be drawn (${missingLabels.slice(0, 3).map((p) => p.name).join(", ")}).`);
     // The model's own size (cm, closed), as measured from the same geometry as every part's.
-    const size = whole.getSize(new Vector3()).multiplyScalar(100);
+    const size = s.clone().multiplyScalar(100);
     const measured = { width: Math.round(size.x * 10) / 10, height: Math.round(size.y * 10) / 10, depth: Math.round(size.z * 10) / 10 };
-    return { pictures, overall: measured, closed, open, details, detailGroups, parts, scaleKnown, opened: opened.length, version: VIEWS_VERSION };
+    const requested = item.dimensions ? { width: item.dimensions.width * 100, height: item.dimensions.height * 100, depth: item.dimensions.depth * 100 } : null;
+    const checks = checkMeasurements({ parts, model: measured, requested, scaleKnown, boxes: restBoxes });
+    return { pictures, overall: measured, closed, ortho, open, details, detailGroups, checks, parts, scaleKnown, opened: opened.length, version: VIEWS_VERSION };
   } finally {
     environment.dispose();
     pmrem.dispose();
@@ -215,9 +219,6 @@ async function partPictures(renderer: WebGLRenderer, scene: Scene, parts: ViewPa
   return blob;
 }
 
-const volume = (p: ViewPart) => p.width * p.height * p.depth;
-const centerOf = (boxes: Map<string, Box3>, p: ViewPart) => boxes.get(p.id)!.getCenter(new Vector3());
-
 /** Whether the part shows: a ray from the camera to its centre (or the middle of its front) meets it first. */
 function visible(camera: PerspectiveCamera, box: Box3, own: Mesh[], scene: Object3D): boolean {
   const ray = new Raycaster();
@@ -252,161 +253,352 @@ function fit(camera: PerspectiveCamera, box: Box3, direction: Vector3, fill: num
   camera.updateMatrixWorld(true);
 }
 
-async function annotate(gl: HTMLCanvasElement, draw: (ctx: CanvasRenderingContext2D) => void): Promise<Blob> {
+
+type Shot = { renderer: WebGLRenderer; scene: Scene; camera: PerspectiveCamera; all: Mesh[] };
+/** What one picture measures: a box's 8 world corners (corner i at the max of axis k when bit k is set; the axes are
+ * the part's own, rotation included), the label of each axis (width, height, depth) and the colour of its lines. */
+type Measure = { corners: Vector3[]; texts: string[]; color: string; name?: string; meshes?: Mesh[] };
+
+/** Front three-quarter angles the camera picks from (the front of the furniture always in view). */
+const DIRS = [[1.1, 0.7, 1.9], [-1.1, 0.7, 1.9], [0.5, 0.45, 2], [-0.5, 0.45, 2], [1.6, 0.9, 1.2], [-1.6, 0.9, 1.2], [0.6, 1.6, 1.2], [-0.6, 1.6, 1.2]].map((d) => new Vector3(...d));
+const TEXT = { size: 54, height: 84, pad: 24 }; // px on the 2400 px picture: about 11 pt printed
+
+const corners = (box: Box3) => [0, 1, 2, 3, 4, 5, 6, 7].map((i) => new Vector3(i & 1 ? box.max.x : box.min.x, i & 2 ? box.max.y : box.min.y, i & 4 ? box.max.z : box.min.z));
+
+/** A part's box along its own axes: its geometry's box through its world matrix (an open door's box turns with it).
+ * Alike pieces (`alike`): the first one's. Several different pieces: their world box. */
+function partCorners(meshes: Mesh[], alike: boolean, world: Box3): Vector3[] {
+  if (meshes.length > 1 && !alike) return corners(world);
+  const mesh = meshes[0];
+  if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
+  mesh.updateWorldMatrix(true, false);
+  return corners(mesh.geometry.boundingBox!).map((c) => c.applyMatrix4(mesh.matrixWorld));
+}
+
+const toScreen = (camera: PerspectiveCamera | OrthographicCamera, p: Vector3, size = W): Pt => {
+  const v = p.clone().project(camera);
+  return { x: ((v.x + 1) / 2) * size, y: ((1 - v.y) / 2) * size };
+};
+
+/** How well a camera shows the measures: every axis of every box long enough on the picture to measure (the sum of
+ * the logs: a short side counts as much as a long one; sides not measured do not count). */
+function score(camera: PerspectiveCamera, measures: Measure[]): number {
+  let total = 0;
+  for (const m of measures) {
+    const s = m.corners.map((c) => toScreen(camera, c));
+    for (const bit of [1, 2, 4].filter((_, axis) => m.texts[axis])) total += Math.log(1 + Math.max(...[0, 1, 2, 3, 4, 5, 6, 7].filter((i) => !(i & bit)).map((i) => Math.hypot(s[i | bit].x - s[i].x, s[i | bit].y - s[i].y))));
+  }
+  return total;
+}
+
+let measureCtx: CanvasRenderingContext2D | null = null; // made on first use: this module is also loaded on the server
+const textWidth = (text: string, font: string) => {
+  measureCtx ??= document.createElement("canvas").getContext("2d")!;
+  measureCtx.font = font;
+  return measureCtx.measureText(text).width;
+};
+
+/** One picture: the scene staged (`keep` as it is and outlined, `hide` hidden, the rest faint), from the best of
+ * `dirs` at the largest of `fills` where every dimension finds a clean place (DimLayout); null when none does. */
+async function view(shot: Shot, o: { keep: Set<Mesh>; hide: Set<Mesh>; outline: Mesh[]; measures: Measure[]; frame: Box3; fills: number[]; dirs: Vector3[]; lang: "ar" | "en"; warning?: string; legend?: boolean; size?: number }): Promise<Blob | null> {
+  const { renderer, scene, camera, all } = shot;
+  const size = o.size ?? W; // square, px; the text stays TEXT.size, so a smaller picture reads larger on the page
+  renderer.setSize(size, size, false);
+  const colorOf = new Map<Mesh, string>();
+  for (const m of o.measures) for (const mesh of m.meshes ?? []) colorOf.set(mesh, m.color);
+  const restore = stage(all, o.keep, o.hide, o.outline, scene, (mesh) => (o.legend ? colorOf.get(mesh) ?? NAVY : "#334155"));
+  try {
+    const font = `700 ${TEXT.size}px ${FONT}`;
+    const keyRows = o.legend ? o.measures.map((m) => m.name ?? "") : [];
+    const ranked = o.measures.length
+      ? [...o.dirs].map((dir) => { fit(camera, o.frame, dir, o.fills[0]); return { dir, score: score(camera, o.measures) }; }).sort((a, b) => b.score - a.score).slice(0, 3).map((r) => r.dir)
+      : o.dirs;
+    for (const fill of o.fills) {
+      for (const dir of ranked) {
+        fit(camera, o.frame, dir, fill);
+        const layout = new DimLayout({ w: size, h: size }, mask(shot, o.keep, camera, size));
+        const key = keyRect(keyRows, o.lang, size);
+        if (key) layout.block(key);
+        const notice = o.warning ? { x: size / 2 - textWidth(o.warning, font) / 2 - TEXT.pad, y: 30, width: textWidth(o.warning, font) + 2 * TEXT.pad, height: TEXT.height } : null;
+        if (notice) layout.block(notice);
+        const ok = o.measures.every((m) => {
+          const s = m.corners.map((c) => toScreen(camera, c, size));
+          return m.texts.every((text, axis) => !text || layout.place(s, axis as 0 | 1 | 2, text, textWidth(text, font) + 2 * TEXT.pad, TEXT.height, m.color));
+        });
+        if (!ok) continue;
+        renderer.render(scene, camera);
+        return await annotate(renderer.domElement, size, (ctx) => {
+          drawDims(ctx, layout.dims, o.lang);
+          if (key) drawKey(ctx, key, o.measures, o.lang);
+          if (notice && o.warning) label(ctx, notice, o.warning, "#b42318", o.lang);
+        });
+      }
+    }
+    return null;
+  } finally {
+    restore();
+    renderer.setSize(W, H, false);
+  }
+}
+
+const BLACK = new MeshBasicMaterial({ color: 0x000000 });
+const MASK_CELL = 8;
+/** Where `keep` covers the picture from the camera: rendered flat black on white, scaled down to MASK_CELL squares
+ * (a square is covered when any of its pixels is). The faint and hidden parts are free space. */
+function mask(shot: Shot, keep: Set<Mesh>, camera: PerspectiveCamera | OrthographicCamera = shot.camera, size = W): Mask {
+  const { renderer, scene, all } = shot;
+  const was = all.map((m) => m.visible);
+  const env = scene.environment;
+  all.forEach((m) => (m.visible = keep.has(m)));
+  scene.overrideMaterial = BLACK;
+  scene.environment = null;
+  try {
+    renderer.render(scene, camera);
+  } finally {
+    scene.overrideMaterial = null;
+    scene.environment = env;
+    all.forEach((m, i) => (m.visible = was[i]));
+  }
+  const cols = Math.ceil(size / MASK_CELL), rows = Math.ceil(size / MASK_CELL);
+  const small = document.createElement("canvas");
+  small.width = cols;
+  small.height = rows;
+  const ctx = small.getContext("2d", { willReadFrequently: true })!;
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "low";
+  ctx.drawImage(renderer.domElement, 0, 0, cols, rows);
+  const px = ctx.getImageData(0, 0, cols, rows).data;
+  const data = new Uint8Array(cols * rows);
+  for (let i = 0; i < data.length; i++) data[i] = px[i * 4] < 250 ? 1 : 0;
+  return { cell: MASK_CELL, cols, rows, data };
+}
+
+/** The key's place (top corner on the reading side): one line a part, its colour and name. */
+function keyRect(rows: string[], lang: "ar" | "en", size = W): Rect | null {
+  if (!rows.length) return null;
+  const width = Math.max(...rows.map((r) => textWidth(r, `700 ${TEXT.size}px ${FONT}`))) + 2 * TEXT.pad + 70;
+  const height = rows.length * TEXT.height + 24;
+  return { x: lang === "ar" ? size - 30 - width : 30, y: 30, width, height };
+}
+
+function drawKey(ctx: CanvasRenderingContext2D, r: Rect, measures: Measure[], lang: "ar" | "en") {
+  ctx.fillStyle = "rgba(255,255,255,0.96)";
+  ctx.strokeStyle = "#cbd5e1";
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.roundRect(r.x, r.y, r.width, r.height, 18);
+  ctx.fill();
+  ctx.stroke();
+  ctx.font = `700 ${TEXT.size}px ${FONT}`;
+  ctx.textBaseline = "middle";
+  ctx.direction = lang === "ar" ? "rtl" : "ltr";
+  measures.forEach((m, i) => {
+    const y = r.y + 12 + TEXT.height * (i + 0.5);
+    const dot = lang === "ar" ? r.x + r.width - TEXT.pad - 18 : r.x + TEXT.pad + 18;
+    ctx.fillStyle = m.color;
+    ctx.beginPath();
+    ctx.arc(dot, y, 18, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.textAlign = lang === "ar" ? "right" : "left";
+    ctx.fillText(m.name ?? "", lang === "ar" ? dot - 36 : dot + 36, y + 2);
+  });
+  ctx.direction = "ltr";
+}
+
+function label(ctx: CanvasRenderingContext2D, r: Rect, text: string, color: string, lang: "ar" | "en") {
+  ctx.fillStyle = "#ffffff";
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  ctx.roundRect(r.x, r.y, r.width, r.height, 16);
+  ctx.fill();
+  ctx.stroke();
+  ctx.font = `700 ${TEXT.size}px ${FONT}`;
+  ctx.fillStyle = color;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.direction = lang === "ar" ? "rtl" : "ltr";
+  ctx.fillText(text, r.x + r.width / 2, r.y + r.height / 2 + 2);
+  ctx.direction = "ltr";
+}
+
+function arrowHead(ctx: CanvasRenderingContext2D, tip: Pt, toward: Pt) {
+  const angle = Math.atan2(tip.y - toward.y, tip.x - toward.x);
+  ctx.beginPath();
+  ctx.moveTo(tip.x, tip.y);
+  ctx.lineTo(tip.x - ARROW * Math.cos(angle - 0.32), tip.y - ARROW * Math.sin(angle - 0.32));
+  ctx.lineTo(tip.x - ARROW * Math.cos(angle + 0.32), tip.y - ARROW * Math.sin(angle + 0.32));
+  ctx.closePath();
+  ctx.fill();
+}
+
+/** Engineering dimensions: thin extension lines from the measured edge's ends, the dimension line with an arrow at
+ * each end (outside, pointing in, on an edge too short for both), the length in a label beyond its middle. In three
+ * passes so no line is drawn over a label. */
+function drawDims(ctx: CanvasRenderingContext2D, dims: Dim[], lang: "ar" | "en") {
+  for (const d of dims) {
+    ctx.strokeStyle = "#64748b";
+    ctx.lineWidth = 3;
+    for (const [p, q] of [[d.from, d.a], [d.to, d.b]]) {
+      ctx.beginPath();
+      ctx.moveTo(p.x + d.n.x * 10, p.y + d.n.y * 10);
+      ctx.lineTo(q.x + d.n.x * 18, q.y + d.n.y * 18);
+      ctx.stroke();
+    }
+  }
+  for (const d of dims) {
+    ctx.strokeStyle = d.color;
+    ctx.fillStyle = d.color;
+    ctx.lineWidth = 5;
+    const len = Math.hypot(d.b.x - d.a.x, d.b.y - d.a.y) || 1;
+    const u = { x: (d.b.x - d.a.x) / len, y: (d.b.y - d.a.y) / len };
+    const tail = d.short ? ARROW + 30 : 0;
+    ctx.beginPath();
+    ctx.moveTo(d.a.x - u.x * tail, d.a.y - u.y * tail);
+    ctx.lineTo(d.b.x + u.x * tail, d.b.y + u.y * tail);
+    ctx.stroke();
+    if (d.short) {
+      arrowHead(ctx, d.a, { x: d.a.x - u.x, y: d.a.y - u.y });
+      arrowHead(ctx, d.b, { x: d.b.x + u.x, y: d.b.y + u.y });
+    } else {
+      arrowHead(ctx, d.a, d.b);
+      arrowHead(ctx, d.b, d.a);
+    }
+  }
+  for (const d of dims) {
+    if (!d.along) {
+      label(ctx, d.label, d.text, d.color, lang);
+      continue;
+    }
+    // Written along a vertical line, read from the bottom up.
+    const { x, y, width, height } = d.label;
+    ctx.save();
+    ctx.translate(x + width / 2, y + height / 2);
+    ctx.rotate(-Math.PI / 2);
+    label(ctx, { x: -height / 2, y: -width / 2, width: height, height: width }, d.text, d.color, lang);
+    ctx.restore();
+  }
+}
+
+async function annotate(gl: HTMLCanvasElement, size: number, draw: (ctx: CanvasRenderingContext2D) => void): Promise<Blob> {
   const canvas = document.createElement("canvas");
-  canvas.width = W;
-  canvas.height = H;
-  const ctx = canvas.getContext("2d");
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
   if (!ctx) throw new Error("This browser cannot draw the model views.");
   ctx.drawImage(gl, 0, 0);
   draw(ctx);
+  const out = trim(canvas, ctx);
+  const blob = await new Promise<Blob | null>((resolve) => out.toBlob(resolve, "image/png"));
+  if (!blob) throw new Error("This browser could not encode the model views.");
+  return blob;
+}
+
+/** The picture cut to what is drawn on it (the model, its lines and labels) and a margin: no empty page space, the
+ * model printed as large as the page allows. */
+function trim(canvas: HTMLCanvasElement, ctx: CanvasRenderingContext2D, margin = 48): HTMLCanvasElement {
+  const { width, height } = canvas;
+  const px = ctx.getImageData(0, 0, width, height).data;
+  let x0 = width, y0 = height, x1 = -1, y1 = -1;
+  for (let y = 0; y < height; y += 2) {
+    for (let x = 0; x < width; x += 2) {
+      const i = (y * width + x) * 4;
+      if (px[i] < 245 || px[i + 1] < 245 || px[i + 2] < 245) [x0, y0, x1, y1] = [Math.min(x0, x), Math.min(y0, y), Math.max(x1, x), Math.max(y1, y)];
+    }
+  }
+  if (x1 < 0) return canvas;
+  [x0, y0, x1, y1] = [Math.max(0, x0 - margin), Math.max(0, y0 - margin), Math.min(width, x1 + margin), Math.min(height, y1 + margin)];
+  const out = document.createElement("canvas");
+  out.width = x1 - x0;
+  out.height = y1 - y0;
+  out.getContext("2d")!.drawImage(canvas, x0, y0, out.width, out.height, 0, 0, out.width, out.height);
+  return out;
+}
+
+const PANE = W / 2;
+/** Front, side (from the right) and top views, orthographic (true lengths), on one picture: front top left, side top
+ * right, top under the front. Each with the overall sizes it shows (front: width and height; side: depth and height;
+ * top: width and depth), the same texts as the closed view's. */
+async function orthoViews(shot: Shot, box: Box3, texts: string[], lang: "ar" | "en"): Promise<Blob> {
+  const { renderer, scene, all } = shot;
+  const titles = lang === "ar" ? ["أمامي", "جانبي (يمين)", "علوي"] : ["Front", "Side (right)", "Top"];
+  const panes: { dir: Vector3; up: Vector3; show: number[]; at: [number, number] }[] = [
+    { dir: new Vector3(0, 0, 1), up: new Vector3(0, 1, 0), show: [0, 1], at: [0, 0] },
+    { dir: new Vector3(1, 0, 0), up: new Vector3(0, 1, 0), show: [1, 2], at: [PANE, 0] },
+    { dir: new Vector3(0, 1, 0), up: new Vector3(0, 0, -1), show: [0, 2], at: [0, PANE] },
+  ];
+  const canvas = document.createElement("canvas");
+  canvas.width = W;
+  canvas.height = H;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, W, H);
+  const font = `700 ${TEXT.size}px ${FONT}`;
+  const restore = stage(all, new Set(all), new Set(), all, scene, () => "#334155");
+  renderer.setSize(PANE, PANE, false);
+  try {
+    for (const [i, pane] of panes.entries()) {
+      const camera = new OrthographicCamera(-1, 1, 1, -1, 0.01, 1000);
+      const center = box.getCenter(new Vector3());
+      const reach = box.getSize(new Vector3()).length();
+      camera.up.copy(pane.up);
+      camera.position.copy(center).addScaledVector(pane.dir, reach * 2);
+      camera.lookAt(center);
+      camera.near = reach * 0.5;
+      camera.far = reach * 4;
+      camera.updateMatrixWorld(true);
+      const local = corners(box).map((c) => c.applyMatrix4(camera.matrixWorldInverse));
+      const half = Math.max(...local.map((c) => Math.max(Math.abs(c.x), Math.abs(c.y))));
+      const title = { x: lang === "ar" ? PANE - 30 - textWidth(titles[i], font) - 2 * TEXT.pad : 30, y: 30, width: textWidth(titles[i], font) + 2 * TEXT.pad, height: TEXT.height };
+      let layout: DimLayout | null = null;
+      for (const fill of [0.62, 0.52, 0.42]) {
+        [camera.left, camera.right, camera.top, camera.bottom] = [-half / fill, half / fill, half / fill, -half / fill];
+        camera.updateProjectionMatrix();
+        const tried = new DimLayout({ w: PANE, h: PANE }, mask(shot, new Set(all), camera, PANE));
+        tried.block(title);
+        const s = corners(box).map((c) => toScreen(camera, c, PANE));
+        if (pane.show.every((axis) => tried.place(s, axis as 0 | 1 | 2, texts[axis], textWidth(texts[axis], font) + 2 * TEXT.pad, TEXT.height, NAVY))) {
+          layout = tried;
+          break;
+        }
+      }
+      if (!layout) throw new Error("The model's front, side and top views could not be drawn clearly.");
+      renderer.render(scene, camera);
+      ctx.save();
+      ctx.translate(...pane.at);
+      ctx.drawImage(renderer.domElement, 0, 0);
+      drawDims(ctx, layout.dims, lang);
+      label(ctx, title, titles[i], "#64748b", lang);
+      ctx.restore();
+    }
+  } finally {
+    restore();
+    renderer.setSize(W, H, false);
+  }
+  // Thin lines between the views.
+  ctx.strokeStyle = "#e2e8f0";
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  ctx.moveTo(PANE, 0);
+  ctx.lineTo(PANE, H);
+  ctx.moveTo(0, PANE);
+  ctx.lineTo(W, PANE);
+  ctx.stroke();
   const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));
   if (!blob) throw new Error("This browser could not encode the model views.");
   return blob;
 }
 
-const toScreen = (camera: PerspectiveCamera, p: Vector3) => {
-  const v = p.clone().project(camera);
-  return { x: ((v.x + 1) / 2) * W, y: ((1 - v.y) / 2) * H };
-};
-
-function pill(ctx: CanvasRenderingContext2D, x: number, y: number, text: string, color = NAVY) {
-  ctx.font = `700 60px ${FONT}`;
-  const w = ctx.measureText(text).width + 48;
-  ctx.fillStyle = "rgba(255,255,255,0.95)";
-  ctx.strokeStyle = color;
-  ctx.lineWidth = 3;
-  ctx.beginPath();
-  ctx.roundRect(x - w / 2, y - 42, w, 84, 42);
-  ctx.fill();
-  ctx.stroke();
-  ctx.fillStyle = color;
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-  ctx.fillText(text, x, y + 1);
-}
-
-function arrowLine(ctx: CanvasRenderingContext2D, a: { x: number; y: number }, b: { x: number; y: number }, color: string, width: number, head: number) {
-  ctx.strokeStyle = color;
-  ctx.fillStyle = color;
-  ctx.lineWidth = width;
-  ctx.beginPath();
-  ctx.moveTo(a.x, a.y);
-  ctx.lineTo(b.x, b.y);
-  ctx.stroke();
-  const angle = Math.atan2(b.y - a.y, b.x - a.x);
-  for (const [p, dir] of [[a, angle + Math.PI], [b, angle]] as const) {
-    ctx.beginPath();
-    ctx.moveTo(p.x, p.y);
-    ctx.lineTo(p.x - head * Math.cos(dir - 0.35), p.y - head * Math.sin(dir - 0.35));
-    ctx.lineTo(p.x - head * Math.cos(dir + 0.35), p.y - head * Math.sin(dir + 0.35));
-    ctx.closePath();
-    ctx.fill();
-  }
-}
-
-/** A dimension line from a to b set off by `off` (all world points): extension lines, arrows, the length on it. */
-function dimension(ctx: CanvasRenderingContext2D, camera: PerspectiveCamera, a: Vector3, b: Vector3, off: Vector3, text: string) {
-  const [pa, pb, qa, qb] = [a, b, a.clone().add(off), b.clone().add(off)].map((p) => toScreen(camera, p));
-  ctx.strokeStyle = "#64748b";
-  ctx.lineWidth = 2;
-  ctx.setLineDash([8, 8]);
-  for (const [p, q] of [[pa, qa], [pb, qb]]) {
-    ctx.beginPath();
-    ctx.moveTo(p.x, p.y);
-    ctx.lineTo(q.x, q.y);
-    ctx.stroke();
-  }
-  ctx.setLineDash([]);
-  arrowLine(ctx, qa, qb, NAVY, 6, 40);
-  pill(ctx, (qa.x + qb.x) / 2, (qa.y + qb.y) / 2, text);
-}
-
-/** Width along the front bottom edge, height up the front left edge, depth along the right bottom edge: each set off
- * outside the model. */
-function overall(ctx: CanvasRenderingContext2D, camera: PerspectiveCamera, box: Box3, known: boolean, lang: "ar" | "en") {
-  const s = box.getSize(new Vector3());
-  const off = 0.06 * Math.max(s.x, s.y, s.z);
-  const { min, max } = box;
-  const word = lang === "ar" ? { w: "العرض", h: "الارتفاع", d: "العمق", cm: "سم" } : { w: "W", h: "H", d: "D", cm: "cm" };
-  const label = (k: string, m: number) => `${k} ${known ? "" : "≈"}${fmt(m * 100)} ${word.cm}${known ? "" : " ?"}`;
-  dimension(ctx, camera, new Vector3(min.x, min.y, max.z), new Vector3(max.x, min.y, max.z), new Vector3(0, -off * 0.3, off), label(word.w, s.x));
-  dimension(ctx, camera, new Vector3(min.x, min.y, max.z), new Vector3(min.x, max.y, max.z), new Vector3(-off, 0, off * 0.3), label(word.h, s.y));
-  dimension(ctx, camera, new Vector3(max.x, min.y, max.z), new Vector3(max.x, min.y, min.z), new Vector3(off, -off * 0.3, 0), label(word.d, s.z));
-  if (!known) pill(ctx, W / 2, 56, lang === "ar" ? "المقاس الحقيقي غير معروف: أكّد كل المقاسات" : "Real size unknown: confirm every dimension", "#b42318");
-}
-
-const LABEL = { size: 52, small: 42, line: 64, pad: 26 }; // px on the 2400 px picture: about 10–11 pt printed
-
-/** The labels, each beside its part (placeNear: inside the picture, none on another, no leader crossing another), a
- * leader to the part and its width marked on its front edge with arrows. Drawn after the open poses, from the camera
- * that took the picture. Only sizes (no names: the components table names the parts). Returns the ids labelled. */
-function labels(ctx: CanvasRenderingContext2D, camera: PerspectiveCamera, parts: ViewPart[], boxes: Map<string, Box3>, lang: "ar" | "en", moved: Set<string>): string[] {
-  const lines = new Map(parts.map((p) => [p.id, labelLines(p, lang).slice(1)]));
-  const items: NearLabel[] = parts.map((part) => {
-    const text = lines.get(part.id)!;
-    const width = Math.max(...text.map((l, i) => { ctx.font = `${i === 0 ? 700 : 600} ${i === 0 ? LABEL.size : LABEL.small}px ${FONT}`; return ctx.measureText(l).width; })) + 2 * LABEL.pad;
-    const box = boxes.get(part.id)!;
-    const corners = [0, 1, 2, 3, 4, 5, 6, 7].map((i) => toScreen(camera, new Vector3(i & 1 ? box.max.x : box.min.x, i & 2 ? box.max.y : box.min.y, i & 4 ? box.max.z : box.min.z)));
-    const rect = { x0: Math.min(...corners.map((c) => c.x)), y0: Math.min(...corners.map((c) => c.y)), x1: Math.max(...corners.map((c) => c.x)), y1: Math.max(...corners.map((c) => c.y)) };
-    return { id: part.id, part: rect, anchor: toScreen(camera, box.getCenter(new Vector3())), width, height: 16 + text.length * LABEL.line };
-  });
-  const { placed } = placeNear(items, { w: W, h: H });
-  const byId = new Map(parts.map((p) => [p.id, p]));
-  ctx.direction = lang === "ar" ? "rtl" : "ltr";
-  // In three passes, so nothing is drawn over a label: the width arrows, the leaders, then the labels.
-  for (const it of placed) {
-    const box = boxes.get(it.id)!;
-    const color = byId.get(it.id)!.added ? AMBER : NAVY;
-    // Engineering style: the part's width along its front top edge, arrows at both ends (not on a part standing open).
-    const a = toScreen(camera, new Vector3(box.min.x, box.max.y, box.max.z)), b = toScreen(camera, new Vector3(box.max.x, box.max.y, box.max.z));
-    if (!moved.has(it.id) && Math.hypot(b.x - a.x, b.y - a.y) > 60) arrowLine(ctx, a, b, color, 5, 30);
-  }
-  for (const it of placed) {
-    const color = byId.get(it.id)!.added ? AMBER : NAVY;
-    const ex = Math.min(Math.max(it.anchor.x, it.x), it.x + it.width), ey = Math.min(Math.max(it.anchor.y, it.y), it.y + it.height);
-    ctx.strokeStyle = color;
-    ctx.lineWidth = 4;
-    ctx.beginPath();
-    ctx.moveTo(ex, ey);
-    ctx.lineTo(it.anchor.x, it.anchor.y);
-    ctx.stroke();
-    ctx.fillStyle = color;
-    ctx.beginPath();
-    ctx.arc(it.anchor.x, it.anchor.y, 11, 0, Math.PI * 2);
-    ctx.fill();
-  }
-  for (const it of placed) {
-    const color = byId.get(it.id)!.added ? AMBER : NAVY;
-    ctx.strokeStyle = color;
-    ctx.fillStyle = "rgba(255,255,255,0.97)";
-    ctx.beginPath();
-    ctx.roundRect(it.x, it.y, it.width, it.height, 18);
-    ctx.fill();
-    ctx.lineWidth = 5;
-    ctx.stroke();
-    ctx.textBaseline = "middle";
-    ctx.textAlign = "center";
-    lines.get(it.id)!.forEach((line, i) => {
-      ctx.font = `${i === 0 ? 700 : 600} ${i === 0 ? LABEL.size : LABEL.small}px ${FONT}`;
-      ctx.fillStyle = i === 0 ? NAVY : "#9a5b0b";
-      ctx.fillText(line, it.x + it.width / 2, it.y + 8 + LABEL.line / 2 + i * LABEL.line);
-    });
-  }
-  ctx.direction = "ltr";
-  return placed.map((p) => p.id);
-}
-
 /** The camera's frame for a few parts: their boxes, with a margin of the model's size around them. */
 function frameOf(parts: ViewPart[], boxes: Map<string, Box3>, whole: Box3): Box3 {
   const box = parts.reduce((all, p) => all.union(boxes.get(p.id)!), new Box3());
-  return box.expandByScalar(0.08 * Math.max(...whole.getSize(new Vector3()).toArray()));
+  return box.expandByScalar(0.05 * Math.max(...whole.getSize(new Vector3()).toArray()));
 }
 
 const GHOST = new MeshBasicMaterial({ color: 0xcbd5e1, transparent: true, opacity: 0.16, depthWrite: false });
-/** Sets the scene for one view: the measured parts as they are, outlined (navy; orange for what the customer added);
- * `hide` hidden (doors in front of what is inside); everything else faint. Returns what puts it all back. */
-function stage(all: Mesh[], keep: Set<Mesh>, hide: Set<Mesh>, measured: ViewPart[], meshesOf: Map<string, Mesh[]>, scene: Scene): () => void {
+/** Sets the scene for one view: `keep` as they are, `hide` hidden, everything else faint; `outline` edged in
+ * `colorOf` (stronger contrast against the white). Returns what puts it all back. */
+function stage(all: Mesh[], keep: Set<Mesh>, hide: Set<Mesh>, outline: Mesh[], scene: Scene, colorOf: (m: Mesh) => string): () => void {
   const was = all.map((m) => ({ m, material: m.material, visible: m.visible }));
   for (const m of all) {
     if (keep.has(m)) continue;
@@ -414,15 +606,14 @@ function stage(all: Mesh[], keep: Set<Mesh>, hide: Set<Mesh>, measured: ViewPart
     else m.material = GHOST;
   }
   const outlines: LineSegments[] = [];
-  for (const p of measured) {
-    for (const m of meshesOf.get(p.id) ?? []) {
-      const edges = new LineSegments(new EdgesGeometry(m.geometry, 30), new LineBasicMaterial({ color: p.added ? 0xe8952a : 0x172033 }));
-      m.updateWorldMatrix(true, false);
-      edges.matrixAutoUpdate = false;
-      edges.matrix.copy(m.matrixWorld);
-      scene.add(edges);
-      outlines.push(edges);
-    }
+  for (const m of outline) {
+    if (!keep.has(m)) continue;
+    const edges = new LineSegments(new EdgesGeometry(m.geometry, 30), new LineBasicMaterial({ color: colorOf(m) }));
+    m.updateWorldMatrix(true, false);
+    edges.matrixAutoUpdate = false;
+    edges.matrix.copy(m.matrixWorld);
+    scene.add(edges);
+    outlines.push(edges);
   }
   return () => {
     for (const { m, material, visible } of was) {
@@ -435,22 +626,4 @@ function stage(all: Mesh[], keep: Set<Mesh>, hide: Set<Mesh>, measured: ViewPart
       (e.material as LineBasicMaterial).dispose();
     }
   };
-}
-
-/** The key: what the colours mean. */
-function legend(ctx: CanvasRenderingContext2D, lang: "ar" | "en") {
-  const items = lang === "ar" ? [["أصلي", NAVY], ["مضاف", AMBER]] : [["Original", NAVY], ["Added", AMBER]];
-  ctx.font = `600 34px ${FONT}`;
-  ctx.textAlign = "left";
-  ctx.textBaseline = "middle";
-  let x = 48;
-  for (const [text, color] of items) {
-    ctx.fillStyle = color;
-    ctx.beginPath();
-    ctx.arc(x + 16, H - 52, 16, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = NAVY;
-    ctx.fillText(text, x + 44, H - 50);
-    x += 76 + ctx.measureText(text).width;
-  }
 }
