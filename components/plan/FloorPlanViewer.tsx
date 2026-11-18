@@ -84,6 +84,7 @@ export function FloorPlanViewer({
   onPickPart,
   onParts,
   onMeasured,
+  onMovable,
 }: {
   geometry: PlanGeometry;
   items: PlacedItem[];
@@ -147,6 +148,7 @@ export function FloorPlanViewer({
   onPickPart?: (id: string) => void;
   onParts?: (id: string, parts: import("@/lib/vendor/parts").PartInfo[], separated: boolean) => void;
   onMeasured?: (id: string, size: Dimensions, areas: Record<string, number>) => void;
+  onMovable?: (id: string, change: { config?: import("@/lib/vendor/animation").AnimationConfig; toggle?: string }) => void;
 }) {
   const t = useT();
   const width = geometry.extents?.width ?? span(geometry, 0);
@@ -611,6 +613,7 @@ export function FloorPlanViewer({
             onPickPart={onPickPart}
             onParts={onParts}
             onMeasured={onMeasured}
+            onMovable={onMovable}
             onPick={() => pick(item)}
             // While a model, carpet, window or door is being placed, other objects ignore clicks.
             interactive={!walking && !onPickRoom && !panning && !placing && !rugDraft && !windowDraft && !doorDraft && !painting && (!carrying || carrying.id === item.instanceId)}
@@ -714,6 +717,7 @@ function FurnitureDraggable({
   onPickPart,
   onParts,
   onMeasured,
+  onMovable,
 }: {
   item: PlacedItem;
   selected: boolean;
@@ -726,6 +730,7 @@ function FurnitureDraggable({
   onPickPart?: (id: string) => void;
   onParts?: (id: string, parts: import("@/lib/vendor/parts").PartInfo[], separated: boolean) => void;
   onMeasured?: (id: string, size: Dimensions, areas: Record<string, number>) => void;
+  onMovable?: (id: string, change: { config?: import("@/lib/vendor/animation").AnimationConfig; toggle?: string }) => void;
 }) {
   // Position follows the cursor through the viewer's carry mode; only x/z ever change.
   return (
@@ -741,6 +746,7 @@ function FurnitureDraggable({
       onPickPart={onPickPart}
       onParts={onParts}
       onMeasured={onMeasured}
+      onMovable={onMovable && ((change) => onMovable(item.instanceId, change))}
     />
   );
 }

@@ -248,6 +248,9 @@ export interface CatalogModel {
   title: string;
   /** Only when one model is fetched (fetchCatalogModel): its part list, with each part's variants. */
   components?: import("@/lib/vendor/parts").PartDocument | null;
+  /** Models with movable parts (catalogue list): the animation and the part list its ids refer to. */
+  animation?: import("@/lib/vendor/animation").AnimationConfig | null;
+  parts?: import("@/lib/vendor/parts").PartInfo[] | null;
   /** Vendor's rich-text HTML: sanitise before rendering. */
   description?: string;
   price?: number | null;
@@ -340,6 +343,8 @@ export interface PlacedItem {
   partDocument?: import("@/lib/vendor/parts").PartDocument;
   /** Parts the customer removed from this customised model (not drawn). */
   removedParts?: string[];
+  /** Movable parts left open in this plan (animation id → 0..1); the animations are in partDocument. */
+  animationOpen?: Record<string, number>;
   price?: number | null;
   price_unit?: "item" | "m2";
   warnings: string[];

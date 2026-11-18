@@ -12,6 +12,7 @@ import { uploadPublicFile } from "@/lib/vendor/storage";
 import type { MaterialEdit, PartInfo } from "@/lib/vendor/parts";
 import { PartControls, PartList } from "@/components/vendor/PartEditor";
 import { WHOLE } from "@/components/vendor/ModelViewer";
+import { enabledAnimations } from "@/lib/vendor/animation";
 import { supabase, supabaseConfigured } from "@/lib/supabase/client";
 
 type Tab = "details" | "dimensions" | "parts" | "materials" | "transform";
@@ -70,7 +71,7 @@ export function PlacedItemEditor({
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [added, setAdded] = useState(false);
-  const named = parts.map((entry) => ({ ...entry, name: item.partNames?.[entry.id] ?? entry.name }));
+  const named = parts.map((entry) => (item.partNames?.[entry.id] ? { ...entry, name: item.partNames[entry.id], nameAr: null } : entry)); // a rename beats the analysis' Arabic name
   const part = named.find((entry) => entry.id === partId) ?? null;
   const edit = partId ? item.materialEdits?.[partId] ?? null : null;
   const pose = partId ? item.partPoses?.[partId] : undefined;
@@ -241,6 +242,7 @@ export function PlacedItemEditor({
               // Same place, size, turn and edits: only the doors and drawers change.
               <StateToggle className="mt-2" value={item.state === "open" ? "open" : "closed"} onChange={(state) => onPatch({ state })} />
             )}
+            {item.state !== "open" && <MovableParts item={item} onPatch={onPatch} />}
           </div>
         )}
         {editing && tab === "dimensions" && (
@@ -407,4 +409,31 @@ function round(n: number, digits: number) {
 
 function boxArea(size: { width: number; height: number; depth: number }) {
   return 2 * (size.width * size.height + size.width * size.depth + size.height * size.depth);
+}
+
+/** Doors, drawers and other movable parts of a placed model: open and close each, or all (kept in the plan). */
+function MovableParts({ item, onPatch }: { item: PlacedItem; onPatch: (patch: Partial<PlacedItem>) => void }) {
+  const t = useT();
+  const anims = enabledAnimations(item.partDocument?.animation);
+  if (!anims.length) return null;
+  const ar = t("Part") === "جزء";
+  const open = item.animationOpen ?? {};
+  const all = (v: number) => onPatch({ animationOpen: Object.fromEntries(anims.map((a) => [a.id, v])) });
+  return (
+    <div className="mt-2 space-y-1.5">
+      <div className="flex items-center gap-1.5 text-xs">
+        <span className="flex-1 font-semibold text-brand-navy">{t("Movable parts")}</span>
+        <button type="button" onClick={() => all(1)} className="rounded-md bg-brand-amber px-2 py-0.5 font-semibold text-brand-navy">{t("Open all")}</button>
+        <button type="button" onClick={() => all(0)} className="rounded-md px-2 py-0.5 font-semibold text-brand-navy ring-1 ring-slate-200">{t("Close all")}</button>
+      </div>
+      <div className="flex flex-wrap gap-1.5">
+        {anims.map((a) => (
+          <button key={a.id} type="button" aria-pressed={(open[a.id] ?? 0) > 0} onClick={() => onPatch({ animationOpen: { ...open, [a.id]: (open[a.id] ?? 0) > 0 ? 0 : 1 } })}
+            className={`rounded-full px-2.5 py-0.5 text-[11px] font-medium ring-1 ${(open[a.id] ?? 0) > 0 ? "bg-brand-navy text-white ring-brand-navy" : "text-slate-600 ring-slate-200"}`}>
+            {(ar && a.labelAr) || a.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
 }

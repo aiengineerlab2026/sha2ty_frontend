@@ -18,7 +18,9 @@ export async function asCatalogModel(design: Pick<Design, "id" | "title" | "thum
   const size = item?.dimensions ?? (item?.source.width_m && item.source.height_m ? { width: item.source.width_m, height: item.source.height_m, depth: item.source.depth_m ?? 0 } : null);
   if (!item || !size) return null;
   const listing = await fetchCatalogModel(item.source.model_id).catch(() => null);
-  const baked = Boolean(version.glb_url && (item.base_glb_url || (item.part_variants && Object.keys(item.part_variants).length)));
+  // Parts swapped for variants, or parts the customer added, exist only in the version's own file (it has every edit).
+  const added = Boolean((item.components as { added?: unknown[] } | undefined)?.added?.length);
+  const baked = Boolean(version.glb_url && (item.base_glb_url || added || (item.part_variants && Object.keys(item.part_variants).length)));
   return {
     ...(listing ?? { id: item.source.model_id, company_id: item.source.vendor_id ?? "", company: "", category: "furniture" }),
     title: design.title,
@@ -36,7 +38,8 @@ export async function asCatalogModel(design: Pick<Design, "id" | "title" | "thum
       id: design.id,
       version: version.number,
       materialEdits: (baked ? {} : item.material_edits) as NonNullable<PlacedItem["materialEdits"]>,
-      ...(baked ? {} : { partPoses: item.part_poses as PlacedItem["partPoses"], partDocument: item.components, removedParts: item.removed_parts }),
+      // A baked file still has its part list: ids (written in the file), movable parts and what is attached to them.
+      ...(baked ? { partDocument: item.components } : { partPoses: item.part_poses as PlacedItem["partPoses"], partDocument: item.components, removedParts: item.removed_parts }),
     },
   };
 }

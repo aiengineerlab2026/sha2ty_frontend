@@ -98,6 +98,8 @@ function ModelView({ model, signedIn }: { model: CatalogModel; signedIn: boolean
               url={state === "open" && model.open_glb_url ? model.open_glb_url : model.glb_url}
               frameUrl={state === "open" && model.open_glb_url ? model.glb_url : undefined}
               dimensions={dims}
+              // Movable parts (doors, drawers…) open and close here; the open-state file has none of its own.
+              parts={state === "open" && model.open_glb_url ? null : model.components ?? null}
             />
           ) : (
             <ImageCarousel images={photos} alt={model.title} className="aspect-4/3 bg-white" />

@@ -1,7 +1,9 @@
 "use client";
 
-import { useT } from "@/lib/i18n";
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useLocale, useT } from "@/lib/i18n";
+import { outdatedViews, refreshTaskViews } from "@/lib/designs/requestViews";
+import { VIEWS_VERSION } from "@/lib/designs/viewParts";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ArrowLeft, CalendarClock, CalendarDays, Check, Clock, Gavel, History, MapPin, MessageSquare, MessagesSquare, Package, PencilRuler, Star, StickyNote, Users, Wallet } from "lucide-react";
@@ -11,7 +13,7 @@ import { formatPrice } from "@/lib/plan/pricing";
 import { supabase } from "@/lib/supabase/client";
 import {
   acceptBid, advanceTask, cancelTask, decideProposal, listProposals, loadTask, myReview, onMessages, placeBid, reviewVendor, reviseBid, taskMessages, vendorProfile,
-  type BidRow, type Message, type Proposal, type TaskRow, type VendorProfileData,
+  type BidRow, type Message, type Proposal, type RequestViews, type TaskRow, type VendorProfileData,
 } from "@/lib/tasks";
 import type { VendorProfile } from "@/lib/vendor/types";
 import { DesignSpecView } from "./DesignSpecView";
@@ -99,6 +101,32 @@ export function TaskDetail({ id }: { id: string }) {
   };
 
   const mine = Boolean(task && me === task.customer_id);
+  // The customer's request with pictures from before dimensions were written on the parts: made again from its frozen
+  // model in the background (the report, here and for vendors, then shows them).
+  const locale = useLocale();
+  // One job per pictures version: a page left open while the pictures gain something (part pictures) makes them again.
+  const viewsJob = useRef<{ version: number; job: Promise<RequestViews | null> } | null>(null);
+  const refreshViews = (): Promise<RequestViews | null> => {
+    if (!task?.spec.design || !mine || !outdatedViews(task.spec.design)) return Promise.resolve(null);
+    if (viewsJob.current?.version !== VIEWS_VERSION) {
+      const job = refreshTaskViews(task.id, task.spec.design, locale === "ar" ? "ar" : "en")
+        // The request on this page has the new pictures from now on (no second run, no stale check).
+        .then((views) => {
+          setTask((now) => (now?.spec.design ? { ...now, spec: { ...now.spec, design: { ...now.spec.design, views } } } : now));
+          return views;
+        })
+        .catch((caught) => {
+          viewsJob.current = null;
+          throw caught;
+        });
+      viewsJob.current = { version: VIEWS_VERSION, job };
+    }
+    return viewsJob.current.job;
+  };
+  useEffect(() => {
+    void refreshViews().catch(() => undefined); // retried (with its error shown) when the report is downloaded
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once per request, when it is known to be the customer's
+  }, [task?.id, mine]);
   const myBid = bids.find((b) => b.vendor_id === me);
   const hired = bids.find((b) => b.id === task?.awarded_bid_id) ?? null;
   const open = task?.status === "published";
@@ -130,7 +158,7 @@ export function TaskDetail({ id }: { id: string }) {
   return (
     <div className="min-h-full bg-[#F8FAFC]">
       <Header vendor={vendor} />
-      <main className="mx-auto max-w-7xl space-y-6 px-4 py-6 sm:px-6 lg:py-8">
+      <main className="mx-auto max-w-[1600px] space-y-6 px-4 py-6 sm:px-6 lg:py-8">
         <Link href={vendor && !mine ? "/vendor/tasks" : "/tasks"} className="inline-flex items-center gap-1.5 text-sm font-medium text-slate-500 transition hover:text-brand-navy">
           <ArrowLeft className="size-4 rtl:-scale-x-100" aria-hidden /> {t("Back to requests")}
         </Link>
@@ -165,7 +193,7 @@ export function TaskDetail({ id }: { id: string }) {
                       <PencilRuler className="size-4" aria-hidden /> {t("Edit customised model")}
                     </Link>
                   )}
-                  <ReportButton taskId={task.id} />
+                  <ReportButton taskId={task.id} spec={task.spec.design} before={mine ? refreshViews : undefined} />
                 </div>
               </div>
               <dl className="grid grid-cols-2 border-t border-slate-100 bg-slate-50/60 sm:grid-cols-3 lg:grid-cols-5">
@@ -183,34 +211,111 @@ export function TaskDetail({ id }: { id: string }) {
               </dl>
             </section>
 
-            <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_380px]">
-              <div className="min-w-0 space-y-6">
-                {task.description && (
+            {(() => {
+              // The customer's notes and review go under the parts; the offers, messages and the request's actions in
+              // the side column (offers first).
+              const notes = (
+                <>
+                  {task.description && (
                   <section className={`${card} p-5`}>
-                    <h2 className="flex items-center gap-2 text-sm font-semibold text-brand-navy"><StickyNote className="size-4 text-slate-400" aria-hidden /> {t("Customer notes")}</h2>
+                    <h2 className="flex items-center gap-2 font-bold text-brand-navy"><StickyNote className="size-4 text-[#b8731d]" aria-hidden /> {t("Customer notes")}</h2>
                     <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-slate-700">{task.description}</p>
                   </section>
                 )}
-
-                {task.spec.design ? (
-                  <DesignSpecView spec={task.spec.design} quantity={task.spec.quantity ?? 1} download={mine || Boolean(hired && hired.vendor_id === me)} camera={!mine} />
-                ) : (
-                  <ul className={`${card} divide-y divide-slate-100`}>
-                    {(task.spec.lines ?? []).map((line) => (
-                      <li key={line.name + line.quantity} className="flex justify-between gap-3 px-4 py-2.5 text-sm">
-                        <span>{line.name}<span className="text-slate-400"> · {line.quantity} {line.unit === "m2" ? "m²" : ""}</span></span>
-                        <span className="font-semibold">{line.total == null ? "—" : formatPrice(line.total)}</span>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-
-                {mine && task.status === "completed" && hired && review === null && <ReviewForm onSubmit={(rating, comment) => act(() => reviewVendor(task.id, hired.vendor_id, rating, comment))} name={name(hired.vendor_id)} busy={busy} />}
+                </>
+              );
+              const reviewBlock = (
+                <>
+                  {mine && task.status === "completed" && hired && review === null && <ReviewForm onSubmit={(rating, comment) => act(() => reviewVendor(task.id, hired.vendor_id, rating, comment))} name={name(hired.vendor_id)} busy={busy} />}
                 {mine && review && <p className={`${card} p-4 text-sm text-slate-600`}>{t("Your review: {stars} {comment}", { stars: "★".repeat(review.rating), comment: review.comment })}</p>}
-              </div>
-
-              <aside className="min-w-0 space-y-6">
-                {/* Conversations: a tab per vendor (bidders and vendors who asked), the thread below. */}
+                </>
+              );
+              const side = (
+                <>
+                  {mine && (
+                  <section className={`${card} space-y-4 p-5`}>
+                    <div className="flex items-center justify-between gap-2">
+                      <h2 className="flex items-center gap-2 font-bold text-brand-navy">
+                        <Gavel className="size-4 text-[#b8731d]" aria-hidden /> {t("Bids ({n})", { n: bids.filter((b) => b.status !== "withdrawn").length })}
+                      </h2>
+                      <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] font-semibold ring-1 ${TONE[task.status]}`}>
+                        <span className="size-1.5 rounded-full bg-current" aria-hidden /> {t(STATUS[task.status])}
+                      </span>
+                    </div>
+                    {bids.length === 0 && (
+                      // Empty: a small illustration (a gavel in soft amber rings) and what happens next.
+                      <div className="flex flex-col items-center gap-3 rounded-2xl bg-gradient-to-b from-slate-50 to-white px-4 py-8 text-center ring-1 ring-slate-100">
+                        <span className="relative flex size-16 items-center justify-center">
+                          <span className="absolute inset-0 rounded-full bg-brand-amber/10" />
+                          <span className="absolute inset-2 rounded-full bg-brand-amber/15" />
+                          <Gavel className="relative size-7 text-[#b8731d]" aria-hidden />
+                        </span>
+                        <p className="text-sm font-semibold text-brand-navy">{t("No bids yet")}</p>
+                        <p className="text-xs leading-relaxed text-slate-500">{t("No bids yet. Vendors who make this kind of furniture see your request and can ask you questions here.")}</p>
+                      </div>
+                    )}
+                    {ranked.map((bid) => {
+                      const p = profiles[bid.vendor_id];
+                      const unread = unreadOf(bid.vendor_id);
+                      return (
+                        <article key={bid.id} className={`${card} p-4 transition hover:shadow-md ${bid.id === task.awarded_bid_id ? "ring-2 ring-emerald-300" : ""} ${bid.status === "withdrawn" ? "opacity-60" : ""}`}>
+                          <div className="flex items-start gap-3">
+                            <Avatar name={name(bid.vendor_id)} />
+                            <div className="min-w-0 flex-1">
+                              <Link href={`/vendors/${bid.vendor_id}`} className="block truncate font-semibold text-brand-navy hover:underline">{name(bid.vendor_id)}</Link>
+                              <p className="mt-0.5 flex flex-wrap items-center gap-x-2 text-xs text-slate-500">
+                                {p?.stats.rating != null ? <span className="inline-flex items-center gap-0.5"><Star className="size-3 fill-brand-amber text-brand-amber" aria-hidden />{p.stats.rating.toFixed(1)} ({p.stats.reviews})</span> : <span>{t("No reviews yet")}</span>}
+                                <span>{t("{n} completed projects", { n: p?.stats.completed_projects ?? 0 })}</span>
+                              </p>
+                            </div>
+                            <div className="text-end">
+                              <p className="text-lg font-bold tabular-nums text-brand-navy">{formatPrice(bid.price)}</p>
+                              <p className="inline-flex items-center gap-1 text-xs text-slate-500"><Clock className="size-3" aria-hidden />{t("{n} days", { n: bid.days })}</p>
+                            </div>
+                          </div>
+                          {bid.note && <p className="mt-3 whitespace-pre-wrap rounded-xl bg-slate-50 p-3 text-sm text-slate-600">{bid.note}</p>}
+                          <div className="mt-3 flex flex-wrap items-center gap-1.5 text-xs">
+                            {bid.id === lowest && bids.filter((b) => b.status === "submitted").length > 1 && <span className="rounded-full bg-emerald-50 px-2 py-0.5 font-medium text-emerald-700">{t("Lowest price")}</span>}
+                            {bid.id === task.awarded_bid_id && <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 font-medium text-emerald-700"><Check className="size-3" aria-hidden />{t("Hired")}</span>}
+                            {bid.status === "withdrawn" && <span className="rounded-full bg-slate-100 px-2 py-0.5 text-slate-500">{t("Withdrawn")}</span>}
+                            {bid.status === "rejected" && <span className="rounded-full bg-slate-100 px-2 py-0.5 text-slate-500">{t("Not selected")}</span>}
+                          </div>
+                          <div className="mt-3 flex flex-wrap gap-2">
+                            {open && bid.status === "submitted" && (
+                              <button
+                                type="button"
+                                disabled={busy}
+                                onClick={() => window.confirm(t("Hire {name} for {price}? Other bids are closed.", { name: name(bid.vendor_id), price: formatPrice(bid.price) })) && void act(() => acceptBid(bid.id))}
+                                className="inline-flex h-9 flex-1 items-center justify-center gap-1.5 rounded-xl bg-brand-amber px-3 text-xs font-semibold text-brand-navy transition hover:bg-[#e8952a] disabled:opacity-60"
+                              >
+                                <Check className="size-3.5" aria-hidden /> {t("Accept bid")}
+                              </button>
+                            )}
+                            <Link href={`/vendors/${bid.vendor_id}`} className="inline-flex h-9 items-center justify-center rounded-xl border border-slate-200 px-3 text-xs font-semibold text-brand-navy transition hover:bg-slate-50">{t("View profile")}</Link>
+                            <button type="button" onClick={() => setChatWith(bid.vendor_id)} className="inline-flex h-9 items-center gap-1 rounded-xl border border-slate-200 px-3 text-xs font-semibold text-brand-navy transition hover:bg-slate-50">
+                              <MessageSquare className="size-3.5" aria-hidden /> {t("Chat")}
+                              {unread > 0 && <span className="rounded-full bg-brand-amber px-1.5 text-[10px]">{unread}</span>}
+                            </button>
+                          </div>
+                        </article>
+                      );
+                    })}
+                    <div className="flex flex-wrap gap-2 border-t border-slate-100 pt-4">
+                      {open && (
+                        <button type="button" disabled={busy} onClick={() => window.confirm(t("Cancel this request? It is deleted, with its offers and messages.")) && void act(async () => { await cancelTask(task.id); router.replace("/tasks"); })} className="w-full rounded-xl border border-slate-200 bg-transparent px-3 py-2.5 text-sm font-semibold text-slate-600 transition hover:border-red-200 hover:bg-red-50/60 hover:text-red-600 disabled:opacity-60">
+                          {t("Cancel request")}
+                        </button>
+                      )}
+                      {task.status === "in_progress" && (
+                        <button type="button" disabled={busy} onClick={() => window.confirm(t("Confirm the work is finished?")) && void act(() => advanceTask(task.id, "completed"))} className="rounded-xl bg-brand-amber px-3 py-2 text-sm font-semibold text-brand-navy">
+                          {t("Mark as completed")}
+                        </button>
+                      )}
+                      {task.status === "awarded" && <p className="text-xs text-slate-500">{t("Waiting for {name} to start the work.", { name: hired ? name(hired.vendor_id) : t("the vendor") })}</p>}
+                    </div>
+                  </section>
+                )}
+                  {/* Conversations: a tab per vendor (bidders and vendors who asked), the thread below. */}
                 {mine && me && (
                   <section className={`${card} overflow-hidden`}>
                     <div className="flex items-center gap-2 border-b border-slate-100 px-4 py-3">
@@ -263,76 +368,7 @@ export function TaskDetail({ id }: { id: string }) {
                   />
                 )}
                 {!me && <p className={`${card} p-4 text-sm text-slate-500`}>{t("Log in to bid or chat.")}</p>}
-
-                {mine && (
-                  <section className="space-y-3">
-                    <h2 className="flex items-center gap-2 text-sm font-semibold text-brand-navy">
-                      <Gavel className="size-4 text-slate-400" aria-hidden /> {t("Bids ({n})", { n: bids.filter((b) => b.status !== "withdrawn").length })}
-                    </h2>
-                    {bids.length === 0 && <p className="rounded-2xl border border-dashed border-slate-300 bg-white p-4 text-sm text-slate-500">{t("No bids yet. Vendors who make this kind of furniture see your request and can ask you questions here.")}</p>}
-                    {ranked.map((bid) => {
-                      const p = profiles[bid.vendor_id];
-                      const unread = unreadOf(bid.vendor_id);
-                      return (
-                        <article key={bid.id} className={`${card} p-4 transition hover:shadow-md ${bid.id === task.awarded_bid_id ? "ring-2 ring-emerald-300" : ""} ${bid.status === "withdrawn" ? "opacity-60" : ""}`}>
-                          <div className="flex items-start gap-3">
-                            <Avatar name={name(bid.vendor_id)} />
-                            <div className="min-w-0 flex-1">
-                              <Link href={`/vendors/${bid.vendor_id}`} className="block truncate font-semibold text-brand-navy hover:underline">{name(bid.vendor_id)}</Link>
-                              <p className="mt-0.5 flex flex-wrap items-center gap-x-2 text-xs text-slate-500">
-                                {p?.stats.rating != null ? <span className="inline-flex items-center gap-0.5"><Star className="size-3 fill-brand-amber text-brand-amber" aria-hidden />{p.stats.rating.toFixed(1)} ({p.stats.reviews})</span> : <span>{t("No reviews yet")}</span>}
-                                <span>{t("{n} completed projects", { n: p?.stats.completed_projects ?? 0 })}</span>
-                              </p>
-                            </div>
-                            <div className="text-end">
-                              <p className="text-lg font-bold tabular-nums text-brand-navy">{formatPrice(bid.price)}</p>
-                              <p className="inline-flex items-center gap-1 text-xs text-slate-500"><Clock className="size-3" aria-hidden />{t("{n} days", { n: bid.days })}</p>
-                            </div>
-                          </div>
-                          {bid.note && <p className="mt-3 whitespace-pre-wrap rounded-xl bg-slate-50 p-3 text-sm text-slate-600">{bid.note}</p>}
-                          <div className="mt-3 flex flex-wrap items-center gap-1.5 text-xs">
-                            {bid.id === lowest && bids.filter((b) => b.status === "submitted").length > 1 && <span className="rounded-full bg-emerald-50 px-2 py-0.5 font-medium text-emerald-700">{t("Lowest price")}</span>}
-                            {bid.id === task.awarded_bid_id && <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 font-medium text-emerald-700"><Check className="size-3" aria-hidden />{t("Hired")}</span>}
-                            {bid.status === "withdrawn" && <span className="rounded-full bg-slate-100 px-2 py-0.5 text-slate-500">{t("Withdrawn")}</span>}
-                            {bid.status === "rejected" && <span className="rounded-full bg-slate-100 px-2 py-0.5 text-slate-500">{t("Not selected")}</span>}
-                          </div>
-                          <div className="mt-3 flex flex-wrap gap-2">
-                            {open && bid.status === "submitted" && (
-                              <button
-                                type="button"
-                                disabled={busy}
-                                onClick={() => window.confirm(t("Hire {name} for {price}? Other bids are closed.", { name: name(bid.vendor_id), price: formatPrice(bid.price) })) && void act(() => acceptBid(bid.id))}
-                                className="inline-flex h-9 flex-1 items-center justify-center gap-1.5 rounded-xl bg-brand-amber px-3 text-xs font-semibold text-brand-navy transition hover:bg-[#e8952a] disabled:opacity-60"
-                              >
-                                <Check className="size-3.5" aria-hidden /> {t("Accept bid")}
-                              </button>
-                            )}
-                            <Link href={`/vendors/${bid.vendor_id}`} className="inline-flex h-9 items-center justify-center rounded-xl border border-slate-200 px-3 text-xs font-semibold text-brand-navy transition hover:bg-slate-50">{t("View profile")}</Link>
-                            <button type="button" onClick={() => setChatWith(bid.vendor_id)} className="inline-flex h-9 items-center gap-1 rounded-xl border border-slate-200 px-3 text-xs font-semibold text-brand-navy transition hover:bg-slate-50">
-                              <MessageSquare className="size-3.5" aria-hidden /> {t("Chat")}
-                              {unread > 0 && <span className="rounded-full bg-brand-amber px-1.5 text-[10px]">{unread}</span>}
-                            </button>
-                          </div>
-                        </article>
-                      );
-                    })}
-                    <div className="flex flex-wrap gap-2">
-                      {open && (
-                        <button type="button" disabled={busy} onClick={() => window.confirm(t("Cancel this request? It is deleted, with its offers and messages.")) && void act(async () => { await cancelTask(task.id); router.replace("/tasks"); })} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 transition hover:border-red-200 hover:text-red-600">
-                          {t("Cancel request")}
-                        </button>
-                      )}
-                      {task.status === "in_progress" && (
-                        <button type="button" disabled={busy} onClick={() => window.confirm(t("Confirm the work is finished?")) && void act(() => advanceTask(task.id, "completed"))} className="rounded-xl bg-brand-amber px-3 py-2 text-sm font-semibold text-brand-navy">
-                          {t("Mark as completed")}
-                        </button>
-                      )}
-                      {task.status === "awarded" && <p className="text-xs text-slate-500">{t("Waiting for {name} to start the work.", { name: hired ? name(hired.vendor_id) : t("the vendor") })}</p>}
-                    </div>
-                  </section>
-                )}
-
-                {mine && proposals.length > 0 && (
+                  {mine && proposals.length > 0 && (
                   <section className="space-y-3">
                     <h2 className="flex items-center gap-2 text-sm font-semibold text-brand-navy"><History className="size-4 text-slate-400" aria-hidden /> {t("Proposed changes ({n})", { n: proposals.length })}</h2>
                     {/* A timeline, newest first: who proposed what, its state, and the model on demand. */}
@@ -376,8 +412,28 @@ export function TaskDetail({ id }: { id: string }) {
                     ))}
                   </section>
                 )}
-              </aside>
-            </div>
+                </>
+              );
+              return task.spec.design ? (
+                <DesignSpecView layout="page" spec={task.spec.design} quantity={task.spec.quantity ?? 1} download={mine || Boolean(hired && hired.vendor_id === me)} camera={!mine} center={<>{notes}{reviewBlock}</>} aside={side} />
+              ) : (
+                <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_340px]">
+                  <div className="min-w-0 space-y-6">
+                    {notes}
+                    <ul className={`${card} divide-y divide-slate-100`}>
+                    {(task.spec.lines ?? []).map((line) => (
+                      <li key={line.name + line.quantity} className="flex justify-between gap-3 px-4 py-2.5 text-sm">
+                        <span>{line.name}<span className="text-slate-400"> · {line.quantity} {line.unit === "m2" ? "m²" : ""}</span></span>
+                        <span className="font-semibold">{line.total == null ? "—" : formatPrice(line.total)}</span>
+                      </li>
+                    ))}
+                  </ul>
+                    {reviewBlock}
+                  </div>
+                  <aside className="min-w-0 space-y-6 lg:sticky lg:top-4">{side}</aside>
+                </div>
+              );
+            })()}
           </>
         )}
       </main>

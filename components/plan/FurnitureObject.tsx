@@ -7,7 +7,8 @@ import { Edges, Html, useGLTF } from "@react-three/drei";
 import { alignLike, normalizeModel, type Dimensions, type NormalizationReport } from "@/lib/plan/modelNormalization";
 import type { PlacedItem } from "@/lib/plan/types";
 import type { PartInfo } from "@/lib/vendor/parts";
-import { applyPoses, DRAG, partBox, prepare, replayEdits, reseat, SelectionOutline, slotHit, type Slot } from "@/components/vendor/ModelViewer";
+import { Animator, applyPoses, assembliesOf, movableParts, DRAG, hoverHit, partBox, prepare, replayEdits, reseat, SelectionOutline, slotHit, toggleHit, type Slot } from "@/components/vendor/ModelViewer";
+import { enabledAnimations, type AnimationConfig } from "@/lib/vendor/animation";
 
 const DEV = process.env.NODE_ENV !== "production";
 
@@ -23,6 +24,7 @@ export function FurnitureObject({
   partId = null,
   onPickPart,
   interactive = true,
+  onMovable,
 }: {
   item: PlacedItem;
   selected: boolean;
@@ -37,12 +39,16 @@ export function FurnitureObject({
   onPickPart?: (id: string) => void;
   /** false in walk mode: clicks pass through, the model can't be selected or picked up. */
   interactive?: boolean;
+  /** Movable parts: the configuration checked on this model's meshes, or one opened / closed by a click on it. */
+  onMovable?: (change: { config?: AnimationConfig; toggle?: string }) => void;
 }) {
   const { scene } = useGLTF(item.glbUrl);
   const placed = useRef<Group>(null);
   const slots = useRef<Slot[]>([]);
   const prepared = useRef<Object3D | null>(null);
   const [slotRev, setSlotRev] = useState(0);
+  const [animSlots, setAnimSlots] = useState<Slot[]>([]); // slots.current, for the animation player
+  const lit = useRef<Mesh[]>([]);
 
   // Normalisation depends only on the source and the catalogue size — never on the item's
   // position, rotation, the room or the camera — so dragging/rotating cannot change scale.
@@ -62,24 +68,35 @@ export function FurnitureObject({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [report]);
 
-  const custom = editing || Boolean(item.materialEdits && Object.keys(item.materialEdits).length) || Boolean(item.partPoses && Object.keys(item.partPoses).length) || Boolean(item.removedParts?.length);
+  // Movable parts play on the closed file (the open-state file is already open).
+  // Movable parts as checked on this model's meshes (refine): kept on the item by onMovable.
+  const movable = open ? null : item.partDocument?.animation ?? null;
+  const animated = !open && (enabledAnimations(item.partDocument?.animation).length > 0 || (item.partDocument?.components?.length ?? 0) > 1);
+  const custom = editing || animated || Boolean(item.materialEdits && Object.keys(item.materialEdits).length) || Boolean(item.partPoses && Object.keys(item.partPoses).length) || Boolean(item.removedParts?.length);
   useEffect(() => {
     if (!custom) return;
     if (prepared.current !== object) {
       const next = prepare(object, item.partDocument ?? null); // a customised model keeps its design's part ids
       slots.current = next.slots;
       prepared.current = object;
+      // At rest (just prepared): every door and drawer found and checked on the meshes; interiors opened (added to the parts).
+      if (!open) {
+        // At rest (just prepared): every door and drawer found on the meshes, hinged and with its handles.
+        const found = movableParts(item.partDocument?.animation, next.slots, object, item.partDocument);
+        if (found && JSON.stringify(found) !== JSON.stringify(item.partDocument?.animation ?? null)) onMovable?.({ config: found });
+      }
       onParts?.(
         item.instanceId,
-        next.slots.map((slot) => ({ id: slot.id, name: slot.name, editable: true, ...(slot.naming ? { naming: slot.naming } : {}) })),
+        next.slots.map((slot) => ({ id: slot.id, name: slot.name, nameAr: slot.nameAr, editable: true, ...(slot.naming ? { naming: slot.naming } : {}) })),
         next.slots.length > 1,
       );
       setSlotRev((n) => n + 1);
+      setAnimSlots(next.slots);
     }
     let cancel = false;
     void replayEdits(slots.current, item.materialEdits).then(() => {
       if (cancel) return;
-      applyPoses(slots.current, item.partPoses);
+      applyPoses(slots.current, item.partPoses, assembliesOf(item.partDocument?.animation)); // handles move with their part
       // A customised model's removed parts are not drawn.
       for (const slot of slots.current) if (item.removedParts?.includes(slot.id)) slot.mesh.visible = false;
       const size = reseat(object);
@@ -135,11 +152,15 @@ export function FurnitureObject({
       onClick={
         interactive && !editing
           ? (event) => {
+              // The selected item: a click on a door, drawer or its handle opens / closes it instead.
+              if (selected && toggleHit(animSlots, movable, event, (id) => onMovable?.({ toggle: id }))) return;
               event.stopPropagation();
               onSelect();
             }
           : undefined
       }
+      onPointerMove={selected && interactive && !editing && movable ? (event) => hoverHit(animSlots, movable, lit, event) : undefined}
+      onPointerOut={movable ? () => hoverHit(animSlots, movable, lit, null) : undefined}
     >
       {/* Tilt about the model's own X through its base centre, lifted so no corner goes below the floor. */}
       <group position={[0, tilted(size, item.rotation_x).lift, 0]} rotation={[((item.rotation_x ?? 0) * Math.PI) / 180, 0, 0]}>
@@ -159,6 +180,7 @@ export function FurnitureObject({
               : undefined
           }
         />
+        {animated && <Animator slots={animSlots} root={object} config={movable} target={item.animationOpen ?? movable?.state ?? {}} poses={item.partPoses} />}
         {editing && <SelectionOutline mesh={picked} />}
         {selected && (!picked || item.warnings.length > 0) ? (
           <SelectionFrame size={item.size ?? size} problem={item.warnings.length > 0} />

@@ -23,6 +23,11 @@ export interface DesignSpec {
   parts: { id: string; name: string; requested?: boolean; variant?: { id: string; name: string; glb_url: string; price_delta?: number | null } }[];
   whole_model?: boolean;
   materials: { part: string; part_id: string; color?: string; mapUrl?: string; tile?: number; mapping?: string; roughness?: number; metalness?: number; material?: PartMaterial }[];
+  /** Each part's id and names, the movable parts and added parts (the request viewer opens doors and drawers with
+   * them); absent on requests from before. */
+  part_document?: import("@/lib/vendor/parts").PartDocument;
+  /** The report's pictures (lib/designs/requestViews.ts). */
+  views?: RequestViews | null;
   /** The customer's estimate for the requested parts' materials; null when one is priced on request. */
   materials_total?: number | null;
 }
@@ -152,8 +157,16 @@ export interface RequestTarget {
 export const requestTarget = (designId: string) => backend<RequestTarget>(`/api/designs/${designId}/request-target`);
 
 /** Ask vendors to make a saved customised model (its current version is frozen into the request). */
-export const requestImplementation = (designId: string, body: { description: string; location: string; budget_max: number | null; deadline: string | null; part_ids: string[] | null; quantity?: number }) =>
+export const requestImplementation = (designId: string, body: { description: string; location: string; budget_max: number | null; deadline: string | null; part_ids: string[] | null; quantity?: number; views?: RequestViews }) =>
   backend<TaskRow>(`/api/designs/${designId}/request`, { method: "POST", body: JSON.stringify(body) });
+
+/** The closed / opened pictures of the saved model and its measured parts, for the request report's
+ * "3D Model Views & Dimensions" (lib/designs/captureViews.ts). */
+export type RequestViews = { detail_groups?: string[]; overall?: { width: number; height: number; depth: number }; pictures_url?: string; pic_size?: number; pic_cols?: number; closed_url: string; open_url: string; ortho_url?: string; detail_urls: string[]; checks?: import("@/lib/designs/measure").Check[]; scale_known: boolean; opened: number; parts: import("@/lib/designs/viewParts").ViewPart[]; version: number };
+
+/** New pictures for the design's open requests after a save moved them to its newest version. */
+export const updateRequestViews = (designId: string, views: RequestViews) =>
+  backend<{ updated: number }>(`/api/designs/${designId}/request-views`, { method: "PUT", body: JSON.stringify(views) });
 
 /** A vendor's proposed change to a requested model (supabase/proposals.sql), as a full specification. */
 export interface Proposal {

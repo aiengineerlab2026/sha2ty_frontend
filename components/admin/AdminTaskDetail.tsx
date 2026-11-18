@@ -64,7 +64,7 @@ export function AdminTaskDetail({ id, call, onClose }: { id: string; call: (path
                   </button>
                 ))}
               </div>
-              <ReportButton taskId={task.id} />
+              <ReportButton taskId={task.id} spec={task.spec.design} />
             </div>
             {side === "customer" ? <CustomerSide detail={detail} /> : <VendorsSide threads={detail.vendors} />}
           </>

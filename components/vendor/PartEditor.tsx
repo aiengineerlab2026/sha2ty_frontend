@@ -8,7 +8,8 @@ import type { MaterialEdit, PartInfo } from "@/lib/vendor/parts";
 import { meshNameAr } from "@/lib/vendor/meshNames";
 
 /** "Seat Cushion 2" → "وسادة المقعد 2": the part word is translated, the number kept. Vendor names show as typed. */
-export function partLabel(t: T, name: string): string {
+export function partLabel(t: T, name: string, nameAr?: string | null): string {
+  if (nameAr && t("Part") === "جزء") return nameAr; // the vision analysis named it in Arabic
   const match = /^(.*?)(?:\s+(\d+))?$/.exec(name);
   const base = match?.[1] || name;
   const label = match?.[2] ? `${t(base)} ${match[2]}` : t(base);
@@ -56,7 +57,7 @@ export function PartList({
   const t = useT();
   const [query, setQuery] = useState("");
   const [editing, setEditing] = useState<string | null>(null); // the part being renamed in place
-  const shown = parts.filter((p) => partLabel(t, p.name).toLowerCase().includes(query.trim().toLowerCase()));
+  const shown = parts.filter((p) => partLabel(t, p.name, p.nameAr).toLowerCase().includes(query.trim().toLowerCase()));
   return (
     // Grows to the space it is given: in a full-height panel only the list scrolls (its header and notes stay put).
     <aside className="flex min-h-0 flex-col rounded-2xl border border-slate-200/80 bg-white shadow-sm">
@@ -91,18 +92,18 @@ export function PartList({
                   type="checkbox"
                   checked={!off}
                   onChange={(e) => onToggle(part.id, e.target.checked)}
-                  aria-label={t("Show {name}", { name: partLabel(t, part.name) })}
+                  aria-label={t("Show {name}", { name: partLabel(t, part.name, part.nameAr) })}
                   className="size-4 shrink-0 cursor-pointer rounded accent-[#f2a33a]"
                 />
               )}
               {editing === part.id ? (
                 <input
                   autoFocus
-                  defaultValue={partLabel(t, part.name)}
+                  defaultValue={partLabel(t, part.name, part.nameAr)}
                   aria-label={t("Part name")}
                   onBlur={(e) => {
                     setEditing(null);
-                    if (e.target.value.trim() && e.target.value.trim() !== partLabel(t, part.name)) onRename(part.id, e.target.value);
+                    if (e.target.value.trim() && e.target.value.trim() !== partLabel(t, part.name, part.nameAr)) onRename(part.id, e.target.value);
                   }}
                   onKeyDown={(e) => {
                     if (e.key === "Enter") e.currentTarget.blur();
@@ -118,21 +119,21 @@ export function PartList({
                   aria-current={active}
                   className={`min-w-0 flex-1 truncate py-2 text-start text-sm transition-colors ${active ? "font-semibold text-brand-navy" : "text-slate-700"} ${off ? "text-slate-400 line-through" : ""}`}
                 >
-                  {partLabel(t, part.name)}
+                  {partLabel(t, part.name, part.nameAr)}
                 </button>
               )}
               {editing !== part.id && (
                 <span className={`flex shrink-0 items-center gap-0.5 transition-opacity ${active ? "opacity-100" : "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100"}`}>
-                  <button type="button" onClick={() => setEditing(part.id)} title={t("Rename")} aria-label={t("Rename {name}", { name: partLabel(t, part.name) })} className="rounded-md p-1 text-slate-400 transition hover:bg-white hover:text-brand-navy">
+                  <button type="button" onClick={() => setEditing(part.id)} title={t("Rename")} aria-label={t("Rename {name}", { name: partLabel(t, part.name, part.nameAr) })} className="rounded-md p-1 text-slate-400 transition hover:bg-white hover:text-brand-navy">
                     <Pencil className="size-3.5" aria-hidden />
                   </button>
                   {onRemove && (
                     <button
                       type="button"
                       disabled={canRemove ? !canRemove(part.id) : false}
-                      onClick={() => window.confirm(t("Remove “{name}” from this model? It is left out of the saved model and requests. You can restore it.", { name: partLabel(t, part.name) })) && onRemove(part.id)}
+                      onClick={() => window.confirm(t("Remove “{name}” from this model? It is left out of the saved model and requests. You can restore it.", { name: partLabel(t, part.name, part.nameAr) })) && onRemove(part.id)}
                       title={canRemove && !canRemove(part.id) ? t("This part shares one mesh with others in the file, so it cannot be removed alone. Hide it instead.") : t("Remove part")}
-                      aria-label={t("Remove {name}", { name: partLabel(t, part.name) })}
+                      aria-label={t("Remove {name}", { name: partLabel(t, part.name, part.nameAr) })}
                       className="rounded-md p-1 text-slate-400 transition hover:bg-white hover:text-red-600 disabled:opacity-30 disabled:hover:text-slate-400"
                     >
                       <Trash2 className="size-3.5" aria-hidden />
