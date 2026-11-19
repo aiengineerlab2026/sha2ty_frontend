@@ -29,6 +29,11 @@ export function stretch(size: Dimensions, original: Dimensions): number {
   return Math.max(...r) / Math.min(...r);
 }
 
+/** A length in metres as centimetres, everywhere a customer or vendor reads a size: whole cm, or one decimal (a board's 1.8). */
+export const cm = (metres: number | null | undefined) => (metres == null ? "—" : String(Math.round(metres * 1000) / 10));
+/** "52 × 86 × 56" (width × height × depth, in cm). */
+export const sizeCm = (d: Dimensions) => `${cm(d.width)} × ${cm(d.height)} × ${cm(d.depth)}`;
+
 export function formatLength(metres: number, unit: "m" | "cm"): string {
   return unit === "cm" ? `${Math.round(metres * 100)} cm` : `${metres.toFixed(2)} m`;
 }

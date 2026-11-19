@@ -341,6 +341,22 @@ function AdminTasks({ call }: { call: (path: string, init?: RequestInit) => Prom
   const [rows, setRows] = useState<Row[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [opened, setOpened] = useState<string | null>(null); // the request whose details are open
+  const [deleting, setDeleting] = useState<string | null>(null);
+  // Deleted from the database with its bids, chat, proposals and review (backend DELETE /api/admin/tasks/{id}).
+  const remove = async (r: Row) => {
+    if (!window.confirm(t("Delete “{title}” permanently? Its offers, messages, proposed changes and review are deleted with it, for the customer and every vendor. This cannot be undone.", { title: r.title }))) return;
+    setDeleting(r.id);
+    setError(null);
+    try {
+      await call(`/tasks/${r.id}`, { method: "DELETE" });
+      setRows((now) => now?.filter((x) => x.id !== r.id) ?? now);
+      if (opened === r.id) setOpened(null);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setDeleting(null);
+    }
+  };
   useEffect(() => {
     call("/tasks").then(
       (body) => body && setRows(body.tasks as Row[]),
@@ -370,6 +386,9 @@ function AdminTasks({ call }: { call: (path: string, init?: RequestInit) => Prom
                 {t("Details")}
               </button>
               <ReportButton taskId={r.id} />
+              <button type="button" disabled={deleting === r.id} onClick={() => void remove(r)} className="h-9 rounded-lg px-3 font-medium text-red-600 ring-1 ring-red-200 hover:bg-red-50 disabled:opacity-60">
+                {deleting === r.id ? t("Deleting…") : t("Delete")}
+              </button>
             </li>
           ))}
         </ul>

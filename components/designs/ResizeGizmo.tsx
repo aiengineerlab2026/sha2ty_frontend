@@ -112,7 +112,10 @@ export function ResizeGizmo({
     if (!hit) return;
     // d.axis points outwards from this handle, so `moved` > 0 always means bigger, on either side.
     const moved = hit.sub(d.origin).dot(d.axis);
-    onSize(resized(d.start, d.handle.axis, dragLength(d.start, d.handle.axis, 1, moved), proportional, min));
+    // Whole centimetres while dragging (what a workshop measures); typed sizes stay exactly as typed.
+    const next = resized(d.start, d.handle.axis, dragLength(d.start, d.handle.axis, 1, moved), proportional, min);
+    const cm = (v: number) => Math.round(v * 100) / 100;
+    onSize({ width: cm(next.width), height: cm(next.height), depth: cm(next.depth) });
   };
 
   const up = (event: ThreeEvent<PointerEvent>) => {

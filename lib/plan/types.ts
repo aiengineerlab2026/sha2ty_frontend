@@ -257,6 +257,10 @@ export interface CatalogModel {
   price_unit?: "item" | "m2";
   /** furniture | tv | lighting | ceiling_light | air_conditioner (lib/plan/categories). */
   category?: string;
+  /** chairs | sofas | beds | tables | storage | doors | other (supabase/models_listing.sql; the catalogue's type filter). */
+  furniture_type?: string | null;
+  /** false: hidden from the shop by its vendor (a draft or test). */
+  listed?: boolean;
   /** "straight" (default) or an L-shaped corner unit, corner at the back-left / back-right seen from the front. */
   shape?: "straight" | "l_left" | "l_right";
   /** L-shaped: length along the second wall (width_m is the first wall, depth_m the arm depth). */
@@ -273,6 +277,9 @@ export interface CatalogModel {
   company_id: string;
   company: string;
   company_logo?: string | null;
+  /** The vendor's city / area (vendors.location) and the listing's usual production time (supabase/custom_requests.sql). */
+  company_location?: string;
+  production_days?: number | null;
   /** A customised model from My designs (placed with this version's size and edits; the listing is unchanged). */
   design?: {
     id: string;

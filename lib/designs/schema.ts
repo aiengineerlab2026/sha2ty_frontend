@@ -44,6 +44,8 @@ export interface ItemEdits {
   part_variants?: Record<string, string>;
   /** The customer's own .glb the design is built on instead of the source's file. */
   base_glb_url?: string;
+  /** How the size was changed: "independent" = width, height and depth separately (the model is stretched to it). */
+  resize_mode?: "proportional" | "independent";
 }
 
 export interface ItemDesign extends ItemEdits {
@@ -92,6 +94,8 @@ export interface Design {
   current_version_id: string | null;
   version_count: number;
   thumbnail_url: string | null;
+  /** Saved without a name (a temporary one): named when its request is published or it is renamed. */
+  draft?: boolean;
   created_at: string;
   updated_at: string;
   current?: DesignVersion & { data: DesignData };

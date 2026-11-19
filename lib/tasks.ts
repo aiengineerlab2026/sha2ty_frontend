@@ -52,6 +52,8 @@ export interface TaskRow {
     furniture?: { instanceId: string; modelId: string; title: string; dimensions: { width: number; height: number; depth: number } }[];
     /** A request for one customised model (its frozen version). */
     design?: DesignSpec;
+    /** A made-to-order request described without a 3D model (POST /api/requests): sizes in cm. */
+    brief?: { furniture_type: string; dimensions: { width: number; height: number; depth: number }; material: string; finish: string; images: string[] };
     audience?: "open" | "vendor_exclusive";
     vendor?: { id: string; name: string } | null;
   };
@@ -65,16 +67,31 @@ export interface TaskRow {
   created_at: string;
 }
 
-export interface BidRow {
+/** A bid's terms as fields (supabase/bid_terms.sql); `note` holds anything else. */
+export interface BidTerms {
+  price: number;
+  /** "per_item": `price` is for one piece (the total is price × quantity); "total": for the whole quantity. */
+  price_basis: "total" | "per_item";
+  quantity: number | null;
+  days: number;
+  material: string;
+  fabric: string;
+  installation: boolean | null;
+  warranty: string;
+  payment_terms: string;
+  note: string;
+}
+
+export interface BidRow extends BidTerms {
   id: string;
   task_id: string;
   vendor_id: string;
-  price: number;
-  days: number;
-  note: string;
   status: BidStatus;
   created_at: string;
 }
+
+export { bidTotals } from "@/lib/plan/pricing";
+
 
 export async function publishTask(input: {
   planId: string;
@@ -114,8 +131,8 @@ export async function loadTask(id: string) {
   return { task: data as TaskRow | null, bids: (bids.data ?? []) as BidRow[] };
 }
 
-export async function placeBid(taskId: string, vendorId: string, price: number, days: number, note: string) {
-  const { error } = await supabase().from("task_bids").insert({ task_id: taskId, vendor_id: vendorId, price, days, note });
+export async function placeBid(taskId: string, vendorId: string, terms: BidTerms) {
+  const { error } = await supabase().from("task_bids").insert({ task_id: taskId, vendor_id: vendorId, ...terms });
   if (error) throw new Error(error.message);
 }
 
@@ -156,6 +173,23 @@ export interface RequestTarget {
 /** Who a request for this design goes to: its original vendor only, or every vendor (Sha2ty's own models). */
 export const requestTarget = (designId: string) => backend<RequestTarget>(`/api/designs/${designId}/request-target`);
 
+export interface CustomBrief {
+  title: string;
+  furniture_type: string;
+  dimensions: { width: number; height: number; depth: number };
+  quantity: number;
+  material: string;
+  finish: string;
+  description: string;
+  location: string;
+  budget_max: number | null;
+  deadline: string | null;
+  images: string[];
+}
+
+/** Send a made-to-order request (no 3D model) to every approved vendor. */
+export const createCustomRequest = (brief: CustomBrief) => backend<TaskRow>("/api/requests", { method: "POST", body: JSON.stringify(brief) });
+
 /** Ask vendors to make a saved customised model (its current version is frozen into the request). */
 export const requestImplementation = (designId: string, body: { description: string; location: string; budget_max: number | null; deadline: string | null; part_ids: string[] | null; quantity?: number; views?: RequestViews }) =>
   backend<TaskRow>(`/api/designs/${designId}/request`, { method: "POST", body: JSON.stringify(body) });
@@ -189,7 +223,7 @@ export const listProposals = (taskId: string) => backend<Proposal[]>(`/api/tasks
 export const decideProposal = (id: string, accept: boolean) => backend<Proposal>(`/api/proposals/${id}/decision`, { method: "POST", body: JSON.stringify({ accept }) });
 
 /** Revise or withdraw one's own bid (or submit it again after withdrawing) while the task is open. */
-export async function reviseBid(bidId: string, patch: { price?: number; days?: number; note?: string; status?: "submitted" | "withdrawn" }) {
+export async function reviseBid(bidId: string, patch: Partial<BidTerms> & { status?: "submitted" | "withdrawn" }) {
   const { error } = await supabase().from("task_bids").update({ ...patch, updated_at: new Date().toISOString() }).eq("id", bidId);
   if (error) throw new Error(error.message);
 }
@@ -247,7 +281,7 @@ export function onMessages(taskId: string | null, onMessage: (message: Message) 
 }
 
 export interface VendorProfileData {
-  vendor: { id: string; name: string; location: string; logo_url: string | null; created_at: string };
+  vendor: { id: string; name: string; location: string; logo_url: string | null; created_at: string; service_areas?: string[]; bio?: string; portfolio?: { url: string; caption: string }[] };
   stats: { completed_projects: number; active_projects: number; bids: number; rating: number | null; reviews: number };
   listings: { id: string; title: string; glb_url: string | null; width_m: number | null; height_m: number | null; depth_m: number | null; price: number | null; price_unit?: string; source_image_url: string | null; thumbnail_url?: string | null }[];
   projects: { id: string; title: string; status: TaskStatus; created_at: string; thumbnail_url: string | null; days: number | null }[];

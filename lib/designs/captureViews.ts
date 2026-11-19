@@ -1,7 +1,7 @@
 import { Box3, DirectionalLight, EdgesGeometry, Group, LineBasicMaterial, LineSegments, Mesh, MeshBasicMaterial, NeutralToneMapping, OrthographicCamera, PerspectiveCamera, PMREMGenerator, Raycaster, SRGBColorSpace, Scene, Vector3, WebGLRenderer, type Object3D } from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
-import { normalizeModel, uniformFactor } from "@/lib/plan/modelNormalization";
+import { fitScale, normalizeModel } from "@/lib/plan/modelNormalization";
 import { applyAnimations, attachmentsFrom, enabledAnimations, refine } from "@/lib/vendor/animation";
 import type { ItemDesign } from "@/lib/designs/schema";
 import { axisTexts, checkMeasurements, partSize, tableRows, type Check, type RestBox } from "@/lib/designs/measure";
@@ -29,10 +29,10 @@ export async function captureViews({ glbUrl, item, lang }: { glbUrl: string; ite
   const gltf = await new GLTFLoader().loadAsync(glbUrl); // resolves once every embedded texture is decoded
   const source = item.source;
   const original = source.width_m && source.height_m && source.depth_m ? { width: source.width_m, height: source.height_m, depth: source.depth_m } : null;
-  // As the editor shows it: fitted to the catalogue size, then the customer's size on top (one factor).
+  // As the editor shows it: at exactly the saved size (lib/plan/modelNormalization fitScale).
   const { object, report } = normalizeModel(gltf.scene, original);
   const dims = item.dimensions ?? original;
-  if (dims) object.scale.setScalar(uniformFactor([dims.width / report.finalSize.width, dims.height / report.finalSize.height, dims.depth / report.finalSize.depth]));
+  if (dims) object.scale.set(...fitScale(dims, report.finalSize, item.resize_mode === "independent"));
   const sized = new Group().add(object);
   sized.updateMatrixWorld(true);
   const model = (object.children[0]?.children[0]?.children[0] ?? object) as Object3D; // the file's own frame (ModelViewer authored)

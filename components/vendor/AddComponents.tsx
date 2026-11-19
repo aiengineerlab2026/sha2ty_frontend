@@ -445,7 +445,9 @@ export function useComponentEditor({ slots, setSlots, root, anim, setAnim, saved
 export type ComponentEditor = ReturnType<typeof useComponentEditor>;
 
 /** The gallery (drag a picture onto the model, or tap it and then the model) and the selected added part's toolbar. */
-export function AddComponentsPanel({ editor, selected, mpu, unit, focus, onPaint }: { editor: ComponentEditor; selected: string | null; mpu: Vector3 | null; unit: "m" | "cm"; focus: 0 | 1 | 2 | Side | null; onPaint: () => void }) {
+export function AddComponentsPanel({ editor, selected, mpu, unit, focus, onPaint, allowed }: { editor: ComponentEditor; selected: string | null; mpu: Vector3 | null; unit: "m" | "cm"; focus: 0 | 1 | 2 | Side | null; onPaint: () => void;
+  /** Customers: only these part types (the vendor's choice for this model), each with its price difference. */
+  allowed?: import("@/lib/vendor/parts").AddablePart[] }) {
   const t = useT();
   const ar = t("Part") === "جزء";
   const [query, setQuery] = useState("");
@@ -477,10 +479,16 @@ export function AddComponentsPanel({ editor, selected, mpu, unit, focus, onPaint
     >
       <Thumb type={d.type} />
       <span className="truncate">{ar ? d.nameAr : t(d.name)}</span>
+      {allowed && <span className="text-[10px] font-normal tabular-nums text-slate-500">{priceOf(d.type)}</span>}
     </button>
   );
-  const shown = editor.gallery.fits.filter(match);
-  const more = editor.gallery.more.filter(match);
+  const offer = allowed ? new Map(allowed.map((a) => [a.type, a.price_delta ?? null])) : null;
+  const priceOf = (type: string) => {
+    const delta = offer?.get(type);
+    return delta ? `${delta > 0 ? "+" : "−"}${Math.abs(delta).toLocaleString()} ${t("EGP")}` : t("Priced by vendor");
+  };
+  const shown = editor.gallery.fits.filter((d) => match(d) && (!offer || offer.has(d.type)));
+  const more = editor.gallery.more.filter((d) => match(d) && (!offer || offer.has(d.type)));
   const real = (v: number, axis: 0 | 1 | 2) => (mpu ? v * mpu.getComponent(axis) : v);
   return (
     <section className="space-y-2 rounded-2xl border border-slate-200/80 bg-white p-3 text-sm shadow-sm">

@@ -1,7 +1,8 @@
 "use client";
 
 import { useT } from "@/lib/i18n";
-import type { ReactNode } from "react";
+import { Suspense, type ReactNode } from "react";
+import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { Check } from "lucide-react";
 import { Plus_Jakarta_Sans } from "next/font/google";
@@ -26,27 +27,9 @@ export function AuthShell({ title, subtitle, children, wide = false }: { title: 
       <aside className="relative hidden overflow-hidden bg-brand-navy lg:flex lg:flex-col">
         <div className="pointer-events-none absolute -start-32 -top-32 size-[28rem] rounded-full bg-brand-amber/10 blur-3xl" aria-hidden />
         <div className="pointer-events-none absolute -bottom-40 end-0 size-[32rem] rounded-full bg-sky-400/10 blur-3xl" aria-hidden />
-        <div className="relative flex min-h-0 flex-1 flex-col p-8 xl:p-12">
-          <Link href="/" aria-label={t("sha2ty home")} className="self-start">
-            <Logo size={44} tone="light" label={t("Vendor Studio")} />
-          </Link>
-          <div className="flex min-h-0 flex-1 items-center justify-center py-6">
-            <AuthRoom className="size-full min-h-64" />
-          </div>
-          <div className="max-w-md shrink-0 space-y-5">
-            <h2 className="text-[28px] font-bold leading-[1.15] tracking-tight text-white xl:text-[32px]">{t("Your catalogue, placed in real homes at real size.")}</h2>
-            <ul className="space-y-3 text-[15px] text-slate-300">
-              {["Turn product photos into 3D models", "Paints and floors priced per m²", "Shoppers furnish their own floor plan"].map((point) => (
-                <li key={point} className="flex items-center gap-2.5">
-                  <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-brand-amber/15 text-brand-amber ring-1 ring-brand-amber/25">
-                    <Check className="size-3" aria-hidden />
-                  </span>
-                  {t(point)}
-                </li>
-              ))}
-            </ul>
-          </div>
-        </div>
+        <Suspense fallback={<Showcase vendor={false} />}>
+          <ShowcaseFromUrl />
+        </Suspense>
       </aside>
 
       <div className="flex min-h-dvh flex-col lg:min-h-0 lg:overflow-y-auto">
@@ -64,6 +47,44 @@ export function AuthShell({ title, subtitle, children, wide = false }: { title: 
             <div className={wide ? "mt-4 sm:mt-6" : "mt-9"}>{children}</div>
           </div>
         </main>
+      </div>
+    </div>
+  );
+}
+
+/** Vendor pages (?as=vendor, the signup's Vendor tab) show the studio pitch; everyone else the shopper's. */
+function ShowcaseFromUrl() {
+  return <Showcase vendor={useSearchParams().get("as") === "vendor"} />;
+}
+
+const POINTS = {
+  vendor: { label: "Vendor Studio", title: "Your catalogue, placed in real homes at real size.", points: ["Turn product photos into 3D models", "Paints and floors priced per m²", "Shoppers furnish their own floor plan"] },
+  customer: { label: undefined, title: "Furniture made to your size.", points: ["Customise a model in 3D", "Get bids from local workshops", "Compare and choose your vendor"] },
+};
+
+function Showcase({ vendor }: { vendor: boolean }) {
+  const t = useT();
+  const copy = POINTS[vendor ? "vendor" : "customer"];
+  return (
+    <div className="relative flex min-h-0 flex-1 flex-col p-8 xl:p-12">
+      <Link href="/" aria-label={t("sha2ty home")} className="self-start">
+        <Logo size={44} tone="light" label={copy.label ? t(copy.label) : undefined} />
+      </Link>
+      <div className="flex min-h-0 flex-1 items-center justify-center py-6">
+        <AuthRoom className="size-full min-h-64" />
+      </div>
+      <div className="max-w-md shrink-0 space-y-5">
+        <h2 className="text-[28px] font-bold leading-[1.15] tracking-tight text-white xl:text-[32px]">{t(copy.title)}</h2>
+        <ul className="space-y-3 text-[15px] text-slate-300">
+          {copy.points.map((point) => (
+            <li key={point} className="flex items-center gap-2.5">
+              <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-brand-amber/15 text-brand-amber ring-1 ring-brand-amber/25">
+                <Check className="size-3" aria-hidden />
+              </span>
+              {t(point)}
+            </li>
+          ))}
+        </ul>
       </div>
     </div>
   );

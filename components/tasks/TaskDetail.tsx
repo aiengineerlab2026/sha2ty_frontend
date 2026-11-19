@@ -6,19 +6,21 @@ import { VIEWS_VERSION } from "@/lib/designs/viewParts";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ArrowLeft, CalendarClock, CalendarDays, Check, Clock, Gavel, History, MapPin, MessageSquare, MessagesSquare, Package, PencilRuler, Star, StickyNote, Users, Wallet } from "lucide-react";
+import { ArrowLeft, CalendarClock, CalendarDays, Check, Gavel, History, MapPin, MessageSquare, MessagesSquare, Package, PencilRuler, Star, StickyNote, Users, Wallet } from "lucide-react";
 import { Header } from "@/components/shatably/Header";
 import { authSession } from "@/lib/auth/client";
 import { formatPrice } from "@/lib/plan/pricing";
 import { supabase } from "@/lib/supabase/client";
 import {
   acceptBid, advanceTask, cancelTask, decideProposal, listProposals, loadTask, myReview, onMessages, placeBid, reviewVendor, reviseBid, taskMessages, vendorProfile,
-  type BidRow, type Message, type Proposal, type RequestViews, type TaskRow, type VendorProfileData,
+  bidTotals, type BidRow, type BidTerms, type Message, type Proposal, type RequestViews, type TaskRow, type VendorProfileData,
 } from "@/lib/tasks";
 import type { VendorProfile } from "@/lib/vendor/types";
 import { DesignSpecView } from "./DesignSpecView";
 import { ReportButton } from "./ReportButton";
 import { TaskChat } from "./TaskChat";
+import { BidComparison } from "./BidComparison";
+import { BriefView } from "./CustomRequest";
 
 const STATUS: Record<TaskRow["status"], string> = {
   published: "Receiving bids",
@@ -50,7 +52,10 @@ export function TaskDetail({ id }: { id: string }) {
   const [proposals, setProposals] = useState<Proposal[]>([]);
   const [shownProposal, setShownProposal] = useState<string | null>(null); // the one opened in 3D
   // ?chat=<vendor id>: opened from a notification.
-  const [chatWith, setChatWith] = useState<string | null>(useSearchParams().get("chat"));
+  const search = useSearchParams();
+  const [chatWith, setChatWith] = useState<string | null>(search.get("chat"));
+  // ?sent=1: just published from the custom request form.
+  const justSent = search.get("sent") === "1";
   const [review, setReview] = useState<{ rating: number; comment: string } | null | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -134,7 +139,6 @@ export function TaskDetail({ id }: { id: string }) {
   const threadOf = (vendorId: string) => messages.filter((m) => m.vendor_id === vendorId);
   const unreadOf = (vendorId: string) => threadOf(vendorId).filter((m) => m.sender_id !== me && !m.read_at).length;
   const ranked = useMemo(() => [...bids].sort((a, b) => Number(a.status === "withdrawn") - Number(b.status === "withdrawn") || a.price - b.price), [bids]);
-  const lowest = ranked.find((b) => b.status === "submitted")?.id;
   // The customer's open thread: the chosen vendor once hired, else the one picked (or the first bidder).
   const customerThread = mine ? chatWith ?? hired?.vendor_id ?? null : null;
   const name = (vendorId: string) => profiles[vendorId]?.vendor.name ?? t("Vendor");
@@ -150,7 +154,7 @@ export function TaskDetail({ id }: { id: string }) {
         { icon: CalendarClock, label: "Wanted by", value: task.deadline ? new Date(task.deadline).toLocaleDateString() : t("Flexible") },
         { icon: MapPin, label: "Location", value: task.location || "—" },
         { icon: CalendarDays, label: "Published", value: new Date(task.created_at).toLocaleDateString() },
-        ...(task.spec.design ? [{ icon: Package, label: "Quantity", value: t("{n} pieces", { n: task.spec.quantity ?? 1 }) }] : []),
+        ...(task.spec.design || task.spec.brief ? [{ icon: Package, label: "Quantity", value: t("{n} pieces", { n: task.spec.quantity ?? 1 }) }] : []),
       ]
     : [];
   const card = "rounded-2xl border border-slate-200/80 bg-white shadow-sm";
@@ -171,6 +175,12 @@ export function TaskDetail({ id }: { id: string }) {
         )}
         {task && (
           <>
+            {mine && justSent && task.status === "published" && (
+              <p role="status" className="flex items-start gap-2 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900">
+                <Check className="mt-0.5 size-4 shrink-0" aria-hidden />
+                <span>{t("Your request was sent to the vendors on Sha2ty. Their offers and questions appear on this page; nothing is decided until you choose one.")}</span>
+              </p>
+            )}
             {/* Hero: what is requested, its state, the actions, and the key facts in one strip. */}
             <section className={`${card} overflow-hidden`}>
               <div className="flex flex-col gap-4 p-5 sm:p-6 lg:flex-row lg:items-start lg:justify-between">
@@ -180,10 +190,13 @@ export function TaskDetail({ id }: { id: string }) {
                     <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold ring-1 ${TONE[task.status]}`}>
                       <span className="size-1.5 rounded-full bg-current" aria-hidden /> {t(STATUS[task.status])}
                     </span>
-                    <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600">
-                      <Users className="size-3.5" aria-hidden />
-                      {task.audience === "vendor_exclusive" ? t("Only for {vendor}", { vendor: task.spec.vendor?.name || name(task.exclusive_vendor_id ?? "") }) : t("Open to all vendors")}
-                    </span>
+                    {open && (
+                      <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600">
+                        <Users className="size-3.5" aria-hidden />
+                        {task.audience === "vendor_exclusive" ? t("Only for {vendor}", { vendor: task.spec.vendor?.name || name(task.exclusive_vendor_id ?? "") }) : t("Open to all vendors")}
+                      </span>
+                    )}
+                    {hired && <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-800 ring-1 ring-emerald-200"><Check className="size-3.5" aria-hidden />{t("Vendor: {name}", { name: name(hired.vendor_id) })}</span>}
                   </div>
                 </div>
                 <div className="flex flex-wrap items-start gap-2 lg:justify-end">
@@ -193,7 +206,8 @@ export function TaskDetail({ id }: { id: string }) {
                       <PencilRuler className="size-4" aria-hidden /> {t("Edit customised model")}
                     </Link>
                   )}
-                  <ReportButton taskId={task.id} spec={task.spec.design} before={mine ? refreshViews : undefined} />
+                  {/* The manufacturing report is built from a 3D model: a request without one shows its brief instead. */}
+                  {task.spec.design && <ReportButton taskId={task.id} spec={task.spec.design} before={mine ? refreshViews : undefined} />}
                 </div>
               </div>
               <dl className="grid grid-cols-2 border-t border-slate-100 bg-slate-50/60 sm:grid-cols-3 lg:grid-cols-5">
@@ -210,6 +224,21 @@ export function TaskDetail({ id }: { id: string }) {
                 ))}
               </dl>
             </section>
+
+            {mine && (
+              <BidComparison
+                task={task}
+                bids={bids}
+                profiles={profiles}
+                busy={busy}
+                unread={unreadOf}
+                onChat={(v) => {
+                  setChatWith(v);
+                  document.getElementById("messages")?.scrollIntoView({ behavior: "smooth", block: "start" });
+                }}
+                onAccept={(bid) => act(() => acceptBid(bid.id))}
+              />
+            )}
 
             {(() => {
               // The customer's notes and review go under the parts; the offers, messages and the request's actions in
@@ -233,91 +262,40 @@ export function TaskDetail({ id }: { id: string }) {
               const side = (
                 <>
                   {mine && (
-                  <section className={`${card} space-y-4 p-5`}>
+                  <section className={`${card} space-y-3 p-5`}>
                     <div className="flex items-center justify-between gap-2">
-                      <h2 className="flex items-center gap-2 font-bold text-brand-navy">
-                        <Gavel className="size-4 text-[#b8731d]" aria-hidden /> {t("Bids ({n})", { n: bids.filter((b) => b.status !== "withdrawn").length })}
-                      </h2>
+                      <h2 className="flex items-center gap-2 font-bold text-brand-navy"><Gavel className="size-4 text-[#b8731d]" aria-hidden /> {t("Your request")}</h2>
                       <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] font-semibold ring-1 ${TONE[task.status]}`}>
                         <span className="size-1.5 rounded-full bg-current" aria-hidden /> {t(STATUS[task.status])}
                       </span>
                     </div>
-                    {bids.length === 0 && (
-                      // Empty: a small illustration (a gavel in soft amber rings) and what happens next.
-                      <div className="flex flex-col items-center gap-3 rounded-2xl bg-gradient-to-b from-slate-50 to-white px-4 py-8 text-center ring-1 ring-slate-100">
-                        <span className="relative flex size-16 items-center justify-center">
-                          <span className="absolute inset-0 rounded-full bg-brand-amber/10" />
-                          <span className="absolute inset-2 rounded-full bg-brand-amber/15" />
-                          <Gavel className="relative size-7 text-[#b8731d]" aria-hidden />
-                        </span>
-                        <p className="text-sm font-semibold text-brand-navy">{t("No bids yet")}</p>
-                        <p className="text-xs leading-relaxed text-slate-500">{t("No bids yet. Vendors who make this kind of furniture see your request and can ask you questions here.")}</p>
-                      </div>
+                    {open && <p className="text-xs leading-relaxed text-slate-500">{task.spec.design ? t("Vendors see your design and send bids. Compare them above, then choose one vendor.") : t("Vendors see your request and send bids. Compare them above, then choose one vendor.")}</p>}
+                    {task.status === "awarded" && <p className="text-xs leading-relaxed text-slate-600">{t("Waiting for {name} to start the work.", { name: hired ? name(hired.vendor_id) : t("the vendor") })}</p>}
+                    {/* Deletes the request from the database in any state (bids, chat, proposals and review with it). */}
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() =>
+                        window.confirm(
+                          hired
+                            ? t("Delete this request permanently? {name} was chosen to make it: their job, the offers, messages and proposed changes are deleted too, for you and every vendor. This cannot be undone.", { name: name(hired.vendor_id) })
+                            : t("Delete this request permanently? Its offers, messages and proposed changes are deleted too, for you and every vendor. This cannot be undone."),
+                        ) && void act(async () => { await cancelTask(task.id); router.replace("/tasks"); })
+                      }
+                      className="w-full rounded-xl border border-slate-200 bg-transparent px-3 py-2.5 text-sm font-semibold text-slate-600 transition hover:border-red-200 hover:bg-red-50/60 hover:text-red-600 disabled:opacity-60"
+                    >
+                      {t("Delete request")}
+                    </button>
+                    {task.status === "in_progress" && (
+                      <button type="button" disabled={busy} onClick={() => window.confirm(t("Confirm the work is finished?")) && void act(() => advanceTask(task.id, "completed"))} className="rounded-xl bg-brand-amber px-3 py-2 text-sm font-semibold text-brand-navy">
+                        {t("Mark as completed")}
+                      </button>
                     )}
-                    {ranked.map((bid) => {
-                      const p = profiles[bid.vendor_id];
-                      const unread = unreadOf(bid.vendor_id);
-                      return (
-                        <article key={bid.id} className={`${card} p-4 transition hover:shadow-md ${bid.id === task.awarded_bid_id ? "ring-2 ring-emerald-300" : ""} ${bid.status === "withdrawn" ? "opacity-60" : ""}`}>
-                          <div className="flex items-start gap-3">
-                            <Avatar name={name(bid.vendor_id)} />
-                            <div className="min-w-0 flex-1">
-                              <Link href={`/vendors/${bid.vendor_id}`} className="block truncate font-semibold text-brand-navy hover:underline">{name(bid.vendor_id)}</Link>
-                              <p className="mt-0.5 flex flex-wrap items-center gap-x-2 text-xs text-slate-500">
-                                {p?.stats.rating != null ? <span className="inline-flex items-center gap-0.5"><Star className="size-3 fill-brand-amber text-brand-amber" aria-hidden />{p.stats.rating.toFixed(1)} ({p.stats.reviews})</span> : <span>{t("No reviews yet")}</span>}
-                                <span>{t("{n} completed projects", { n: p?.stats.completed_projects ?? 0 })}</span>
-                              </p>
-                            </div>
-                            <div className="text-end">
-                              <p className="text-lg font-bold tabular-nums text-brand-navy">{formatPrice(bid.price)}</p>
-                              <p className="inline-flex items-center gap-1 text-xs text-slate-500"><Clock className="size-3" aria-hidden />{t("{n} days", { n: bid.days })}</p>
-                            </div>
-                          </div>
-                          {bid.note && <p className="mt-3 whitespace-pre-wrap rounded-xl bg-slate-50 p-3 text-sm text-slate-600">{bid.note}</p>}
-                          <div className="mt-3 flex flex-wrap items-center gap-1.5 text-xs">
-                            {bid.id === lowest && bids.filter((b) => b.status === "submitted").length > 1 && <span className="rounded-full bg-emerald-50 px-2 py-0.5 font-medium text-emerald-700">{t("Lowest price")}</span>}
-                            {bid.id === task.awarded_bid_id && <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 font-medium text-emerald-700"><Check className="size-3" aria-hidden />{t("Hired")}</span>}
-                            {bid.status === "withdrawn" && <span className="rounded-full bg-slate-100 px-2 py-0.5 text-slate-500">{t("Withdrawn")}</span>}
-                            {bid.status === "rejected" && <span className="rounded-full bg-slate-100 px-2 py-0.5 text-slate-500">{t("Not selected")}</span>}
-                          </div>
-                          <div className="mt-3 flex flex-wrap gap-2">
-                            {open && bid.status === "submitted" && (
-                              <button
-                                type="button"
-                                disabled={busy}
-                                onClick={() => window.confirm(t("Hire {name} for {price}? Other bids are closed.", { name: name(bid.vendor_id), price: formatPrice(bid.price) })) && void act(() => acceptBid(bid.id))}
-                                className="inline-flex h-9 flex-1 items-center justify-center gap-1.5 rounded-xl bg-brand-amber px-3 text-xs font-semibold text-brand-navy transition hover:bg-[#e8952a] disabled:opacity-60"
-                              >
-                                <Check className="size-3.5" aria-hidden /> {t("Accept bid")}
-                              </button>
-                            )}
-                            <Link href={`/vendors/${bid.vendor_id}`} className="inline-flex h-9 items-center justify-center rounded-xl border border-slate-200 px-3 text-xs font-semibold text-brand-navy transition hover:bg-slate-50">{t("View profile")}</Link>
-                            <button type="button" onClick={() => setChatWith(bid.vendor_id)} className="inline-flex h-9 items-center gap-1 rounded-xl border border-slate-200 px-3 text-xs font-semibold text-brand-navy transition hover:bg-slate-50">
-                              <MessageSquare className="size-3.5" aria-hidden /> {t("Chat")}
-                              {unread > 0 && <span className="rounded-full bg-brand-amber px-1.5 text-[10px]">{unread}</span>}
-                            </button>
-                          </div>
-                        </article>
-                      );
-                    })}
-                    <div className="flex flex-wrap gap-2 border-t border-slate-100 pt-4">
-                      {open && (
-                        <button type="button" disabled={busy} onClick={() => window.confirm(t("Cancel this request? It is deleted, with its offers and messages.")) && void act(async () => { await cancelTask(task.id); router.replace("/tasks"); })} className="w-full rounded-xl border border-slate-200 bg-transparent px-3 py-2.5 text-sm font-semibold text-slate-600 transition hover:border-red-200 hover:bg-red-50/60 hover:text-red-600 disabled:opacity-60">
-                          {t("Cancel request")}
-                        </button>
-                      )}
-                      {task.status === "in_progress" && (
-                        <button type="button" disabled={busy} onClick={() => window.confirm(t("Confirm the work is finished?")) && void act(() => advanceTask(task.id, "completed"))} className="rounded-xl bg-brand-amber px-3 py-2 text-sm font-semibold text-brand-navy">
-                          {t("Mark as completed")}
-                        </button>
-                      )}
-                      {task.status === "awarded" && <p className="text-xs text-slate-500">{t("Waiting for {name} to start the work.", { name: hired ? name(hired.vendor_id) : t("the vendor") })}</p>}
-                    </div>
                   </section>
                 )}
                   {/* Conversations: a tab per vendor (bidders and vendors who asked), the thread below. */}
                 {mine && me && (
-                  <section className={`${card} overflow-hidden`}>
+                  <section id="messages" className={`${card} scroll-mt-4 overflow-hidden`}>
                     <div className="flex items-center gap-2 border-b border-slate-100 px-4 py-3">
                       <MessageSquare className="size-4 text-slate-400" aria-hidden />
                       <h2 className="text-sm font-semibold text-brand-navy">{t("Messages")}</h2>
@@ -419,15 +397,16 @@ export function TaskDetail({ id }: { id: string }) {
               ) : (
                 <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_340px]">
                   <div className="min-w-0 space-y-6">
+                    {task.spec.brief && <BriefView brief={task.spec.brief} quantity={task.spec.quantity ?? 1} />}
                     {notes}
-                    <ul className={`${card} divide-y divide-slate-100`}>
+                    {(task.spec.lines ?? []).length > 0 && <ul className={`${card} divide-y divide-slate-100`}>
                     {(task.spec.lines ?? []).map((line) => (
                       <li key={line.name + line.quantity} className="flex justify-between gap-3 px-4 py-2.5 text-sm">
                         <span>{line.name}<span className="text-slate-400"> · {line.quantity} {line.unit === "m2" ? "m²" : ""}</span></span>
                         <span className="font-semibold">{line.total == null ? "—" : formatPrice(line.total)}</span>
                       </li>
                     ))}
-                  </ul>
+                  </ul>}
                     {reviewBlock}
                   </div>
                   <aside className="min-w-0 space-y-6 lg:sticky lg:top-4">{side}</aside>
@@ -488,17 +467,35 @@ function ProposalCard({ proposal, vendorName, open, onToggle, children }: { prop
   );
 }
 
+/** What a vendor offers, as fields the customer compares side by side (BidComparison). Material and fabric start
+ * from what the customer chose; the price is for one piece or the whole quantity, said in words beside it. */
 function VendorBid({ task, bid, vendorId, busy, act }: { task: TaskRow; bid?: BidRow; vendorId: string; busy: boolean; act: (work: () => Promise<unknown>) => Promise<void> }) {
   const t = useT();
+  const design = task.spec.design;
+  const requested = task.spec.quantity ?? 1;
+  // The customer's choices, as the starting text (the vendor changes them when they offer something else).
+  const chosenWood = design?.materials.find((m) => m.material?.kind === "wood")?.material?.name ?? task.spec.brief?.material ?? "";
+  const chosenFabric = [...new Set(design?.materials.filter((m) => m.material?.kind === "fabric").map((m) => m.material!.name) ?? [])].join("، ");
+  const [terms, setTerms] = useState<BidTerms>(() => ({
+    price: bid?.price ?? 0,
+    price_basis: bid?.price_basis ?? "total",
+    quantity: bid?.quantity ?? requested,
+    days: bid?.days ?? 14,
+    material: bid?.material ?? chosenWood,
+    fabric: bid?.fabric ?? chosenFabric,
+    installation: bid?.installation ?? null,
+    warranty: bid?.warranty ?? "",
+    payment_terms: bid?.payment_terms ?? "",
+    note: bid?.note ?? "",
+  }));
   const [price, setPrice] = useState(bid ? String(bid.price) : "");
-  const [days, setDays] = useState(bid ? String(bid.days) : "14");
-  const [note, setNote] = useState(bid?.note ?? "");
+  const set = (patch: Partial<BidTerms>) => setTerms((now) => ({ ...now, ...patch }));
   const open = task.status === "published";
   const hiredMe = bid && task.awarded_bid_id === bid.id;
   if (hiredMe) {
     return (
       <section className="space-y-2 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm">
-        <p className="font-semibold text-emerald-800">{t("You were hired for {price} in {n} days.", { price: formatPrice(bid.price), n: bid.days })}</p>
+        <p className="font-semibold text-emerald-800">{t("You were hired for {price} in {n} days.", { price: formatPrice(bidTotals(bid, requested).total), n: bid.days })}</p>
         {task.status === "awarded" && (
           <button type="button" disabled={busy} onClick={() => void act(() => advanceTask(task.id, "in_progress"))} className="rounded-lg bg-brand-amber px-3 py-2 font-semibold text-brand-navy">
             {t("Start work")}
@@ -508,25 +505,59 @@ function VendorBid({ task, bid, vendorId, busy, act }: { task: TaskRow; bid?: Bi
       </section>
     );
   }
-  if (!open) return bid ? <p className="rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-500">{t(bid.status === "rejected" ? "The customer chose another vendor." : "This request is closed.")}</p> : null;
+  // Closed (a vendor chosen, cancelled…): no new or changed bids.
+  if (!open) return <p className="rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-500">{t(bid?.status === "rejected" ? "The customer chose another vendor." : "This request is closed: it no longer takes bids.")}</p>;
   const withdrawn = bid?.status === "withdrawn";
+  const amount = Number(price);
+  const quantity = terms.quantity ?? requested;
+  const field = "mt-1 w-full rounded-lg border border-slate-200 px-2 py-1.5";
   return (
     <form
       className="space-y-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"
       onSubmit={(event) => {
         event.preventDefault();
-        const p = Number(price);
-        const d = Number(days);
-        if (!(p >= 0) || !(d >= 1)) return;
-        void act(() => (bid ? reviseBid(bid.id, { price: p, days: d, note: note.trim(), status: "submitted" }) : placeBid(task.id, vendorId, p, d, note.trim())));
+        if (!(amount >= 0) || !(terms.days >= 1)) return;
+        const body = { ...terms, price: amount, material: terms.material.trim(), fabric: terms.fabric.trim(), warranty: terms.warranty.trim(), payment_terms: terms.payment_terms.trim(), note: terms.note.trim() };
+        void act(() => (bid ? reviseBid(bid.id, { ...body, status: "submitted" }) : placeBid(task.id, vendorId, body)));
       }}
     >
       <h2 className="font-semibold text-brand-navy">{bid ? (withdrawn ? t("Your bid (withdrawn)") : t("Your bid")) : t("Place a bid")}</h2>
-      <div className="grid grid-cols-2 gap-3">
-        <label className="block text-sm">{t("Price (EGP)")}<input required type="number" min="0" value={price} onChange={(e) => setPrice(e.target.value)} className="mt-1 w-full rounded-lg border px-2 py-1.5" /></label>
-        <label className="block text-sm">{t("Days to deliver")}<input required type="number" min="1" value={days} onChange={(e) => setDays(e.target.value)} className="mt-1 w-full rounded-lg border px-2 py-1.5" /></label>
-      </div>
-      <label className="block text-sm">{t("What is included (materials, delivery, installation)")}<textarea value={note} onChange={(e) => setNote(e.target.value)} rows={3} maxLength={2000} className="mt-1 w-full rounded-lg border px-2 py-1.5" /></label>
+      <fieldset className="space-y-2">
+        <legend className="text-sm">{t("Price (EGP)")}</legend>
+        <div className="flex rounded-lg bg-slate-100 p-0.5 text-xs font-semibold" role="radiogroup">
+          {(["total", "per_item"] as const).map((basis) => (
+            <button key={basis} type="button" role="radio" aria-checked={terms.price_basis === basis} onClick={() => set({ price_basis: basis })} className={`flex-1 rounded-md px-2 py-1.5 transition ${terms.price_basis === basis ? "bg-white text-brand-navy shadow-sm" : "text-slate-500"}`}>
+              {basis === "total" ? t("Total for all pieces") : t("Price per piece")}
+            </button>
+          ))}
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <input required type="number" min="0" aria-label={t("Price (EGP)")} value={price} onChange={(e) => setPrice(e.target.value)} className={field} />
+          <label className="block text-sm">{t("Pieces")}<input required type="number" min="1" max="1000" value={quantity} onChange={(e) => set({ quantity: Math.max(1, Math.round(Number(e.target.value) || 1)) })} className={field} /></label>
+        </div>
+        {price !== "" && amount >= 0 && (
+          <p className="text-xs font-medium text-slate-600">
+            {terms.price_basis === "per_item"
+              ? t("{each} per piece × {n} = {total} total", { each: formatPrice(amount), n: quantity, total: formatPrice(amount * quantity) })
+              : t("{total} for all {n} pieces ({each} each)", { total: formatPrice(amount), n: quantity, each: formatPrice(Math.round(amount / quantity)) })}
+          </p>
+        )}
+        {quantity !== requested && <p className="text-xs text-amber-700">{t("The customer asked for {n} pieces.", { n: requested })}</p>}
+      </fieldset>
+      <label className="block text-sm">{t("Delivery (days)")}<input required type="number" min="1" value={terms.days} onChange={(e) => set({ days: Number(e.target.value) })} className={field} /></label>
+      <label className="block text-sm">{t("Material and wood")}<input maxLength={300} value={terms.material} onChange={(e) => set({ material: e.target.value })} placeholder={t("e.g. solid beech, walnut stain")} className={field} /></label>
+      <label className="block text-sm">{t("Fabric")}<input maxLength={300} value={terms.fabric} onChange={(e) => set({ fabric: e.target.value })} className={field} /></label>
+      <fieldset className="text-sm">
+        <legend>{t("Installation")}</legend>
+        <div className="mt-1 flex gap-4">
+          {([true, false] as const).map((v) => (
+            <label key={String(v)} className="inline-flex items-center gap-1.5"><input type="radio" name="installation" required checked={terms.installation === v} onChange={() => set({ installation: v })} /> {t(v ? "Included" : "Not included")}</label>
+          ))}
+        </div>
+      </fieldset>
+      <label className="block text-sm">{t("Warranty")}<input maxLength={300} value={terms.warranty} onChange={(e) => set({ warranty: e.target.value })} placeholder={t("e.g. 1 year on the frame")} className={field} /></label>
+      <label className="block text-sm">{t("Payment terms")}<input maxLength={300} value={terms.payment_terms} onChange={(e) => set({ payment_terms: e.target.value })} placeholder={t("e.g. 50% upfront, the rest on delivery")} className={field} /></label>
+      <label className="block text-sm">{t("Additional notes")}<textarea value={terms.note} onChange={(e) => set({ note: e.target.value })} rows={3} maxLength={2000} className={field} /></label>
       <div className="flex flex-wrap gap-2">
         <button type="submit" disabled={busy} className="rounded-lg bg-brand-amber px-4 py-2 text-sm font-semibold text-brand-navy disabled:opacity-60">
           {!bid ? t("Submit bid") : withdrawn ? t("Submit again") : t("Update bid")}
@@ -537,6 +568,7 @@ function VendorBid({ task, bid, vendorId, busy, act }: { task: TaskRow; bid?: Bi
           </button>
         )}
       </div>
+      {bid && !withdrawn && <p className="text-xs text-emerald-700">{t("Your bid is with the customer. You can change it until they choose a vendor.")}</p>}
     </form>
   );
 }

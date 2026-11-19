@@ -17,6 +17,7 @@ export function PartVariants({
   onChoose,
   onUpload,
   onChange,
+  onValidate,
 }: {
   variants: PartVariant[];
   chosen: string | null;
@@ -25,6 +26,8 @@ export function PartVariants({
   onChoose?: (variant: PartVariant | null) => void;
   onUpload?: (file: File) => Promise<string>;
   onChange: (variants: PartVariant[]) => void;
+  /** Vendors: why a file (a local or uploaded URL) cannot be a variant of this part; null when it can. */
+  onValidate?: (url: string) => Promise<string | null>;
 }) {
   const t = useT();
   const money = (x: number) => `${x > 0 ? "+" : x < 0 ? "−" : ""}${Math.abs(x).toLocaleString()} ${t("EGP")}`;
@@ -50,7 +53,7 @@ export function PartVariants({
                 className={`flex min-h-14 flex-col items-start justify-center gap-0.5 rounded-xl border px-3 py-2 text-start transition disabled:opacity-60 ${on ? "border-brand-amber bg-amber-50/60 ring-2 ring-brand-amber/30" : "border-slate-200 hover:border-slate-300"}`}
               >
                 <span className="flex w-full items-center gap-1.5 font-semibold text-brand-navy">
-                  <span className="min-w-0 flex-1 truncate">{variant ? variant.name : t("Original")}</span>
+                  <span className="min-w-0 flex-1 truncate" title={variant ? t(variant.name) : undefined}>{variant ? t(variant.name) : t("Original")}</span>
                   {busy === id ? <Loader2 className="size-4 shrink-0 animate-spin text-slate-400" aria-hidden /> : on ? <Check className="size-4 shrink-0 text-brand-amber" aria-hidden /> : null}
                 </span>
                 {variant?.price_delta ? <span className="text-xs tabular-nums text-slate-500"><bdi>{money(variant.price_delta)}</bdi></span> : null}
@@ -59,14 +62,14 @@ export function PartVariants({
           })}
         </div>
       ) : (
-        <Manage variants={variants} onUpload={onUpload!} onChange={onChange} money={money} />
+        <Manage variants={variants} onUpload={onUpload!} onChange={onChange} onValidate={onValidate} money={money} />
       )}
       {error && <p className="mt-2 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">{error}</p>}
     </div>
   );
 }
 
-function Manage({ variants, onUpload, onChange, money }: { variants: PartVariant[]; onUpload: (file: File) => Promise<string>; onChange: (variants: PartVariant[]) => void; money: (x: number) => string }) {
+function Manage({ variants, onUpload, onChange, onValidate, money }: { variants: PartVariant[]; onUpload: (file: File) => Promise<string>; onChange: (variants: PartVariant[]) => void; onValidate?: (url: string) => Promise<string | null>; money: (x: number) => string }) {
   const t = useT();
   const [name, setName] = useState("");
   const [price, setPrice] = useState("");
@@ -77,13 +80,26 @@ function Manage({ variants, onUpload, onChange, money }: { variants: PartVariant
   const add = async () => {
     if (!file) return;
     if (!file.name.toLowerCase().endsWith(".glb")) return setError(t("Choose a .glb file."));
+    const label = name.trim() || file.name.replace(/\.glb$/i, "");
+    if (variants.some((v) => v.name.trim().toLowerCase() === label.toLowerCase())) return setError(t("A variant of this part is already named “{name}”.", { name: label }));
     setAdding(true);
     setError(null);
     try {
+      // Checked from the file on this computer, before anything is uploaded: it opens as one part and looks
+      // different from the part and from every variant already there.
+      if (onValidate) {
+        const local = URL.createObjectURL(file);
+        try {
+          const problem = await onValidate(local);
+          if (problem) return setError(problem);
+        } finally {
+          URL.revokeObjectURL(local);
+        }
+      }
       const url = await onUpload(file);
       await loadVariant(url); // it must open as a 3D part before customers are offered it
       const delta = Number(price.replace(",", "."));
-      onChange([...variants, { id: crypto.randomUUID(), name: name.trim() || file.name.replace(/\.glb$/i, ""), glb_url: url, ...(price && Number.isFinite(delta) && delta !== 0 ? { price_delta: delta } : {}) }]);
+      onChange([...variants, { id: crypto.randomUUID(), name: label, glb_url: url, ...(price && Number.isFinite(delta) && delta !== 0 ? { price_delta: delta } : {}) }]);
       setName("");
       setPrice("");
       setFile(null);
@@ -105,6 +121,11 @@ function Manage({ variants, onUpload, onChange, money }: { variants: PartVariant
                 <span className="block truncate font-medium text-brand-navy">{v.name}</span>
                 {v.price_delta ? <span className="text-xs tabular-nums text-slate-500"><bdi>{money(v.price_delta)}</bdi></span> : null}
               </span>
+              {/* Kept but not offered: customers do not see it (and a design cannot be saved with it). */}
+              <label className="flex shrink-0 items-center gap-1.5 text-xs text-slate-600">
+                <input type="checkbox" checked={v.offered !== false} onChange={(e) => onChange(variants.map((x) => (x.id === v.id ? { ...x, offered: e.target.checked } : x)))} className="size-4 accent-brand-amber" />
+                {t("Offered")}
+              </label>
               <button type="button" onClick={() => window.confirm(t("Remove “{name}”?", { name: v.name })) && onChange(variants.filter((x) => x.id !== v.id))} aria-label={t("Remove")} className="flex size-9 items-center justify-center rounded-lg text-slate-400 hover:bg-red-50 hover:text-red-600">
                 <Trash2 className="size-4" aria-hidden />
               </button>

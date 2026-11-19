@@ -6,7 +6,11 @@ import type { PartMaterial } from "@/lib/designs/materials";
 /** `id` is stable; `name` is what the vendor sees (renamable). `naming`: how the name was found (part_names.py). */
 /** Another shape a vendor offers for one part (other legs, another headboard): its own GLB, fitted into the part's
  * space when a customer picks it. `price_delta`: what it adds to (or takes off) the price, in EGP. */
-export type PartVariant = { id: string; name: string; glb_url: string; price_delta?: number | null };
+/** `offered`: false hides it from customers (the vendor keeps it); absent = offered. */
+export type PartVariant = { id: string; name: string; glb_url: string; price_delta?: number | null; offered?: boolean };
+/** A part type (lib/vendor/parts3d library: shelf, drawer, leg…) the vendor lets customers add to this model, with
+ * what each one adds to the price (EGP; null: priced in the vendor's bid). Nothing listed: customers add nothing. */
+export type AddablePart = { type: string; price_delta?: number | null };
 /** `nameAr`: the Arabic name the vision analysis gave the part (naming "vision"); `analysisId`: its component there. */
 export type PartInfo = { id: string; name: string; nameAr?: string | null; analysisId?: string; editable: boolean; naming?: "file" | "geometry" | "ai" | "unidentified" | "vendor" | "vision" | "estimated"; estimated?: boolean; variants?: PartVariant[] };
 /** The backend's check before saving (services/model_check.py): errors are visible damage, warnings worth a look. */
@@ -24,6 +28,8 @@ export type PartDocument = {
   animation?: import("./animation").AnimationConfig;
   /** Parts added in the editor (lib/vendor/parts3d.ts): regenerated from these when resized, never stretched. */
   added?: import("./parts3d").AddedSpec[];
+  /** What customers may add (the vendor's choice; backend app/services/shopper_choices.py enforces it on save). */
+  addable?: AddablePart[];
 };
 export type MaterialEdit = {
   color?: string;
@@ -56,6 +62,9 @@ export type PartEditorApi = {
   visibleParts?: () => string[];
   /** After a save: nothing unsaved until the next change. */
   markClean?: () => void;
+  /** Vendors, before publishing: every part variant opens, and no two choices of a part look the same. Problems in
+   * words (empty: fine). */
+  checkVariants?: () => Promise<string[]>;
   /** PNG/WebP render of the model as it is now, after its textures have loaded. */
   thumbnail: () => Promise<Blob | null>;
 };
