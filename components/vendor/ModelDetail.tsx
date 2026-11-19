@@ -51,6 +51,7 @@ export function ModelDetail({ id }: { id: string }) {
   // The catalogue's type filter and whether shoppers see it (supabase/models_listing.sql).
   const [kind, setKind] = useState<string>("other");
   const [listed, setListed] = useState(true);
+  const [days, setDays] = useState(""); // usual production time (supabase/custom_requests.sql)
   const [woods, setWoods] = useState<string[] | null>(null);
   const [shape, setShape] = useState<ModelShape>("straight");
   const [length2, setLength2] = useState("");
@@ -136,6 +137,7 @@ export function ModelDetail({ id }: { id: string }) {
         setCategory(categoryOf(next.category));
         setKind(furnitureType(next) ?? "other");
         setListed(next.listed !== false);
+        setDays(next.production_days ? String(next.production_days) : "");
         setWoods(next.woods ?? null);
         setShape(next.shape ?? "straight");
         setLength2(metersToInput(next.length2_m));
@@ -176,6 +178,8 @@ export function ModelDetail({ id }: { id: string }) {
           // Only when changed: saving keeps working before models_listing.sql adds the columns.
           ...(kind !== (furnitureType(model) ?? "other") ? { furniture_type: kind } : {}),
           ...(listed !== (model.listed !== false) ? { listed } : {}),
+          // Only when changed: saving keeps working before custom_requests.sql adds the column.
+          ...((Number(days) || null) !== (model.production_days ?? null) ? { production_days: Math.min(365, Math.max(1, Math.round(Number(days)))) || null } : {}),
           shape,
           length2_m: shape === "straight" ? null : numberOrNull(length2),
           updated_at: new Date().toISOString(),
@@ -190,7 +194,7 @@ export function ModelDetail({ id }: { id: string }) {
         setError(updated.error.message);
         return;
       }
-      setModel({ ...model, furniture_type: kind, listed, ...newFile, ...(materials?.fields ?? {}), ...(states ? { states } : {}), woods: vendor?.platform ? null : woods, title: title.trim() || model.title } as CatalogModel);
+      setModel({ ...model, furniture_type: kind, listed, production_days: Number(days) || null, ...newFile, ...(materials?.fields ?? {}), ...(states ? { states } : {}), woods: vendor?.platform ? null : woods, title: title.trim() || model.title } as CatalogModel);
       setReplaced(null);
       if (materials?.thumbnailError) {
         setError(t("Saved, but the model image could not be updated ({error}). The previous image is kept; save again to retry.", { error: materials.thumbnailError }));
@@ -236,6 +240,11 @@ export function ModelDetail({ id }: { id: string }) {
               <span className="block text-xs text-slate-500">{t("Untick for drafts and tests: shoppers do not see the listing; links to it still work.")}</span>
             </span>
           </label>
+          <div className="space-y-1.5">
+            <Label htmlFor="model-days">{t("Usual production time (days)")}</Label>
+            <input id="model-days" type="number" inputMode="numeric" min={1} max={365} value={days} onChange={(e) => setDays(e.target.value)} placeholder={t("e.g. 21")} className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm" />
+            <p className="text-xs text-slate-500">{t("Shown on the listing. Leave empty and customers see “Ask the vendor”.")}</p>
+          </div>
         </div>
       </Card>
       <Card title={t("Shape & specs")} icon={<Ruler className="size-4" aria-hidden />}>

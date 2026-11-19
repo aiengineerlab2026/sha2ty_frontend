@@ -54,8 +54,22 @@ export function VendorPublicProfile({ id }: { id: string }) {
               </dl>
             </section>
 
+            {(data.vendor.bio || (data.vendor.service_areas ?? []).length > 0) && (
+              <section className="space-y-3 rounded-2xl border border-slate-200 bg-white p-5">
+                {data.vendor.bio && <p className="whitespace-pre-wrap text-sm leading-relaxed text-slate-700">{data.vendor.bio}</p>}
+                {(data.vendor.service_areas ?? []).length > 0 && (
+                  <div>
+                    <h2 className="text-xs font-semibold text-slate-500">{t("Delivers to")}</h2>
+                    <ul className="mt-1.5 flex flex-wrap gap-1.5">
+                      {data.vendor.service_areas!.map((a) => <li key={a} className="rounded-full bg-slate-100 px-2.5 py-1 text-xs text-slate-700">{a}</li>)}
+                    </ul>
+                  </div>
+                )}
+              </section>
+            )}
+
             <section>
-              <h2 className="text-lg font-semibold text-brand-navy">{t("Previous work")}</h2>
+              <h2 className="text-lg font-semibold text-brand-navy">{t("Completed on Sha2ty")}</h2>
               {done.length === 0 && <p className="mt-2 text-sm text-slate-500">{t("No completed projects on sha2ty yet.")}</p>}
               <ul className="mt-3 grid gap-3 sm:grid-cols-3">
                 {done.map((p) => (
@@ -71,6 +85,22 @@ export function VendorPublicProfile({ id }: { id: string }) {
                 ))}
               </ul>
             </section>
+
+            {(data.vendor.portfolio ?? []).length > 0 && (
+              <section>
+                <h2 className="text-lg font-semibold text-brand-navy">{t("Portfolio")}</h2>
+                <p className="text-xs text-slate-500">{t("Photos shared by the vendor; not checked by Sha2ty.")}</p>
+                <ul className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
+                  {data.vendor.portfolio!.map((p) => (
+                    <li key={p.url} className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={p.url} alt={p.caption} className="aspect-square w-full object-cover" loading="lazy" />
+                      {p.caption && <p className="truncate p-2 text-xs text-slate-600">{p.caption}</p>}
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            )}
 
             <section>
               <h2 className="flex items-center gap-2 text-lg font-semibold text-brand-navy">
@@ -105,7 +135,7 @@ export function VendorPublicProfile({ id }: { id: string }) {
                       </div>
                       <div className="p-3">
                         <p className="truncate text-sm font-semibold text-brand-navy">{m.title}</p>
-                        <p className="text-xs text-slate-500">{m.price == null ? t("Price on request") : formatPrice(m.price, (m.price_unit ?? "item") as PriceUnit)}</p>
+                        <p className="text-xs text-slate-500">{m.price == null ? t("Request a quote") : formatPrice(m.price, (m.price_unit ?? "item") as PriceUnit)}</p>
                       </div>
                     </Link>
                   </li>

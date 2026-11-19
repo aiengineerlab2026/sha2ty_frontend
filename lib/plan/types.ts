@@ -277,6 +277,9 @@ export interface CatalogModel {
   company_id: string;
   company: string;
   company_logo?: string | null;
+  /** The vendor's city / area (vendors.location) and the listing's usual production time (supabase/custom_requests.sql). */
+  company_location?: string;
+  production_days?: number | null;
   /** A customised model from My designs (placed with this version's size and edits; the listing is unchanged). */
   design?: {
     id: string;

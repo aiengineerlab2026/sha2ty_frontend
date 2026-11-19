@@ -20,6 +20,7 @@ import { DesignSpecView } from "./DesignSpecView";
 import { ReportButton } from "./ReportButton";
 import { TaskChat } from "./TaskChat";
 import { BidComparison } from "./BidComparison";
+import { BriefView } from "./CustomRequest";
 
 const STATUS: Record<TaskRow["status"], string> = {
   published: "Receiving bids",
@@ -51,7 +52,10 @@ export function TaskDetail({ id }: { id: string }) {
   const [proposals, setProposals] = useState<Proposal[]>([]);
   const [shownProposal, setShownProposal] = useState<string | null>(null); // the one opened in 3D
   // ?chat=<vendor id>: opened from a notification.
-  const [chatWith, setChatWith] = useState<string | null>(useSearchParams().get("chat"));
+  const search = useSearchParams();
+  const [chatWith, setChatWith] = useState<string | null>(search.get("chat"));
+  // ?sent=1: just published from the custom request form.
+  const justSent = search.get("sent") === "1";
   const [review, setReview] = useState<{ rating: number; comment: string } | null | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -150,7 +154,7 @@ export function TaskDetail({ id }: { id: string }) {
         { icon: CalendarClock, label: "Wanted by", value: task.deadline ? new Date(task.deadline).toLocaleDateString() : t("Flexible") },
         { icon: MapPin, label: "Location", value: task.location || "—" },
         { icon: CalendarDays, label: "Published", value: new Date(task.created_at).toLocaleDateString() },
-        ...(task.spec.design ? [{ icon: Package, label: "Quantity", value: t("{n} pieces", { n: task.spec.quantity ?? 1 }) }] : []),
+        ...(task.spec.design || task.spec.brief ? [{ icon: Package, label: "Quantity", value: t("{n} pieces", { n: task.spec.quantity ?? 1 }) }] : []),
       ]
     : [];
   const card = "rounded-2xl border border-slate-200/80 bg-white shadow-sm";
@@ -171,6 +175,12 @@ export function TaskDetail({ id }: { id: string }) {
         )}
         {task && (
           <>
+            {mine && justSent && task.status === "published" && (
+              <p role="status" className="flex items-start gap-2 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900">
+                <Check className="mt-0.5 size-4 shrink-0" aria-hidden />
+                <span>{t("Your request was sent to the vendors on Sha2ty. Their offers and questions appear on this page; nothing is decided until you choose one.")}</span>
+              </p>
+            )}
             {/* Hero: what is requested, its state, the actions, and the key facts in one strip. */}
             <section className={`${card} overflow-hidden`}>
               <div className="flex flex-col gap-4 p-5 sm:p-6 lg:flex-row lg:items-start lg:justify-between">
@@ -196,7 +206,8 @@ export function TaskDetail({ id }: { id: string }) {
                       <PencilRuler className="size-4" aria-hidden /> {t("Edit customised model")}
                     </Link>
                   )}
-                  <ReportButton taskId={task.id} spec={task.spec.design} before={mine ? refreshViews : undefined} />
+                  {/* The manufacturing report is built from a 3D model: a request without one shows its brief instead. */}
+                  {task.spec.design && <ReportButton taskId={task.id} spec={task.spec.design} before={mine ? refreshViews : undefined} />}
                 </div>
               </div>
               <dl className="grid grid-cols-2 border-t border-slate-100 bg-slate-50/60 sm:grid-cols-3 lg:grid-cols-5">
@@ -258,7 +269,7 @@ export function TaskDetail({ id }: { id: string }) {
                         <span className="size-1.5 rounded-full bg-current" aria-hidden /> {t(STATUS[task.status])}
                       </span>
                     </div>
-                    {open && <p className="text-xs leading-relaxed text-slate-500">{t("Vendors see your design and send bids. Compare them above, then choose one vendor.")}</p>}
+                    {open && <p className="text-xs leading-relaxed text-slate-500">{task.spec.design ? t("Vendors see your design and send bids. Compare them above, then choose one vendor.") : t("Vendors see your request and send bids. Compare them above, then choose one vendor.")}</p>}
                     {task.status === "awarded" && <p className="text-xs leading-relaxed text-slate-600">{t("Waiting for {name} to start the work.", { name: hired ? name(hired.vendor_id) : t("the vendor") })}</p>}
                     {/* Deletes the request from the database in any state (bids, chat, proposals and review with it). */}
                     <button
@@ -386,15 +397,16 @@ export function TaskDetail({ id }: { id: string }) {
               ) : (
                 <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_340px]">
                   <div className="min-w-0 space-y-6">
+                    {task.spec.brief && <BriefView brief={task.spec.brief} quantity={task.spec.quantity ?? 1} />}
                     {notes}
-                    <ul className={`${card} divide-y divide-slate-100`}>
+                    {(task.spec.lines ?? []).length > 0 && <ul className={`${card} divide-y divide-slate-100`}>
                     {(task.spec.lines ?? []).map((line) => (
                       <li key={line.name + line.quantity} className="flex justify-between gap-3 px-4 py-2.5 text-sm">
                         <span>{line.name}<span className="text-slate-400"> · {line.quantity} {line.unit === "m2" ? "m²" : ""}</span></span>
                         <span className="font-semibold">{line.total == null ? "—" : formatPrice(line.total)}</span>
                       </li>
                     ))}
-                  </ul>
+                  </ul>}
                     {reviewBlock}
                   </div>
                   <aside className="min-w-0 space-y-6 lg:sticky lg:top-4">{side}</aside>
@@ -462,7 +474,7 @@ function VendorBid({ task, bid, vendorId, busy, act }: { task: TaskRow; bid?: Bi
   const design = task.spec.design;
   const requested = task.spec.quantity ?? 1;
   // The customer's choices, as the starting text (the vendor changes them when they offer something else).
-  const chosenWood = design?.materials.find((m) => m.material?.kind === "wood")?.material?.name ?? "";
+  const chosenWood = design?.materials.find((m) => m.material?.kind === "wood")?.material?.name ?? task.spec.brief?.material ?? "";
   const chosenFabric = [...new Set(design?.materials.filter((m) => m.material?.kind === "fabric").map((m) => m.material!.name) ?? [])].join("، ");
   const [terms, setTerms] = useState<BidTerms>(() => ({
     price: bid?.price ?? 0,

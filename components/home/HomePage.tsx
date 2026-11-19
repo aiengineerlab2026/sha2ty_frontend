@@ -19,7 +19,9 @@ import {
   ChevronLeft,
   ChevronRight,
   LayoutGrid,
+  PencilRuler,
   Plus,
+  Sofa,
   Settings,
   Trash2,
 } from "lucide-react";
@@ -42,6 +44,7 @@ import type {
 import type { CatalogKind } from "./CatalogDetail";
 import { sizeLabel } from "@/lib/plan/modelNormalization";
 import { cm } from "@/lib/designs/resize";
+import { RequestCustomLink } from "@/components/tasks/CustomRequest";
 
 const PAGE_TITLE: Record<CatalogKind, [string, string]> = {
   models: ["Models", "Furniture ready to place in a plan"],
@@ -164,11 +167,20 @@ export function HomePage({ only }: { only?: CatalogKind } = {}) {
   // box and the type chips on the models page.
   const [query, setQuery] = useState("");
   const [type, setType] = useState<string | null>(null);
+  const [pricing, setPricing] = useState<"all" | "priced" | "quote">("all");
+  const [place, setPlace] = useState("");
+  // Vendor locations that have listings, for the location filter.
+  const places = [...new Set(models.map((m) => m.company_location?.trim()).filter((p): p is string => Boolean(p)))].sort();
   const words = query.trim().toLowerCase();
   // A word naming a kind of furniture finds it in either language ("chair" finds "كرسي …").
   const wordType = words ? FURNITURE_TYPES.find((option) => option.words.test(words))?.id : undefined;
   const matches = (m: CatalogModel) => !words || `${m.title} ${m.company ?? ""}`.toLowerCase().includes(words) || (wordType != null && furnitureType(m) === wordType);
-  const listed = models.filter((m) => (vendor || shopperReady(m)) && matches(m) && (!type || furnitureType(m) === type));
+  const listed = models.filter(
+    (m) =>
+      (vendor || shopperReady(m)) && matches(m) && (!type || furnitureType(m) === type) &&
+      (pricing === "all" || (pricing === "priced") === (m.price != null)) && (!place || m.company_location?.trim() === place),
+  );
+  const filtering = Boolean(words || type || pricing !== "all" || place);
   const modelGroups = CATALOG_GROUPS.map((c) => ({
     ...c,
     items: listed.filter((m) => groupOf(m.category) === c.id),
@@ -191,7 +203,7 @@ export function HomePage({ only }: { only?: CatalogKind } = {}) {
           </div>
         ) : signedIn !== true ? (
           // Signed out (or still checking): the public banner; the dark account panel is only for a signed-in user.
-          signedIn === false && <Banner />
+          signedIn === false && <><Banner /><Choices /></>
         ) : (
           <section className="overflow-hidden rounded-3xl bg-brand-navy text-white shadow-lg">
             <div className="flex flex-col gap-6 px-6 py-7 sm:px-8 lg:flex-row lg:items-center lg:justify-between">
@@ -223,22 +235,30 @@ export function HomePage({ only }: { only?: CatalogKind } = {}) {
                   <LayoutGrid className="size-4" aria-hidden />{" "}
                   {t("Open the plan builder")}
                 </Link>
-                <Link
-                  href="/vendor/new"
-                  className="inline-flex h-10 items-center gap-2 rounded-xl bg-white/10 px-4 text-sm font-medium hover:bg-white/15"
-                >
-                  <Plus className="size-4" aria-hidden /> {t("Add model")}
-                </Link>
-                <Link
-                  href="/vendor/settings"
-                  aria-label={t("Settings")}
-                  className="inline-flex size-10 items-center justify-center rounded-xl bg-white/10 hover:bg-white/15"
-                >
-                  <Settings className="size-4" />
-                </Link>
+                {vendor ? (
+                  <>
+                    <Link
+                      href="/vendor/new"
+                      className="inline-flex h-10 items-center gap-2 rounded-xl bg-white/10 px-4 text-sm font-medium hover:bg-white/15"
+                    >
+                      <Plus className="size-4" aria-hidden /> {t("Add model")}
+                    </Link>
+                    <Link
+                      href="/vendor/settings"
+                      aria-label={t("Settings")}
+                      className="inline-flex size-10 items-center justify-center rounded-xl bg-white/10 hover:bg-white/15"
+                    >
+                      <Settings className="size-4" />
+                    </Link>
+                  </>
+                ) : (
+                  <Link href="/tasks" className="inline-flex h-10 items-center gap-2 rounded-xl bg-white/10 px-4 text-sm font-medium hover:bg-white/15">
+                    {t("My requests")}
+                  </Link>
+                )}
               </div>
             </div>
-            <dl className="grid grid-cols-2 border-t border-white/10">
+            {vendor && <dl className="grid grid-cols-2 border-t border-white/10">
               {metrics.map(([label, value, href], i) => (
                 <Link
                   key={label}
@@ -251,9 +271,10 @@ export function HomePage({ only }: { only?: CatalogKind } = {}) {
                   </dd>
                 </Link>
               ))}
-            </dl>
+            </dl>}
           </section>
         )}
+        {!only && signedIn === true && !vendor && <Choices />}
 
         {
           <>
@@ -276,10 +297,26 @@ export function HomePage({ only }: { only?: CatalogKind } = {}) {
                     </button>
                   ))}
                 </div>
+                <select value={pricing} onChange={(e) => setPricing(e.target.value as typeof pricing)} aria-label={t("Price")} className="h-10 rounded-xl border border-slate-200 bg-white px-3 text-sm">
+                  <option value="all">{t("Any price")}</option>
+                  <option value="priced">{t("With a listed price")}</option>
+                  <option value="quote">{t("Quote on request")}</option>
+                </select>
+                {places.length > 1 && (
+                  <select value={place} onChange={(e) => setPlace(e.target.value)} aria-label={t("Vendor location")} className="h-10 rounded-xl border border-slate-200 bg-white px-3 text-sm">
+                    <option value="">{t("Any location")}</option>
+                    {places.map((p) => <option key={p} value={p}>{p}</option>)}
+                  </select>
+                )}
               </div>
             )}
-            {show("models") && signedIn && !words && !type && <MyCustomisedRow grid={grid} />}
-            {show("models") && signedIn && !words && !type && <MyUploadedRow grid={grid} />}
+            {only === "models" && (
+              <p className="flex flex-wrap items-center gap-x-2 rounded-xl bg-white px-4 py-3 text-sm text-slate-600 ring-1 ring-slate-200">
+                {t("Can’t find what you need, or need a different size?")} <RequestCustomLink type={type} />
+              </p>
+            )}
+            {show("models") && signedIn && !filtering && <MyCustomisedRow grid={grid} />}
+            {show("models") && signedIn && !filtering && <MyUploadedRow grid={grid} />}
             {show("models") &&
               (modelGroups.length
                 ? modelGroups
@@ -300,7 +337,7 @@ export function HomePage({ only }: { only?: CatalogKind } = {}) {
                   title={t(g.label)}
                   subtitle={t(g.hint)}
                   count={g.items.length}
-                  empty={words || type ? t("No models match. Try another word or type.") : t("No ready models yet.")}
+                  empty={filtering ? t("No models match these filters. Clear a filter, or request a custom piece above.") : t("No ready models yet.")}
                 >
                   {g.items.map((m) => (
                     <Card
@@ -314,7 +351,10 @@ export function HomePage({ only }: { only?: CatalogKind } = {}) {
                       title={m.title}
                       owner={m.company ? { name: m.company, logo_url: m.company_logo ?? null } : null}
                       meta={
-                        m.width_m && m.height_m ? `${[m.width_m, m.height_m, m.depth_m].filter(Boolean).map(cm).join(" × ")} ${t("cm")}` : t("Size not set")
+                        [
+                          m.width_m && m.height_m ? `${[m.width_m, m.height_m, m.depth_m].filter(Boolean).map(cm).join(" × ")} ${t("cm")}` : t("Size not set"),
+                          m.production_days ? t("Made in about {n} days", { n: m.production_days }) : null,
+                        ].filter(Boolean).join(" · ")
                       }
                     >
                       {m.thumbnail ? (
@@ -608,6 +648,29 @@ function PageButton({
   );
 }
 
+/** The three ways to start: shop what exists, plan a room, or have something made. */
+function Choices() {
+  const t = useT();
+  const options = [
+    { href: "/catalog/models", icon: Sofa, title: "Browse furniture", text: "Ready designs from local makers, with real sizes and prices. Customise any of them." },
+    { href: "/plan", icon: LayoutGrid, title: "Design a room", text: "Draw your room in 3D and try furniture in it at its real size, for free." },
+    { href: "/tasks/new", icon: PencilRuler, title: "Request custom furniture", text: "Describe the piece you want; makers send offers and you choose one." },
+  ];
+  return (
+    <nav aria-label={t("Get started")} className="grid gap-3 sm:grid-cols-3">
+      {options.map(({ href, icon: Icon, title, text }) => (
+        <Link key={href} href={href} className="group flex items-start gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm transition hover:border-brand-amber hover:shadow-md">
+          <span className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-brand-amber/15 text-[#b8731d]"><Icon className="size-5" aria-hidden /></span>
+          <span className="min-w-0">
+            <span className="flex items-center gap-1 font-semibold text-brand-navy">{t(title)} <ArrowRight className="size-4 opacity-0 transition group-hover:opacity-100 rtl:-scale-x-100" aria-hidden /></span>
+            <span className="mt-0.5 block text-sm leading-relaxed text-slate-500">{t(text)}</span>
+          </span>
+        </Link>
+      ))}
+    </nav>
+  );
+}
+
 /** Default banner for visitors: build a 3D apartment, with a "Try it" call to action. */
 function Banner() {
   const t = useT();
@@ -849,7 +912,7 @@ function Card({
           <p
             className={`mt-auto pt-1.5 text-[15px] tabular-nums ${price ? "font-semibold text-brand-navy" : "text-sm text-slate-400"}`}
           >
-            {price ?? t("Price on request")}
+            {price ?? t("Request a quote")}
           </p>
         )}
       </div>

@@ -18,6 +18,10 @@ export interface VendorProfile {
   lat?: number | null;
   lng?: number | null;
   created_at?: string;
+  /** supabase/custom_requests.sql: where they deliver, an "about us", and photos of their own past work. */
+  service_areas?: string[];
+  bio?: string;
+  portfolio?: { url: string; caption: string }[];
 }
 
 export interface ModelVariant {
@@ -40,6 +44,7 @@ export interface CatalogModel {
   /** The catalogue's type filter, and false when the vendor hid the listing from the shop (supabase/models_listing.sql). */
   furniture_type?: string | null;
   listed?: boolean;
+  production_days?: number | null;
   shape?: "straight" | "l_left" | "l_right";
   length2_m?: number | null;
   source: ModelSource;

@@ -22,6 +22,8 @@ import { ImageCarousel } from "@/components/shatably/ImageCarousel";
 import { Reviews } from "@/components/shatably/Reviews";
 import { useVariantUrls } from "@/lib/catalog/variants";
 import { MatchButton } from "@/components/match/MatchWizard";
+import { RequestCustomLink } from "@/components/tasks/CustomRequest";
+import { furnitureType } from "@/lib/plan/categories";
 import { cm } from "@/lib/designs/resize";
 
 export type CatalogKind = "models" | "paints" | "carpets" | "windows";
@@ -124,13 +126,30 @@ function ModelView({ model, signedIn }: { model: CatalogModel; signedIn: boolean
       }
       tag={model.company}
       tagLogo={model.company_logo}
+      tagHref={model.company_id && model.company_id !== "unknown" ? `/vendors/${model.company_id}` : undefined}
+      tagPlace={model.company_location}
+      after={
+        <div className="space-y-2">
+          {model.glb_url && (
+            <p className="rounded-xl bg-amber-50 px-3.5 py-3 text-sm leading-relaxed text-amber-950 ring-1 ring-amber-200">
+              {t("Customising lets you change the size, the wood and fabric of each part, and the parts this vendor allows. Nothing is ordered: your request goes to vendors, they send offers, and you choose one.")}
+            </p>
+          )}
+          <p className="text-sm text-slate-600">
+            {t("Need something different?")} <RequestCustomLink type={furnitureType(model)} size={model} />
+          </p>
+        </div>
+      }
       price={model.price == null ? null : formatPrice(model.price, model.price_unit ?? "item")}
       title={model.title}
       cart={line("model", model.id, model.title, model.price, model.price_unit ?? "item", model.width_m && model.depth_m ? model.width_m * model.depth_m : null)}
       // Made to order: customising and asking vendors for bids is the main action; the cart only for a priced piece as listed.
       primary={model.glb_url ? <CustomiseButton modelId={model.id} /> : undefined}
       secondaryCart={model.glb_url ? model.price != null : undefined}
-      facts={dims ? [["Width", `${cm(dims.width)} ${t("cm")}`], ["Height", `${cm(dims.height)} ${t("cm")}`], ...(dims.depth ? [["Depth", `${cm(dims.depth)} ${t("cm")}`] as [string, string]] : [])] : [["Size", t("Not set")]]}
+      facts={[
+        ...(dims ? [["Width", `${cm(dims.width)} ${t("cm")}`], ["Height", `${cm(dims.height)} ${t("cm")}`], ...(dims.depth ? [["Depth", `${cm(dims.depth)} ${t("cm")}`] as [string, string]] : [])] as [string, string][] : [["Size", t("Not set")] as [string, string]]),
+        ["Production time", model.production_days ? t("About {n} days", { n: model.production_days }) : t("Ask the vendor")],
+      ]}
     >
       {description ? (
         <div className="text-sm leading-relaxed text-slate-600 [&_h3]:mb-1 [&_h3]:mt-3 [&_h3]:text-base [&_h3]:font-semibold [&_h3]:text-brand-navy [&_li]:ms-5 [&_ol]:list-decimal [&_ul]:list-disc" dangerouslySetInnerHTML={{ __html: description }} />
@@ -231,14 +250,22 @@ function Layout({
   media,
   tag,
   tagLogo,
+  tagHref,
+  tagPlace,
   title,
   price,
   facts,
   cart,
   primary,
   secondaryCart,
+  after,
   children,
 }: {
+  /** The vendor's public page and city, beside their name. */
+  tagHref?: string;
+  tagPlace?: string;
+  /** Under the actions: what customising changes, and the custom request link. */
+  after?: ReactNode;
   /** Kept for callers; the plan builder link is the same for guests and members. */
   signedIn?: boolean;
   media: ReactNode;
@@ -270,10 +297,11 @@ function Layout({
             ) : (
               <span className="ps-1.5" />
             )}
-            {tag}
+            {tagHref ? <Link href={tagHref} className="underline-offset-2 hover:underline">{tag}</Link> : tag}
+            {tagPlace && <span className="text-slate-500">· {tagPlace}</span>}
           </span>
           <h1 className="mt-2 text-3xl font-semibold tracking-tight text-brand-navy">{title}</h1>
-          <p className={`mt-2 text-2xl tabular-nums ${price ? "font-semibold text-brand-navy" : "text-base text-slate-400"}`}>{price ?? t("Price on request")}</p>
+          <p className={`mt-2 text-2xl tabular-nums ${price ? "font-semibold text-brand-navy" : "text-base text-slate-400"}`}>{price ?? t("Request a quote")}</p>
         </div>
         <dl className="grid grid-cols-3 gap-3">
           {facts.map(([label, value]) => (
@@ -306,6 +334,7 @@ function Layout({
             <LayoutGrid className="size-4" aria-hidden /> {t("Use it in the plan builder")}
           </Link>
         </div>
+        {after}
       </div>
     </div>
   );

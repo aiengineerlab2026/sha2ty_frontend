@@ -5,6 +5,7 @@ import { bidTotals, planCost } from "../../plan/pricing";
 import { furnitureType, shopperReady } from "../../plan/categories";
 import { cm, sizeCm } from "../resize";
 import type { PlacedItem, PlanGeometry } from "../../plan/types";
+import { inServiceArea } from "../../serviceArea";
 
 const close = (a: number[], b: number[]) => a.forEach((v, i) => assert.ok(Math.abs(v - b[i]) < 1e-9, `${a} ≠ ${b}`));
 
@@ -56,4 +57,12 @@ test("a customised design placed in a plan never goes to the cart: it is made to
   const item = (extra: Partial<PlacedItem>) => ({ modelId: "chair", title: "Chair", price: 1000, price_unit: "item", width_m: 0.5, depth_m: 0.5, ...extra }) as unknown as PlacedItem;
   assert.equal(planCost(geometry, [item({}), item({ designId: "d1" })]).lines.find((l) => l.key === "model:chair")?.quantity, 1);
   assert.equal(planCost(geometry, [item({ designId: "d1" })]).lines.length, 0);
+});
+
+test("a request is in a vendor's service area when its delivery area names one of them", () => {
+  assert.equal(inServiceArea("مدينة نصر، القاهرة", ["القاهرة", "دمياط"]), true);
+  assert.equal(inServiceArea("Nasr City, Cairo", ["cairo"]), true);
+  assert.equal(inServiceArea("الإسكندرية", ["القاهرة"]), false);
+  assert.equal(inServiceArea("القاهرة", ["", " "]), false);
+  assert.equal(inServiceArea("القاهرة", undefined), false);
 });
