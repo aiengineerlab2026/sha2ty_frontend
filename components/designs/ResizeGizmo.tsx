@@ -37,7 +37,10 @@ export function ResizeGizmo({
   min = MIN_SIZE,
   onSize,
   onDrag,
+  draggable = true,
 }: {
+  /** false: the size lines only, no handles (sizes are typed in the panel). */
+  draggable?: boolean;
   target: RefObject<Group | null>;
   size: Dimensions;
   proportional: boolean;
@@ -131,7 +134,7 @@ export function ResizeGizmo({
 
   return (
     <group ref={frame}>
-      {list.map((handle, i) => (
+      {draggable && list.map((handle, i) => (
         <group key={`${handle.axis}${handle.side}`} position={handle.at}>
           <mesh
             ref={(mesh) => {

@@ -1913,7 +1913,7 @@ export function ModelViewer({
           })()}
           {partSizes && <PartSizes target={sizer} names={partSizes.names} show={partSizes.show} onSizes={partSizes.onSizes} lit={partSizes.lit} onLit={partSizes.onLit} signal={`${url}|${factor}`} />}
           {edit && guides && designSize && onDesignSize && base && (
-            <ResizeGizmo target={sizer} size={designSize} proportional={proportional} guides={guides} unit={guideUnit} onSize={onDesignSize} onDrag={() => undefined} />
+            <ResizeGizmo target={sizer} size={designSize} proportional={proportional} guides={guides} unit={guideUnit} onSize={onDesignSize} onDrag={() => undefined} draggable={!shopper} />
           )}
           <NeutralRoom />
         </Suspense>
@@ -2030,7 +2030,7 @@ export function ModelViewer({
             <ToolButton icon={Eraser} label="Reset looks" hint="Put back the original colours and materials (you can undo this)" onClick={resetLooks} off={!Object.keys(edits).length} />
           </div>
           {/* The camera: in a corner, out of the model's way. */}
-          <div className="absolute end-3 top-3 flex gap-2 lg:bottom-4 lg:end-4 lg:top-auto lg:flex-col lg:gap-1 lg:rounded-2xl lg:border lg:border-white/70 lg:bg-white/85 lg:p-1 lg:shadow-lg lg:shadow-slate-900/10 lg:backdrop-blur-md" role="toolbar" aria-label={t("View")}>
+          <div className="absolute end-3 top-3 flex gap-2 lg:bottom-4 lg:end-4 lg:top-auto lg:flex-col lg:gap-1 lg:rounded-2xl lg:border lg:border-white/70 lg:bg-white/85 lg:p-1 lg:shadow-lg lg:shadow-slate-900/10 lg:backdrop-blur-md" role="toolbar" aria-label={t("View controls")}>
             <CamButton icon={ZoomIn} label="Zoom in" onClick={() => zoom(true)} wide />
             <CamButton icon={ZoomOut} label="Zoom out" onClick={() => zoom(false)} wide />
             <CamButton icon={RotateCcw} label="Rotate" onClick={() => turn(1)} />

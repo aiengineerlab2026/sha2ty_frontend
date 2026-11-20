@@ -2028,4 +2028,5 @@ export const AR: Record<string, string> = {
   "Back to the catalogue size": "رجوع لمقاس الكتالوج",
   "One size changes all three, so the shape stays the same.": "تغيير مقاس واحد يغيّر الثلاثة، فيبقى الشكل كما هو.",
   "Each size changes on its own; the piece is stretched.": "كل مقاس يتغير وحده؛ وتتمدد القطعة.",
+  "View controls": "التحكم في العرض",
 };
