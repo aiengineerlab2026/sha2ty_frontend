@@ -182,7 +182,7 @@ export function MaterialPicker({ mode, edit, area, woodVendor, woodModel, onPick
       className="group min-w-0 text-center disabled:opacity-40"
     >
       {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src={m.url} alt="" loading="lazy" className={`aspect-square w-full rounded-lg border object-cover transition ${active ? "border-brand-amber ring-2 ring-brand-amber/50" : "border-slate-200 group-hover:border-slate-300 group-hover:shadow-sm"}`} />
+      <img src={m.url} alt="" loading="lazy" className={`aspect-square w-full rounded-xl object-cover transition ${active ? "ring-2 ring-brand-amber ring-offset-2" : "ring-1 ring-slate-200 group-hover:ring-slate-300 group-hover:shadow-sm"}`} />
       <span className={`mt-1 block truncate text-[11px] leading-tight ${active ? "font-semibold text-brand-navy" : "text-slate-600"}`}>{t(m.name)}</span>
     </button>
   );
@@ -204,7 +204,7 @@ export function MaterialPicker({ mode, edit, area, woodVendor, woodModel, onPick
         {fabrics === null && <p className="text-xs text-slate-500">{t("Loading…")}</p>}
         {fabrics?.length === 0 && <p className="text-xs text-slate-500">{t("No upholstery fabrics yet. Vendors add them in their studio.")}</p>}
         {!!fabrics?.length && (
-          <div className="grid grid-cols-5 gap-1.5 p-0.5">
+          <div className="grid grid-cols-5 gap-2 p-0.5">
             {fabrics.map((m) => {
               const on = chosen?.id === m.id || (!chosen && edit?.mapUrl === m.url);
               return (
@@ -214,7 +214,7 @@ export function MaterialPicker({ mode, edit, area, woodVendor, woodModel, onPick
                 aria-pressed={on}
                 title={m.price == null ? m.name : `${m.name} · ${formatPrice(m.price)} / ${t("m")}`}
                 onClick={() => (on && onClear ? onClear() : pickFabric(m))}
-                className={`aspect-square overflow-hidden rounded-lg border transition hover:shadow-md ${on ? "border-brand-amber ring-2 ring-brand-amber/40" : "border-slate-200"}`}
+                className={`aspect-square overflow-hidden rounded-xl transition hover:shadow-md ${on ? "ring-2 ring-brand-amber ring-offset-2" : "ring-1 ring-slate-200 hover:ring-slate-300"}`}
               >
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img src={m.url} alt={m.name} className="size-full object-cover" loading="lazy" />
@@ -253,11 +253,11 @@ export function MaterialPicker({ mode, edit, area, woodVendor, woodModel, onPick
       </Section>}
 
       {mode === "paint" && <Section title={t("Paint")} defaultOpen={chosen?.kind === "paint"}>
-        <p className="text-[11px] leading-snug text-slate-500">{t("Paint this part in one of the platform's colours, then choose whose paint.")}</p>
+        <p className="text-xs leading-snug text-slate-500">{t("Pick a colour, then whose paint.")}</p>
         {sold === null && <p className="text-xs text-slate-500">{t("Loading…")}</p>}
         {sold?.length === 0 && <p className="text-xs text-slate-500">{t("No paints yet. Vendors add them under Furniture paints.")}</p>}
         {!!sold?.length && (
-          <div role="radiogroup" aria-label={t("Paint colour")} className="grid grid-cols-6 gap-1.5 p-0.5">
+          <div role="radiogroup" aria-label={t("Paint colour")} className="grid grid-cols-7 gap-2 p-1">
             {sold.map((c) => (
               <button
                 key={c.id}
@@ -267,7 +267,7 @@ export function MaterialPicker({ mode, edit, area, woodVendor, woodModel, onPick
                 title={t(c.name)}
                 aria-label={t(c.name)}
                 onClick={() => pickPaint(c)}
-                className={`aspect-square rounded-full border transition hover:scale-105 ${paintColor?.id === c.id ? "border-brand-amber ring-2 ring-brand-amber/50 ring-offset-1" : "border-slate-200"}`}
+                className={`aspect-square rounded-full transition hover:scale-105 ${paintColor?.id === c.id ? "ring-2 ring-brand-amber ring-offset-2" : "ring-1 ring-black/10"}`}
                 style={{ background: c.hex }}
               />
             ))}
@@ -301,16 +301,15 @@ export function MaterialPicker({ mode, edit, area, woodVendor, woodModel, onPick
       </Section>}
 
       {mode === "wood" && <Section title={t("Wood type")}>
-        <p className="text-[11px] leading-snug text-slate-500">{t("What the whole model is made of: shown on its frame and wooden parts (not on upholstered or soft parts).")}</p>
-        <label className="relative block">
+        <p className="text-xs leading-snug text-slate-500">{t("Changes the frame and every wooden part.")}</p>
+        {(search || structural.length > 8) && <label className="relative block">
           <Search className="pointer-events-none absolute start-2 top-1/2 size-3.5 -translate-y-1/2 text-slate-400" aria-hidden />
-          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t("Search oak, MDF, veneer…")} aria-label={t("Search woods")} className="h-8 w-full rounded-lg border border-slate-200 ps-7 pe-2 text-xs outline-none focus:border-brand-amber" />
-        </label>
+          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t("Search oak, MDF, veneer…")} aria-label={t("Search woods")} className="h-9 w-full rounded-xl border border-slate-200 bg-slate-50/60 ps-7 pe-2 text-xs outline-none transition focus:border-brand-amber focus:bg-white" />
+        </label>}
         {library === null && <p className="text-xs text-slate-500">{t("Loading…")}</p>}
         {library && !structural.length && <p className="text-xs text-slate-500">{search ? t("No woods match.") : woodVendor || woodModel ? t("No woods are offered for this model yet.") : t("No woods yet.")}</p>}
         {!!structural.length && (
           <div className="space-y-1.5">
-            <p className="text-[11px] text-slate-500">{t("Material")}</p>
             <div className="grid grid-cols-4 gap-2">{structural.map((m) => swatch(m, base?.id === m.id, () => pickWood(m)))}</div>
             {detail(base)}
           </div>
