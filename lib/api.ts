@@ -13,3 +13,20 @@ function base(): string {
 export const API = base();
 
 export const apiFetch = (path: string, init: RequestInit = {}) => fetch(`${API}${path}`, { credentials: "include", ...init });
+
+/** A stored file link. Local dev has advertised :8010 while this app calls :8000; load the file from the API that is up. */
+export function assetUrl(url: string): string {
+  if (!url || url.startsWith("blob:") || url.startsWith("data:")) return url;
+  try {
+    const parsed = new URL(url, typeof window === "undefined" ? "http://localhost" : window.location.origin);
+    const localFile = parsed.pathname.startsWith("/api/files") && parsed.hostname === "localhost" && (parsed.port === "8010" || parsed.port === "8000");
+    if (!localFile) return url;
+    const api = new URL(API);
+    parsed.protocol = api.protocol;
+    parsed.hostname = api.hostname;
+    parsed.port = api.port;
+    return parsed.toString();
+  } catch {
+    return url;
+  }
+}

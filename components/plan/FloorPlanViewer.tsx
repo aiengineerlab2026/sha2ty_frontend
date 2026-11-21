@@ -1,5 +1,6 @@
 "use client";
 
+import { assetUrl } from "@/lib/api";
 import { useT } from "@/lib/i18n";
 import { Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
@@ -788,7 +789,7 @@ function PlacementPreview({
   invalid: boolean;
   onSize: (size: Dimensions) => void;
 }) {
-  const { scene } = useGLTF(model.glb_url);
+  const { scene } = useGLTF(assetUrl(model.glb_url));
   const group = useRef<Group>(null);
   const { object, ghosts, size } = useMemo(() => {
     const { object, report } = normalizeModel(scene, catalogDimensions(model), model.id);

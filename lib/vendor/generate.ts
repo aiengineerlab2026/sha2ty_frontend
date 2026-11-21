@@ -4,7 +4,9 @@ import type { ModelProvider, ModelStates } from "./types";
 
 import { publish } from "@/lib/events";
 
-export type GenerateProgress = { percent: number; status: string };
+export type GenerateStep = { id: "image" | "mesh"; status: string; progress: number };
+
+export type GenerateProgress = { percent: number; status: string; steps?: GenerateStep[] };
 
 /** The vision model's reading of the photo: size estimate (metres; null when it could not tell) and a listing. */
 export type PhotoReading = {
@@ -78,7 +80,8 @@ export async function generateFromPhoto(
     if (!polled.ok) throw new Error(detail(task) || "Could not check generation status.");
     const reported = Number(task.progress);
     last = Number.isFinite(reported) ? Math.max(last, Math.min(99, reported)) : last;
-    onProgress?.({ percent: last, status: conversionLabel(String(task.status || ""), last) });
+    const steps = Array.isArray(task.steps) ? (task.steps as GenerateStep[]) : undefined;
+    onProgress?.({ percent: last, status: conversionLabel(String(task.status || ""), last, steps), steps });
     if (task.status === "SUCCEEDED" && task.glb_url) {
       onProgress?.({ percent: 100, status: "Saving model to CDN…" });
       // glb_url is the split (modular) model when the backend could separate parts; source_glb_url the untouched one.
@@ -117,7 +120,10 @@ export async function fetchGenerationQuota(): Promise<{ remaining: Record<ModelP
   return body?.remaining ? { remaining: body.remaining, provider: body.provider ?? "meshy" } : null;
 }
 
-function conversionLabel(status: string, percent: number): string {
+function conversionLabel(status: string, percent: number, steps?: GenerateStep[]): string {
+  const active = steps?.find((step) => step.status === "IN_PROGRESS" || step.status === "PENDING");
+  if (active?.id === "image") return "Cleaning the photo…";
+  if (active?.id === "mesh" && steps?.some((step) => step.id === "image")) return "Building the 3D model…";
   if (status === "PENDING") return "Queued for conversion…";
   if (percent < 35) return "Analyzing the photo…";
   if (percent < 75) return "Building the 3D mesh…";

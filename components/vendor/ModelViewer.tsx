@@ -2,9 +2,10 @@
 
 import { useT } from "@/lib/i18n";
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type ComponentRef, type CSSProperties, type ReactNode } from "react";
-import { ChevronDown, CircleHelp, DoorOpen, Lightbulb, Download, Eraser, Layers, Link2, Maximize, Minimize, Pointer, Loader2, Palette, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Redo2, RotateCcw, RotateCw, Ruler, Focus, SlidersHorizontal, Undo2, X, ZoomIn, ZoomOut } from "lucide-react";
+import { ChevronDown, CircleHelp, DoorOpen, FileText, Lightbulb, Download, Eraser, Layers, Link2, Maximize, Minimize, Pointer, Loader2, Palette, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Redo2, RotateCcw, RotateCw, Ruler, Focus, SlidersHorizontal, Undo2, X, ZoomIn, ZoomOut } from "lucide-react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { Bounds, ContactShadows, OrbitControls, useBounds, useGLTF } from "@react-three/drei";
+import { assetUrl } from "@/lib/api";
 import { OutlinePass } from "three/examples/jsm/postprocessing/OutlinePass.js";
 import { Box3, BufferGeometry, Color, DirectionalLight, Euler, Group, LinearSRGBColorSpace, Matrix4, Mesh, MeshStandardMaterial, NeutralToneMapping, NormalBlending, Object3D, PerspectiveCamera, PMREMGenerator, Quaternion, Raycaster, RepeatWrapping, Scene, Sphere, SRGBColorSpace, Texture, Vector2, Vector3, WebGLRenderer, type Material } from "three";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
@@ -869,8 +870,8 @@ export const DRAG = 4;
 const GRID = "editor-grid";
 const GUIDES_KEY = "sha2ty.showDimensions";
 const HANDS_KEY = "sha2ty.showHandIcons";
-type Tab = "parts" | "properties" | "actions";
-const TAB_ICON: Record<Tab, typeof Layers> = { parts: Layers, properties: Palette, actions: SlidersHorizontal };
+type Tab = "details" | "parts" | "properties" | "actions";
+const TAB_ICON: Record<Tab, typeof Layers> = { details: FileText, parts: Layers, properties: Palette, actions: SlidersHorizontal };
 
 /** Blender-style selection: a screen-space silhouette with a soft glow around the selected mesh only (three's
  * OutlinePass). The scene renders as without it (same colours); the pass then draws only its overlay on top, so the
@@ -1045,8 +1046,10 @@ function LoadedModel({
   /** Which part a click selects among everything under the pointer (lib/vendor/parts3d.ts choosePart). */
   choose?: (hits: { object: Object3D; distance: number; face?: { materialIndex?: number } | null }[]) => string | null;
 }) {
-  const { scene } = useGLTF(url);
-  const { scene: frame } = useGLTF(frameUrl ?? url); // the same file (already loaded) when there is no frame
+  const file = assetUrl(url);
+  const frameFile = assetUrl(frameUrl ?? url);
+  const { scene } = useGLTF(file);
+  const { scene: frame } = useGLTF(frameFile); // the same file (already loaded) when there is no frame
   const gl = useThree((state) => state.gl);
   useEffect(() => {
     maxAnisotropy = gl.capabilities.getMaxAnisotropy();
@@ -1131,6 +1134,7 @@ export function ModelViewer({
   actions,
   actionsLabel = "Save",
   removedParts,
+  removal,
   partVariants: savedVariants = null,
   onUploadVariant,
   onVariantChange,
@@ -1194,6 +1198,8 @@ export function ModelViewer({
   actionsLabel?: string;
   /** Parts removed from the model (saved with the design). With it, the parts list can remove and restore parts. */
   removedParts?: string[] | null;
+  /** yours: a customer's removal stays on their design. everyone: a vendor or admin removal is saved into the shared model. */
+  removal?: "yours" | "everyone";
   /** The customer's saved variant per part (part id → variant id), put in place on load. */
   partVariants?: Record<string, string> | null;
   /** Vendors and admins: stores a part variant's GLB and returns its URL. With it, variants are added and removed
@@ -1427,11 +1433,6 @@ export function ModelViewer({
     setTab(next);
     setSheet((s) => (s === "peek" ? "half" : s));
   };
-  // Studio layout below 1024 px: which side panel is open (tablet drawer / phone tab). Phones open on Details;
-  // tablets start with both drawers closed. (Client-only component: matchMedia is safe here.)
-  const [studioPanel, setStudioPanel] = useState<"details" | "materials" | null>(() =>
-    typeof window !== "undefined" && window.matchMedia("(max-width: 767px)").matches ? "details" : null,
-  );
   const [leftOpen, setLeftOpen] = useState(true);
   const [rightOpen, setRightOpen] = useState(true);
   const [guides, setGuides] = useState(() => {
@@ -1771,8 +1772,8 @@ export function ModelViewer({
       exportGlb,
       document: () => ({
         modelType: server?.modelType,
-        separated: slots.length > 1,
-        components: slots.map((item) => ({ id: item.id, name: item.name, editable: true, ...(item.naming ? { naming: item.naming } : {}), ...(item.nameAr ? { nameAr: item.nameAr } : {}), ...(item.analysisId ? { analysisId: item.analysisId } : {}), ...(item.variants?.length ? { variants: item.variants } : {}) })),
+        separated: slots.filter((item) => !removedRef.current.has(item.id)).length > 1,
+        components: slots.filter((item) => !removedRef.current.has(item.id)).map((item) => ({ id: item.id, name: item.name, editable: true, ...(item.naming ? { naming: item.naming } : {}), ...(item.nameAr ? { nameAr: item.nameAr } : {}), ...(item.analysisId ? { analysisId: item.analysisId } : {}), ...(item.variants?.length ? { variants: item.variants } : {}) })),
         limits: slots.length > 1 ? null : WHOLE,
         ...(anim ? { animation: { ...anim, state: Object.fromEntries(Object.entries(openTarget).filter(([, v]) => v > 0)) } } : {}),
         ...(partsEditor.added.length ? { added: partsEditor.added } : {}),
@@ -1791,7 +1792,7 @@ export function ModelViewer({
         const woodArea = woodIds.reduce((sum, id) => sum + areas.get(id)!, 0);
         const whole = woodIds.length ? quote(editsRef.current[woodIds[0]].material!, woodArea) : null;
         const share = (x: number | null | undefined, id: string) => (x == null ? x : Math.round((x * areas.get(id)!) / (woodArea || 1) * 1000) / 1000);
-        return Object.fromEntries(Object.entries(editsRef.current).map(([id, value]) => {
+        return Object.fromEntries(Object.entries(editsRef.current).filter(([id]) => !removedRef.current.has(id)).map(([id, value]) => {
           if (!value.material || !areas.has(id)) return [id, value];
           if (value.material.kind === "wood" && whole) {
             return [id, { ...value, material: { ...value.material, quantity: share(whole.quantity, id) ?? undefined, finish_quantity: share(whole.finish_quantity, id) ?? undefined, total: share(whole.total, id) } }];
@@ -2127,8 +2128,8 @@ export function ModelViewer({
     <div className="flex min-h-0 flex-1 flex-col gap-3">
     {/* At least a few parts in view: on a short window the column scrolls instead of squeezing the list away. */}
     <div className="flex min-h-48 flex-1 flex-col [&>aside]:flex-1">
-    <PartList parts={list} selected={selected} also={also} several={slots.length > 1 ? several : undefined} onSeveral={setSeveral} limits={slots.length > 1 ? null : WHOLE} onSelect={(id, add) => { pick(id, add); openTab("properties"); }} onRename={shopper ? undefined : rename} hidden={hidden} onToggle={slots.length > 1 ? toggle : undefined} flat={shopper && fill}
-      {...(removedParts !== undefined && slots.length > 1 ? { onRemove: removePart, canRemove: removable, removedCount: removed.size, onRestore: restoreParts } : {})} />
+    <PartList parts={list} selected={selected} also={also} several={slots.length > 1 ? several : undefined} onSeveral={setSeveral} limits={slots.length > 1 ? null : WHOLE} onSelect={(id, add) => { pick(id, add); openTab("properties"); }} onRename={shopper ? undefined : rename} hidden={hidden} onToggle={slots.length > 1 ? toggle : undefined} flat={(shopper && fill) || details !== undefined}
+      {...(removedParts !== undefined && slots.length > 1 ? { onRemove: removePart, canRemove: removable, removedCount: removed.size, onRestore: restoreParts, removal } : {})} />
     </div>
     {!shopper && <button type="button" onClick={() => void download()} disabled={downloading} className="flex w-full shrink-0 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-brand-navy shadow-sm hover:bg-slate-50 disabled:opacity-60">
       <Download className="size-4" aria-hidden />
@@ -2170,7 +2171,7 @@ export function ModelViewer({
       )}
       <div id="sha2ty-part-controls" className="scroll-mt-4" />
       <PartControls
-        flat={shopper && fill}
+        flat={(shopper && fill) || details !== undefined}
         onBrowse={() => openTab("parts")}
         edited={selection.some((item) => Boolean(edits[item.id]))}
         look={slot ? { url: edits[slot.id]?.mapUrl ?? undefined, color: edits[slot.id]?.color ?? `#${standard(slotMaterial(slot))?.color.getHexString() ?? "cccccc"}` } : undefined}
@@ -2209,7 +2210,7 @@ export function ModelViewer({
       {slot && selection.length === 1 && takesVariants(slot) && (onUploadVariant || slot.variants?.some((v) => v.offered !== false)) && (
         <PartVariants
           key={slot.id}
-          flat={shopper && fill}
+          flat={(shopper && fill) || details !== undefined}
           // Customers see the variants the vendor offers; vendors all of theirs.
           variants={onUploadVariant ? slot.variants ?? [] : (slot.variants ?? []).filter((v) => v.offered !== false)}
           onValidate={(url) => variantFileProblem(slot, url, slot.variants ?? [], t)}
@@ -2301,36 +2302,6 @@ export function ModelViewer({
       )}
     </>
   );
-  if (details !== undefined) {
-    // Phones: the panels are part of the page, which scrolls; from tablets up each scrolls on its own.
-    const side = "md:overflow-y-auto md:overscroll-contain [scrollbar-width:thin] bg-white p-4";
-    const drawer = "md:max-lg:fixed md:max-lg:inset-y-0 md:max-lg:z-40 md:max-lg:w-[min(24rem,88vw)] md:max-lg:shadow-2xl";
-    return (
-      <div className="flex min-h-0 flex-1 flex-col max-md:overflow-y-auto max-md:overscroll-contain md:relative lg:grid lg:grid-cols-[minmax(18rem,22rem)_minmax(0,1fr)_minmax(17rem,20rem)] lg:grid-rows-[minmax(0,1fr)]">
-        {/* Tablets: buttons that slide the side panels in; phones: tabs under the canvas. */}
-        <div className="flex shrink-0 gap-1 border-b border-slate-200 bg-white p-1.5 max-md:order-2 lg:hidden" role="tablist">
-          {([["details", "Details"], ["materials", "Parts & materials"]] as const).map(([id, label]) => (
-            <button key={id} type="button" role="tab" aria-selected={studioPanel === id} onClick={() => setStudioPanel((open) => (open === id && !window.matchMedia("(max-width: 767px)").matches ? null : id))} className={`flex-1 rounded-lg px-3 py-2 text-sm font-medium transition ${studioPanel === id ? "bg-brand-navy text-white shadow-sm" : "text-slate-600 hover:bg-slate-50"}`}>
-              {t(label)}
-            </button>
-          ))}
-        </div>
-        {studioPanel && <button type="button" aria-label={t("Close")} onClick={() => setStudioPanel(null)} className="fixed inset-0 z-30 hidden bg-slate-900/30 md:max-lg:block" />}
-        <aside className={`${side} space-y-4 max-md:order-3 lg:border-e lg:border-slate-200 ${drawer} md:max-lg:start-0 ${studioPanel === "details" ? "" : "max-lg:hidden"}`}>
-          {details}
-        </aside>
-        <div className="relative max-md:sticky max-md:top-0 max-md:z-10 max-md:order-1 max-md:h-[45vh] max-md:shrink-0 md:flex-1 lg:min-h-0">
-          {canvas}
-          {overlay}
-        </div>
-        <aside className={`${side} space-y-3 max-md:order-4 lg:border-s lg:border-slate-200 ${drawer} md:max-lg:end-0 ${studioPanel === "materials" ? "" : "max-lg:hidden"}`}>
-          {partsPanel}
-          {controls}
-          {actions}
-        </aside>
-      </div>
-    );
-  }
   if (stacked) {
     const scroll = "lg:overflow-y-auto lg:overscroll-contain [scrollbar-width:thin]";
     return (
@@ -2348,11 +2319,13 @@ export function ModelViewer({
       </div>
     );
   }
-  const TABS = [["parts", "Parts"], ["properties", shopper ? "Materials & colours" : "Properties"], ...(actions ? [["actions", actionsLabel]] : [])] as [Tab, string][];
-  if (shopper && fill) {
+  // The customer's editor and the vendor's / admin's model page share one layout: a tabbed panel beside the 3D view.
+  const panelLayout = (shopper && fill) || details !== undefined;
+  const TABS = [...(details !== undefined ? [["details", "Details"]] : []), ["parts", "Parts"], ["properties", panelLayout ? "Materials & colours" : "Properties"], ...(actions ? [["actions", actionsLabel]] : [])] as [Tab, string][];
+  if (panelLayout) {
     const SHEET_H = { peek: "", half: "max-lg:h-[55%]", full: "max-lg:h-[calc(100%-3.5rem)]" } as const;
     const step = (dir: 1 | -1) => setSheet((now) => (["peek", "half", "full"] as const)[Math.min(2, Math.max(0, ["peek", "half", "full"].indexOf(now) + dir))]);
-    const tip = tab === "parts" && !slot
+    const tip = !shopper ? null : tab === "parts" && !slot
       ? t("Tap a part on the model or in the list to change its look.")
       : past > 0 && tab !== "parts"
         ? t("Done? Save your design, then request offers from the bar below.")
@@ -2404,7 +2377,7 @@ export function ModelViewer({
             </button>
             <div className="relative hidden shrink-0 items-center justify-between gap-2 px-5 pb-1 pt-4 lg:flex">
               <div className="min-w-0">
-                <p className="text-base font-bold tracking-tight text-brand-navy">{t("Customise your piece")}</p>
+                <p className="text-base font-bold tracking-tight text-brand-navy">{t(shopper ? "Customise your piece" : "Edit the model")}</p>
                 <p className="truncate text-xs text-slate-500">{slot ? t("Customising {part}", { part: selection.length > 1 ? t("{n} parts selected", { n: selection.length }) : partLabel(t, slot.name, slot.nameAr) }) : t("No part selected")}</p>
               </div>
               {historyTools}
@@ -2430,7 +2403,7 @@ export function ModelViewer({
                   <button key={id} type="button" role="tab" aria-selected={on} onClick={() => (on && sheet !== "peek" && window.matchMedia("(max-width: 1023px)").matches ? setSheet("peek") : openTab(id))} className={`relative flex h-12 min-w-0 flex-1 items-center justify-center gap-1.5 px-1.5 text-[13px] font-semibold transition-colors after:absolute after:inset-x-3 after:-bottom-px after:h-0.5 after:rounded-full after:transition-colors ${on ? "text-brand-navy after:bg-brand-amber" : "text-slate-500 after:bg-transparent hover:text-brand-navy"}`}>
                     <Icon className={`size-4 shrink-0 lg:max-xl:hidden ${on ? "text-brand-amber" : ""}`} aria-hidden />
                     <span className="truncate max-sm:hidden">{t(label)}</span>
-                    <span className="truncate sm:hidden">{t(({ parts: "Parts", properties: "Materials", actions: "Dimensions" } as const)[id])}</span>
+                    <span className="truncate sm:hidden">{t(({ details: "Details", parts: "Parts", properties: "Materials", actions: "Dimensions" } as const)[id])}</span>
                   </button>
                 );
               })}
@@ -2445,6 +2418,7 @@ export function ModelViewer({
               )}
               {/* One workspace: sections divided by hairlines, not cards. */}
               <div className="divide-y divide-slate-100 [&>*:empty]:hidden [&>*]:py-5 [&>*:first-child]:pt-0 [&>*:last-child]:pb-0">
+                {tab === "details" && details}
                 {tab === "parts" && partsPanel}
                 {tab === "properties" && controls}
                 {tab === "actions" && actions}
@@ -2454,6 +2428,7 @@ export function ModelViewer({
           </section>
           <div className={`relative max-lg:absolute max-lg:inset-x-0 max-lg:top-0 max-lg:transition-[bottom] max-lg:duration-300 ${sheet === "peek" ? (bar ? "max-lg:bottom-[11.5rem]" : "max-lg:bottom-[5.5rem]") : "max-lg:bottom-[55%]"} lg:h-full lg:min-h-0`}>
             {canvas}
+            {overlay}
           </div>
         </div>
         {bar && <div className="hidden shrink-0 border-t border-slate-200 bg-white px-6 py-3 shadow-[0_-8px_24px_-16px_rgba(15,23,42,0.25)] lg:flex">{bar}</div>}

@@ -12,7 +12,11 @@ export type PartVariant = { id: string; name: string; glb_url: string; price_del
  * what each one adds to the price (EGP; null: priced in the vendor's bid). Nothing listed: customers add nothing. */
 export type AddablePart = { type: string; price_delta?: number | null };
 /** `nameAr`: the Arabic name the vision analysis gave the part (naming "vision"); `analysisId`: its component there. */
-export type PartInfo = { id: string; name: string; nameAr?: string | null; analysisId?: string; editable: boolean; naming?: "file" | "geometry" | "ai" | "unidentified" | "vendor" | "vision" | "estimated"; estimated?: boolean; variants?: PartVariant[] };
+export type PartInfo = { id: string; name: string; nameAr?: string | null; analysisId?: string; editable: boolean; naming?: "file" | "geometry" | "ai" | "unidentified" | "vendor" | "vision" | "estimated"; estimated?: boolean; variants?: PartVariant[];
+  /** What it is for the carpenter (backend services/geometry_quality.py): decorative parts are not in the parts list by default. */
+  class?: "structural" | "upholstery" | "decorative" | "other" };
+/** The generated model's geometry report (backend services/geometry_quality.py): measured, repaired and left as is. */
+export type GeometryQuality = { triangles?: { original: number; afterRepair: number; ar: number | null }; repairs?: string[]; warnings?: string[]; unresolved?: string[]; manufacturing?: string };
 /** The backend's check before saving (services/model_check.py): errors are visible damage, warnings worth a look. */
 export type Swatch = { hex: string; share: number };
 /** `appearance`: the model's front view against the photo's colours (the main colours of each, largest share first). */
@@ -21,8 +25,23 @@ export type ModelValidation = { ok: boolean; errors: string[]; warnings: string[
  * regeneration; `modularity`: how many of its components the generated meshes turned out to be. */
 export type MeshAnalysis = { objectType: string; summary?: string; components: Record<string, unknown>[] };
 export type Modularity = { level: "full" | "partial" | "none"; matched: string[]; missing: string[]; unmatchedMeshes: string[]; note?: string | null };
+export type CarpenterPart = {
+  id: string; name: string; source: "observed" | "inferred"; materialCategory: string; classification: string; role?: string;
+  sizeCm: { width: number; height: number; depth: number }; positionCm: { x: number; y: number; z: number }; orientation: number[]; estimated: boolean;
+};
+export type CarpenterModel = {
+  url?: string; fabricationReady: boolean; estimated: boolean; note: string; furnitureType?: string;
+  components: CarpenterPart[]; excluded: { name: string; reason: string }[];
+  checks?: { closed?: boolean; triangles?: number; warnings?: string[] };
+  hierarchy?: { name: string; children: { name: string; components: string[] }[] };
+};
 export type PartDocument = {
   modelType?: string; separated?: boolean; components: PartInfo[]; limits?: string | null; method?: string; validation?: ModelValidation;
+  quality?: GeometryQuality;
+  /** A lighter copy for mobile AR, made in the background (the full model is used until it exists). */
+  ar?: { url: string; status: string };
+  /** Closed wooden solids for review (backend services/carpenter.py). Never the visual file. */
+  carpenter?: CarpenterModel;
   analysis?: MeshAnalysis; modularity?: Modularity; conditioning?: Record<string, unknown>;
   /** Movable parts (lib/vendor/animation.ts), detected at generation and corrected by the vendor. */
   animation?: import("./animation").AnimationConfig;

@@ -597,6 +597,7 @@ export function DesignEditor({ id, model }: { id: string; model?: string }) {
               </div>
             }
             removedParts={base ? [] : item.removed_parts ?? []}
+            removal="yours"
             onApi={(api) => { editor.current = api; }}
             partsFooter={requestCard}
             woodVendor={target?.audience === "vendor_exclusive" ? target.vendor?.id ?? null : null}

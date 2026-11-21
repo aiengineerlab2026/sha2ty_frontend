@@ -65,8 +65,11 @@ export function ModelDetail({ id }: { id: string }) {
   const [replaced, setReplaced] = useState<string | null>(null);
   // A wardrobe with two states (supabase/model_states.sql): the one being edited. Each keeps its own edits and file.
   const [shownState, setShownState] = useState<ModelStateName>("closed");
+  const [review, setReview] = useState(false);
   const openState = model?.states?.open ?? null;
   const showingOpen = shownState === "open" && Boolean(openState);
+  const carpenter = !showingOpen && !replaced ? model?.components?.carpenter : null;
+  const reviewing = Boolean(review && carpenter?.url);
 
   /** The open state's edits exported into its own file (no thumbnail: the product's picture is its closed state). */
   const openFields = async (): Promise<ModelStates | null> => {
@@ -270,8 +273,8 @@ export function ModelDetail({ id }: { id: string }) {
   const label = "hidden sm:inline";
   return (
     // A fixed workspace the height of the window (the page never scrolls; the header and this bar stay put):
-    // details | 3D viewport | parts and materials. ModelViewer lays out the columns, drawers and phone tabs, and on
-    // phones scrolls the area under the bar itself.
+    // the same two columns as the customer's editor: a tabbed panel (Details, Parts, Materials & colours) beside the
+    // 3D view (ModelViewer lays it out; on phones the panel is a bottom sheet).
     <div className="flex h-dvh flex-col overflow-hidden bg-slate-50 text-slate-900">
       <Header vendor={vendor} />
       <div className="flex h-12 shrink-0 items-center gap-3 border-b border-slate-200 bg-white px-3 sm:px-5">
@@ -315,20 +318,22 @@ export function ModelDetail({ id }: { id: string }) {
       {model?.glb_url && (
         // The preview follows the fields as they are typed (the saved size until they form a valid one).
         <ModelViewer
-          key={fileKey}
+          key={`${fileKey}-${reviewing ? "carpenter" : "visual"}`}
           edit
           fill
           details={form}
-          parts={showingOpen ? openState!.components ?? null : replaced ? null : model.components}
-          edits={showingOpen ? null : replaced ? {} : model.material_edits}
-          replay={!showingOpen && (Boolean(replaced) || !model.source_glb_url || model.source_glb_url === model.glb_url)}
-          onApi={(api) => { editor.current = api; }}
+          parts={reviewing && carpenter ? { separated: true, components: carpenter.components.map((part) => ({ id: part.id, name: part.name, editable: true, estimated: part.source === "inferred" })) } : showingOpen ? openState!.components ?? null : replaced ? null : model.components}
+          edits={showingOpen || reviewing ? null : replaced ? {} : model.material_edits}
+          replay={!reviewing && !showingOpen && (Boolean(replaced) || !model.source_glb_url || model.source_glb_url === model.glb_url)}
+          onApi={(api) => { editor.current = reviewing ? null : api; }}
           // One viewer for both states: the camera stays put; the open file is placed exactly like the closed one.
-          url={showingOpen ? openState!.glb_url : replaced ?? model.glb_url}
+          url={reviewing && carpenter?.url ? carpenter.url : showingOpen ? openState!.glb_url : replaced ?? model.glb_url}
           frameUrl={showingOpen ? model.glb_url : undefined}
           woodVendor={vendor?.platform ? null : vendor?.id}
           woodModel={model.id}
           // Other shapes for a part, offered to customers (saved in the part list with the model).
+          removedParts={reviewing ? undefined : []}
+          removal={reviewing ? undefined : "everyone"}
           onUploadVariant={vendor ? (file) => uploadPublicFile(vendor.id, file, `${model.id}/part-variants`) : undefined}
           resetView={resetView}
           autoRotate={spin}
@@ -338,9 +343,23 @@ export function ModelDetail({ id }: { id: string }) {
           }
           overlay={
             <>
-              {openState && !replaced && (
+              {openState && !replaced && !reviewing && (
                 <div className="absolute start-3 top-3 z-10">
                   <StateToggle value={shownState} onChange={(next) => void switchState(next)} disabled={busy} className="shadow-sm" />
+                </div>
+              )}
+              {reviewing && carpenter && (
+                <div className="absolute start-3 top-3 z-10 max-h-[55%] w-64 overflow-auto rounded-xl border border-amber-200 bg-white/95 p-2.5 text-[11px] leading-snug text-slate-700 shadow-lg">
+                  <p className="font-medium text-amber-800">{t("Not fabrication-ready until dimensions, materials, structural design, and assembly are verified.")}</p>
+                  <ul className="mt-2 space-y-1">
+                    {carpenter.components.map((part) => (
+                      <li key={part.id}>
+                        <span className="font-medium text-brand-navy">{part.name}</span>
+                        {" · "}{part.sizeCm.width}×{part.sizeCm.height}×{part.sizeCm.depth} cm
+                        {" · "}{t(part.source === "inferred" ? "Inferred" : "Observed")}
+                      </li>
+                    ))}
+                  </ul>
                 </div>
               )}
               {size.every((x) => x != null && x > 0) && (
@@ -358,6 +377,16 @@ export function ModelDetail({ id }: { id: string }) {
                   {model.source_glb_url && model.source_glb_url !== model.glb_url && (
                     <a href={model.source_glb_url} target="_blank" rel="noreferrer" className={tool} title={t("Original GLB")} aria-label={t("Original GLB")}>
                       <FileBox className="size-4 sm:size-3.5" aria-hidden /> <span className={label}>{t("Original GLB")}</span>
+                    </a>
+                  )}
+                  {carpenter?.url && (
+                    <button type="button" aria-pressed={reviewing} onClick={() => { setReview((on) => !on); editor.current = null; }} className={`${tool} ${reviewing ? "bg-brand-amber-soft text-brand-navy" : ""}`} title={t(reviewing ? "Visual model" : "Carpenter model")} aria-label={t(reviewing ? "Visual model" : "Carpenter model")}>
+                      <Trees className="size-4 sm:size-3.5" aria-hidden /> <span className={label}>{t(reviewing ? "Visual model" : "Carpenter model")}</span>
+                    </button>
+                  )}
+                  {reviewing && carpenter?.url && (
+                    <a href={carpenter.url} target="_blank" rel="noreferrer" className={tool} title={t("Carpenter GLB")} aria-label={t("Carpenter GLB")}>
+                      <Download className="size-4 sm:size-3.5" aria-hidden /> <span className={label}>{t("Carpenter GLB")}</span>
                     </a>
                   )}
                   {vendor && (

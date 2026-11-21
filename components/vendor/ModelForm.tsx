@@ -11,7 +11,7 @@ import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
 import { supabase, supabaseConfigured } from "@/lib/supabase/client";
 import { on } from "@/lib/events";
-import { fetchGenerationQuota, generateFromPhoto, splitStates, type PhotoReading } from "@/lib/vendor/generate";
+import { fetchGenerationQuota, generateFromPhoto, splitStates, type GenerateStep, type PhotoReading } from "@/lib/vendor/generate";
 import { glbSize } from "@/lib/vendor/glbSize";
 import { uploadPublicFile } from "@/lib/vendor/storage";
 import type { ModelProvider, ModelSource, VendorProfile } from "@/lib/vendor/types";
@@ -27,7 +27,7 @@ import type { ModelStateName, ModelStates, PriceUnit } from "@/lib/vendor/types"
 import { StateToggle } from "./StateToggle";
 import { RichText } from "./RichText";
 import { ModelViewer } from "./ModelViewer";
-import { customizedModelFields, updateModel, type ModelValidation, type PartDocument, type Swatch, type PartEditorApi } from "@/lib/vendor/parts";
+import { customizedModelFields, updateModel, type GeometryQuality, type ModelValidation, type PartDocument, type Swatch, type PartEditorApi } from "@/lib/vendor/parts";
 
 /**
  * cacheComponents keeps this route alive but hidden (React Activity) after leaving it, so coming back would show the
@@ -86,6 +86,7 @@ function ModelFormBody() {
   const [busy, setBusy] = useState(false);
   const [progressLabel, setProgressLabel] = useState<string | null>(null);
   const [progressPercent, setProgressPercent] = useState(0);
+  const [progressSteps, setProgressSteps] = useState<GenerateStep[] | null>(null);
   const [quota, setQuota] = useState<Record<ModelProvider, number> | null>(null);
   /** The generated model awaiting the vendor's check (saved as a draft): its id and 3D file. */
   const [review, setReview] = useState<{ id: string; glbUrl: string; sourceGlbUrl: string | null; components: PartDocument | null; states: ModelStates | null } | null>(null);
@@ -205,6 +206,7 @@ function ModelFormBody() {
     setError(null);
     setProgressLabel(null);
     setProgressPercent(0);
+    setProgressSteps(null);
     let createdId: string | null = null;
     try {
       const row = await supabase()
@@ -267,9 +269,10 @@ function ModelFormBody() {
           photo,
           provider,
           id,
-          ({ percent, status }) => {
+          ({ percent, status, steps }) => {
             setProgressPercent(percent);
             setProgressLabel(status);
+            setProgressSteps(steps ?? null);
           },
           sourceImageUrl ?? undefined,
           { category, title, kind: category === "furniture" ? kind.trim() : undefined, lang: locale === "ar" ? "ar" : "en" },
@@ -371,6 +374,7 @@ function ModelFormBody() {
               </div>
             )}
             <ValidationNotice validation={(shown === "open" ? review.states?.open?.components : review.components)?.validation} />
+            <QualityNotice quality={review.components?.quality} />
             {/* One viewer for both states: the camera stays where it is; the open file is placed exactly like the closed. */}
             <ModelViewer
               edit
@@ -504,10 +508,20 @@ function ModelFormBody() {
           {busy && progressLabel && (
             <div className="space-y-2 rounded-xl border border-slate-200 bg-slate-50 p-3">
               <div className="flex items-center justify-between gap-3 text-sm">
-                <p className="text-slate-700">{progressLabel}</p>
+                <p className="text-slate-700">{t(progressLabel)}</p>
                 <p className="tabular-nums text-slate-500">{progressPercent}%</p>
               </div>
               <Progress value={progressPercent} className="h-2 bg-slate-200" />
+              {progressSteps && progressSteps.length > 0 && (
+                <ol className="space-y-1 text-xs text-slate-600">
+                  {progressSteps.map((step) => (
+                    <li key={step.id} className="flex items-center justify-between gap-3">
+                      <span>{t(step.id === "image" ? "Image to image" : "Image to 3D")}</span>
+                      <span className="tabular-nums">{t(stepStatus(step.status))}{step.status === "IN_PROGRESS" ? ` ${step.progress}%` : ""}</span>
+                    </li>
+                  ))}
+                </ol>
+              )}
             </div>
           )}
           {error && <p className="text-sm text-red-700">{error}</p>}
@@ -534,6 +548,13 @@ function TriesLeft({ n }: { n: number | undefined }) {
 
 const escapeHtml = (text: string) => text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
+function stepStatus(status: string): string {
+  if (status === "SUCCEEDED") return "Done";
+  if (status === "FAILED" || status === "CANCELED" || status === "EXPIRED") return "Failed";
+  if (status === "IN_PROGRESS") return "In progress";
+  return "Waiting";
+}
+
 /** The generated model's check: problems are shown before saving, never hidden behind a success. */
 function ValidationNotice({ validation }: { validation?: ModelValidation }) {
   const t = useT();
@@ -556,6 +577,39 @@ function ValidationNotice({ validation }: { validation?: ModelValidation }) {
         </div>
       )}
     </div>
+  );
+}
+
+/** The geometry report: what was measured and repaired, what was left as generated, and the triangle counts.
+ * Folded: it is for whoever wants the detail; nothing in it claims the model is ready to manufacture. */
+function QualityNotice({ quality }: { quality?: GeometryQuality }) {
+  const t = useT();
+  if (!quality?.triangles) return null;
+  const lines = [...(quality.unresolved ?? []), ...(quality.warnings ?? [])];
+  const k = (n: number) => (n >= 1000 ? `${Math.round(n / 1000).toLocaleString()}k` : String(n));
+  return (
+    <details className="group rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-2 font-semibold text-brand-navy [&::-webkit-details-marker]:hidden">
+        {t("Geometry report")}
+        <span className="text-xs font-normal text-slate-500">{t("{n} triangles", { n: k(quality.triangles.afterRepair) })}{lines.length ? ` · ${t("{n} notes", { n: lines.length })}` : ""}</span>
+      </summary>
+      <div className="mt-2 space-y-2 text-xs leading-relaxed">
+        {!!quality.repairs?.length && (
+          <div>
+            <p className="font-medium text-slate-600">{t("Repaired automatically")}</p>
+            <ul className="list-disc ps-5">{quality.repairs.map((r) => <li key={r}><bdi>{r}</bdi></li>)}</ul>
+          </div>
+        )}
+        {!!lines.length && (
+          <div>
+            <p className="font-medium text-slate-600">{t("Notes")}</p>
+            <ul className="list-disc ps-5">{lines.map((r) => <li key={r}><bdi>{r}</bdi></li>)}</ul>
+          </div>
+        )}
+        <p className="text-slate-500">{t("A lighter copy for mobile AR is made in the background; the full model stays the one you edit.")}</p>
+        {quality.manufacturing && <p className="text-slate-500"><bdi>{quality.manufacturing}</bdi></p>}
+      </div>
+    </details>
   );
 }
 

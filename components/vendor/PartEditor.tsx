@@ -35,6 +35,7 @@ export function PartList({
   canRemove,
   removedCount = 0,
   onRestore,
+  removal,
   flat = false,
 }: {
   /** Inside the customer's panel: no card of its own, no title (the tab names it). */
@@ -59,6 +60,8 @@ export function PartList({
   canRemove?: (id: string) => boolean;
   removedCount?: number;
   onRestore?: () => void;
+  /** yours: this customer's design only. everyone: the shared catalogue model. */
+  removal?: "yours" | "everyone";
 }) {
   const t = useT();
   const [query, setQuery] = useState("");
@@ -138,7 +141,7 @@ export function PartList({
                     <button
                       type="button"
                       disabled={canRemove ? !canRemove(part.id) : false}
-                      onClick={() => window.confirm(t("Remove “{name}” from this model? It is left out of the saved model and requests. You can restore it.", { name: label })) && onRemove(part.id)}
+                      onClick={() => window.confirm(t(removal === "everyone" ? "Remove “{name}” from this model for everyone? After you save, every customer sees it gone. You can restore it before saving." : removal === "yours" ? "Remove “{name}” from your design only? Other people still see it on the original model. You can restore it." : "Remove “{name}” from this model? It is left out of the saved model and requests. You can restore it.", { name: label })) && onRemove(part.id)}
                       title={canRemove && !canRemove(part.id) ? t("This part shares one mesh with others in the file, so it cannot be removed alone. Hide it instead.") : t("Remove part")}
                       aria-label={t("Remove {name}", { name: label })}
                       className={`rounded-lg p-1.5 text-slate-400 transition hover:bg-white hover:text-red-600 disabled:opacity-30 disabled:hover:text-slate-400 ${active ? "" : "opacity-0 group-hover:opacity-100 focus:opacity-100"}`}

@@ -63,7 +63,8 @@ export async function captureViews({ glbUrl, item, lang }: { glbUrl: string; ite
   const names = new Map(slots.map((s) => [s.id, s.name]));
   const namesAr = new Map(slots.map((s) => [s.id, s.nameAr]));
   const moving = new Map(enabledAnimations(config).map((a) => [a.component, a.type] as const));
-  const parts = partsTable({ moving, bounds: whole, slots, names, namesAr, added, mpu, edits: item.material_edits ?? {}, accessories, whole: whole.getSize(new Vector3()) });
+  const decorative = new Set(comps.filter((c) => c.class === "decorative").map((c) => c.id));
+  const parts = partsTable({ moving, bounds: whole, slots, names, namesAr, added, mpu, edits: item.material_edits ?? {}, accessories, whole: whole.getSize(new Vector3()), decorative });
 
   const renderer = new WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
   const pmrem = new PMREMGenerator(renderer);

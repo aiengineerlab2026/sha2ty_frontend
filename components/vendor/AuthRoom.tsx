@@ -1,5 +1,6 @@
 "use client";
 
+import { assetUrl } from "@/lib/api";
 import { Component, Suspense, useEffect, useMemo, useState, type ReactNode } from "react";
 import { Box3, Vector3, type Mesh, type Object3D } from "three";
 import { Canvas, useThree } from "@react-three/fiber";
@@ -141,7 +142,7 @@ function Furniture({ slot, model, y, onHeight }: { slot: Slot; model: CatalogMod
 }
 
 function Model({ slot, model, y, onHeight }: { slot: Slot; model: CatalogModel; y: number; onHeight?: (h: number) => void }) {
-  const { scene } = useGLTF(model.glb_url);
+  const { scene } = useGLTF(assetUrl(model.glb_url));
   const { object, height } = useMemo(() => {
     const { object, report } = normalizeModel(scene, { width: model.width_m!, height: model.height_m!, depth: model.depth_m! }, model.id);
     object.traverse((o) => (o.castShadow = o.receiveShadow = true));
