@@ -1,13 +1,15 @@
 "use client";
 
-import { useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ArrowRight, ImagePlus, LoaderCircle, PencilRuler, Send, X } from "lucide-react";
+import { ArrowRight, Box, ImagePlus, LoaderCircle, PencilRuler, Send, X } from "lucide-react";
 import { Header } from "@/components/shatably/Header";
 import { authSession } from "@/lib/auth/client";
 import { customisedModels } from "@/lib/designs/api";
-import { useT } from "@/lib/i18n";
+import { useLocale, useT } from "@/lib/i18n";
+import { ModelViewer } from "@/components/vendor/ModelViewer";
+import { generateFromPhoto } from "@/lib/vendor/generate";
 import { FURNITURE_TYPES } from "@/lib/plan/categories";
 import { createCustomRequest, type CustomBrief } from "@/lib/tasks";
 import { uploadPublicFile } from "@/lib/vendor/storage";
@@ -45,6 +47,11 @@ export function CustomRequestForm() {
   const [errors, setErrors] = useState<Partial<Record<Field, string>>>({});
   const [failure, setFailure] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
+  const lang = useLocale();
+  // The 3D model made from the first picture with the generator the admin chose (the backend picks it).
+  const fileOf = useRef(new Map<string, File>());
+  const [model, setModel] = useState<{ source: string; percent: number; glb?: string; failed?: string } | null>(null);
+  const modelJob = useRef<{ source: string; done: Promise<string | null> } | null>(null);
   const set = (patch: Partial<typeof form>) => setForm((now) => ({ ...now, ...patch }));
 
   useEffect(() => {
@@ -61,7 +68,7 @@ export function CustomRequestForm() {
     });
   }, [router, t]);
 
-  const addImages = async (files: FileList | null) => {
+  const addImages = async (files: FileList | File[] | null) => {
     if (!files || !me) return;
     const picked = [...files].slice(0, MAX_IMAGES - images.length);
     const bad = picked.find((f) => !f.type.startsWith("image/") || f.size > MAX_BYTES);
@@ -74,6 +81,7 @@ export function CustomRequestForm() {
     for (const file of picked) {
       try {
         const url = await uploadPublicFile(me, file, "requests");
+        fileOf.current.set(url, file);
         setImages((now) => [...now, url]);
       } catch {
         setErrors((e) => ({ ...e, images: t("A picture could not be uploaded. Try again.") }));
@@ -82,6 +90,40 @@ export function CustomRequestForm() {
       }
     }
   };
+
+  // A new first picture → a new 3D model from it; no pictures → none. The latest first picture wins.
+  const first = images[0];
+  useEffect(() => {
+    const file = first ? fileOf.current.get(first) : undefined;
+    if (!first || !file) {
+      modelJob.current = null;
+      setModel(null);
+      return;
+    }
+    if (modelJob.current?.source === first) return;
+    setModel({ source: first, percent: 2 });
+    const kind = KINDS.find((k) => k.id === form.furniture_type);
+    const done = generateFromPhoto(file, "meshy", crypto.randomUUID(), (p) => setModel((m) => (m?.source === first ? { ...m, percent: p.percent } : m)), first, {
+      category: "furniture", title: form.title.trim(), kind: kind && kind.id !== "other" ? kind.label : undefined, lang,
+    }).then(
+      (r) => { setModel((m) => (m?.source === first ? { source: first, percent: 100, glb: r.glbUrl } : m)); return r.glbUrl; },
+      (e: unknown) => { setModel((m) => (m?.source === first ? { source: first, percent: 0, failed: e instanceof Error ? e.message : String(e) } : m)); return null; },
+    );
+    modelJob.current = { source: first, done };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only a new first picture starts a model
+  }, [first]);
+
+  // Paste a screenshot or copied picture anywhere on the page.
+  useEffect(() => {
+    const onPaste = (e: ClipboardEvent) => {
+      const files = [...(e.clipboardData?.files ?? [])].filter((f) => f.type.startsWith("image/"));
+      if (!files.length) return;
+      e.preventDefault();
+      void addImages(files);
+    };
+    window.addEventListener("paste", onPaste);
+    return () => window.removeEventListener("paste", onPaste);
+  });
 
   const check = (): Partial<Record<Field, string>> => {
     const found: Partial<Record<Field, string>> = {};
@@ -112,6 +154,9 @@ export function CustomRequestForm() {
     }
     setSending(true);
     try {
+      // A model still being made is waited for; if it fails the request goes without one.
+      const job = modelJob.current;
+      const glb = job && job.source === images[0] ? await job.done : null;
       const brief: CustomBrief = {
         title: form.title.trim(),
         furniture_type: form.furniture_type,
@@ -124,6 +169,7 @@ export function CustomRequestForm() {
         budget_max: form.budget ? Number(form.budget) : null,
         deadline: form.deadline || null,
         images,
+        glb_url: glb,
       };
       const task = await createCustomRequest(brief);
       router.push(`/tasks/${task.id}?sent=1`);
@@ -206,7 +252,7 @@ export function CustomRequestForm() {
           </Group>
 
           <Group title={t("Reference pictures (optional)")}>
-            <p className="text-xs text-slate-500">{t("Photos of a piece you like, a sketch, or the place it will go. Up to 8.")}</p>
+            <p className="text-xs text-slate-500">{t("Photos of a piece you like, a sketch, or the place it will go. Up to 8. You can also paste a picture (Ctrl+V).")}</p>
             <div className="flex flex-wrap gap-3" id="f-images" tabIndex={-1}>
               {images.map((url) => (
                 <span key={url} className="relative size-24 overflow-hidden rounded-xl border border-slate-200 bg-white">
@@ -228,6 +274,19 @@ export function CustomRequestForm() {
               )}
             </div>
             {errors.images && <p id="e-images" className="text-sm text-red-700">{errors.images}</p>}
+            {model && (
+              <div className="space-y-2 rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm" aria-live="polite">
+                <p className="flex items-center gap-2 font-medium text-brand-navy">
+                  {model.glb ? <Box className="size-4" aria-hidden /> : !model.failed && <LoaderCircle className="size-4 animate-spin" aria-hidden />}
+                  {model.glb
+                    ? t("3D model made from your first picture. Vendors will see it with your request.")
+                    : model.failed
+                      ? t("A 3D model could not be made from this picture. Your request is sent with the pictures only.")
+                      : t("Making a 3D model from your first picture… {n}%", { n: Math.round(model.percent) })}
+                </p>
+                {model.glb && <ModelViewer url={model.glb} dimensions={Number(form.width) > 0 && Number(form.height) > 0 ? { width: Number(form.width) / 100, height: Number(form.height) / 100, ...(Number(form.depth) > 0 ? { depth: Number(form.depth) / 100 } : {}) } : null} />}
+              </div>
+            )}
           </Group>
 
           <Group title={t("Delivery and budget")}>
@@ -258,7 +317,7 @@ export function CustomRequestForm() {
           <div className="sticky bottom-0 -mx-4 border-t border-slate-200 bg-slate-50/95 px-4 py-3 backdrop-blur sm:static sm:mx-0 sm:border-0 sm:bg-transparent sm:p-0">
             <button type="submit" disabled={sending || uploading > 0 || !me} className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-brand-amber px-6 text-base font-semibold text-brand-navy shadow-sm transition hover:bg-[#e8952a] disabled:opacity-60 sm:w-auto">
               {sending ? <LoaderCircle className="size-4 animate-spin" aria-hidden /> : <Send className="size-4 rtl:-scale-x-100" aria-hidden />}
-              {sending ? t("Sending…") : uploading ? t("Uploading…") : t("Send request to vendors")}
+              {sending && model && !model.glb && !model.failed ? t("Finishing the 3D model… {n}%", { n: Math.round(model.percent) }) : sending ? t("Sending…") : uploading ? t("Uploading…") : t("Send request to vendors")}
             </button>
           </div>
         </form>
@@ -309,6 +368,13 @@ export function BriefView({ brief, quantity }: { brief: NonNullable<import("@/li
           </div>
         ))}
       </dl>
+      {brief.glb_url && (
+        <>
+          <h3 className="mt-5 text-sm font-semibold text-slate-700">{t("3D model from the customer's picture")}</h3>
+          <p className="text-xs text-slate-500">{t("Made automatically from the first reference picture; the sizes above are what counts.")}</p>
+          <div className="mt-2"><ModelViewer url={brief.glb_url} dimensions={{ width: d.width / 100, height: d.height / 100, depth: d.depth / 100 }} /></div>
+        </>
+      )}
       {brief.images.length > 0 && (
         <>
           <h3 className="mt-5 text-sm font-semibold text-slate-700">{t("Reference pictures")}</h3>

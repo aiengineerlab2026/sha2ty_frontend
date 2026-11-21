@@ -53,7 +53,7 @@ export interface TaskRow {
     /** A request for one customised model (its frozen version). */
     design?: DesignSpec;
     /** A made-to-order request described without a 3D model (POST /api/requests): sizes in cm. */
-    brief?: { furniture_type: string; dimensions: { width: number; height: number; depth: number }; material: string; finish: string; images: string[] };
+    brief?: { furniture_type: string; dimensions: { width: number; height: number; depth: number }; material: string; finish: string; images: string[]; glb_url?: string };
     audience?: "open" | "vendor_exclusive";
     vendor?: { id: string; name: string } | null;
   };
@@ -185,6 +185,7 @@ export interface CustomBrief {
   budget_max: number | null;
   deadline: string | null;
   images: string[];
+  glb_url?: string | null;
 }
 
 /** Send a made-to-order request (no 3D model) to every approved vendor. */

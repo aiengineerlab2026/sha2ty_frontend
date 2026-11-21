@@ -3,7 +3,7 @@
 import { useT, type T } from "@/lib/i18n";
 import { useState, type ReactNode } from "react";
 import { MaterialPicker } from "./MaterialPicker";
-import { ChevronDown, MousePointerClick, Pencil, Redo2, RotateCcw, Search, Trash2, Undo2 } from "lucide-react";
+import { ChevronDown, Eye, EyeOff, MousePointerClick, Pencil, Redo2, RotateCcw, Search, Trash2, Undo2 } from "lucide-react";
 import type { MaterialEdit, PartInfo } from "@/lib/vendor/parts";
 import { meshNameAr } from "@/lib/vendor/meshNames";
 import { arabicName } from "@/lib/designs/partNames";
@@ -35,7 +35,11 @@ export function PartList({
   canRemove,
   removedCount = 0,
   onRestore,
+  removal,
+  flat = false,
 }: {
+  /** Inside the customer's panel: no card of its own, no title (the tab names it). */
+  flat?: boolean;
   parts: PartInfo[];
   selected: string | null;
   /** More selected parts besides `selected`. */
@@ -56,6 +60,8 @@ export function PartList({
   canRemove?: (id: string) => boolean;
   removedCount?: number;
   onRestore?: () => void;
+  /** yours: this customer's design only. everyone: the shared catalogue model. */
+  removal?: "yours" | "everyone";
 }) {
   const t = useT();
   const [query, setQuery] = useState("");
@@ -63,56 +69,53 @@ export function PartList({
   const shown = parts.filter((p) => partLabel(t, p.name, p.nameAr).toLowerCase().includes(query.trim().toLowerCase()));
   return (
     // Grows to the space it is given: in a full-height panel only the list scrolls (its header and notes stay put).
-    <aside className="flex min-h-0 flex-col rounded-2xl border border-slate-200/80 bg-white shadow-sm">
-      <div className="flex items-center justify-between gap-2 px-4 pb-2 pt-3.5">
-        <p className="text-[13px] font-semibold tracking-tight text-brand-navy">{t("Parts")}</p>
-        <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium tabular-nums text-slate-500">{parts.length}</span>
-      </div>
+    <aside className={`flex min-h-0 flex-col ${flat ? "" : "rounded-2xl border border-slate-200/80 bg-white shadow-sm"}`}>
+      {!flat && (
+        <div className="flex items-center justify-between gap-2 px-4 pb-2 pt-3.5">
+          <p className="text-[13px] font-semibold tracking-tight text-brand-navy">{t("Parts")}</p>
+          <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium tabular-nums text-slate-500">{parts.length}</span>
+        </div>
+      )}
       {several !== undefined && onSeveral && (
-        <label className="mx-4 mb-2 flex cursor-pointer items-center gap-2 text-xs text-slate-600">
+        <label className={`mb-2 flex cursor-pointer items-center gap-2 text-xs text-slate-600 ${flat ? "px-1" : "mx-4"}`}>
           <input type="checkbox" checked={several} onChange={(e) => onSeveral(e.target.checked)} className="size-3.5 rounded accent-[#f2a33a]" />
           {t("Select several")}
           <span className="ms-auto text-[11px] text-slate-400 max-lg:hidden">{t("or shift-click")}</span>
         </label>
       )}
-      <div className="relative px-3">
-        <Search className="pointer-events-none absolute start-5 top-1/2 size-4 -translate-y-1/2 text-slate-400" aria-hidden />
-        <input
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder={t("Search parts")}
-          className="w-full rounded-lg border border-slate-200 bg-slate-50/60 py-2 pe-2 ps-8 text-sm outline-none transition focus:border-brand-amber focus:bg-white focus:ring-2 focus:ring-brand-amber/20"
-        />
-      </div>
-      <ul className="mt-2 min-h-0 flex-1 space-y-0.5 overflow-y-auto overscroll-contain px-2 pb-2 [scrollbar-width:thin]">
+      {(!flat || parts.length > 6) && (
+        <div className={`relative ${flat ? "mb-2" : "px-3"}`}>
+          <Search className={`pointer-events-none absolute top-1/2 size-4 -translate-y-1/2 text-slate-400 ${flat ? "start-3" : "start-5"}`} aria-hidden />
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder={t("Search parts")}
+            className="h-10 w-full rounded-xl border border-slate-200 bg-slate-50/60 pe-3 ps-9 text-sm outline-none transition focus:border-brand-amber focus:bg-white focus:ring-2 focus:ring-brand-amber/20"
+          />
+        </div>
+      )}
+      <ul className={`min-h-0 flex-1 space-y-1 ${flat ? "" : "mt-2 overflow-y-auto overscroll-contain px-2 pb-2 [scrollbar-width:thin]"}`}>
         {shown.map((part) => {
           const active = selected === part.id || Boolean(also?.has(part.id));
           const off = hidden?.has(part.id);
+          const label = partLabel(t, part.name, part.nameAr);
           return (
-            <li key={part.id} className={`group flex items-center gap-2 rounded-lg px-2 transition-colors ${active ? "bg-brand-amber-soft/70 ring-1 ring-brand-amber/40" : "hover:bg-slate-50"}`}>
-              {onToggle && (
-                <input
-                  type="checkbox"
-                  checked={!off}
-                  onChange={(e) => onToggle(part.id, e.target.checked)}
-                  aria-label={t("Show {name}", { name: partLabel(t, part.name, part.nameAr) })}
-                  className="size-4 shrink-0 cursor-pointer rounded accent-[#f2a33a]"
-                />
-              )}
+            <li key={part.id} className={`group relative flex items-center gap-1 rounded-xl pe-1 transition-colors ${active ? "bg-brand-amber-soft/70" : "hover:bg-slate-50"}`}>
+              {active && <span className="absolute inset-y-2 start-0 w-1 rounded-full bg-brand-amber" aria-hidden />}
               {editing === part.id ? (
                 <input
                   autoFocus
-                  defaultValue={partLabel(t, part.name, part.nameAr)}
+                  defaultValue={label}
                   aria-label={t("Part name")}
                   onBlur={(e) => {
                     setEditing(null);
-                    if (e.target.value.trim() && e.target.value.trim() !== partLabel(t, part.name, part.nameAr)) onRename?.(part.id, e.target.value);
+                    if (e.target.value.trim() && e.target.value.trim() !== label) onRename?.(part.id, e.target.value);
                   }}
                   onKeyDown={(e) => {
                     if (e.key === "Enter") e.currentTarget.blur();
                     if (e.key === "Escape") setEditing(null);
                   }}
-                  className="min-w-0 flex-1 rounded-md border border-brand-amber bg-white px-2 py-1 text-sm text-slate-900 outline-none ring-2 ring-brand-amber/20"
+                  className="m-1 min-w-0 flex-1 rounded-lg border border-brand-amber bg-white px-2 py-1.5 text-sm text-slate-900 outline-none ring-2 ring-brand-amber/20"
                 />
               ) : (
                 <button
@@ -120,15 +123,17 @@ export function PartList({
                   onClick={(e) => onSelect(part.id, e.shiftKey || e.ctrlKey || e.metaKey)}
                   onDoubleClick={() => onRename && setEditing(part.id)}
                   aria-current={active}
-                  className={`min-w-0 flex-1 truncate py-2 text-start text-sm transition-colors ${active ? "font-semibold text-brand-navy" : "text-slate-700"} ${off ? "text-slate-400 line-through" : ""}`}
+                  title={off ? t("Hidden: not shown and not requested") : t("Select to customise")}
+                  className="flex min-w-0 flex-1 items-center gap-3 rounded-xl py-2.5 ps-3.5 text-start text-sm outline-none focus-visible:ring-2 focus-visible:ring-brand-amber/40"
                 >
-                  {partLabel(t, part.name, part.nameAr)}
+                  <span className={`size-2 shrink-0 rounded-full transition-colors ${active ? "bg-brand-amber" : off ? "bg-slate-200" : "bg-slate-300 group-hover:bg-slate-400"}`} aria-hidden />
+                  <span className={`truncate ${active ? "font-semibold text-brand-navy" : off ? "text-slate-400 line-through" : "text-slate-700"}`}>{label}</span>
                 </button>
               )}
               {editing !== part.id && (
-                <span className={`flex shrink-0 items-center gap-0.5 transition-opacity ${active ? "opacity-100" : "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100"}`}>
+                <span className="flex shrink-0 items-center">
                   {onRename && (
-                    <button type="button" onClick={() => setEditing(part.id)} title={t("Rename")} aria-label={t("Rename {name}", { name: partLabel(t, part.name, part.nameAr) })} className="rounded-md p-1 text-slate-400 transition hover:bg-white hover:text-brand-navy">
+                    <button type="button" onClick={() => setEditing(part.id)} title={t("Rename")} aria-label={t("Rename {name}", { name: label })} className={`rounded-lg p-1.5 text-slate-400 transition hover:bg-white hover:text-brand-navy ${active ? "" : "opacity-0 group-hover:opacity-100 focus:opacity-100"}`}>
                       <Pencil className="size-3.5" aria-hidden />
                     </button>
                   )}
@@ -136,12 +141,25 @@ export function PartList({
                     <button
                       type="button"
                       disabled={canRemove ? !canRemove(part.id) : false}
-                      onClick={() => window.confirm(t("Remove “{name}” from this model? It is left out of the saved model and requests. You can restore it.", { name: partLabel(t, part.name, part.nameAr) })) && onRemove(part.id)}
+                      onClick={() => window.confirm(t(removal === "everyone" ? "Remove “{name}” from this model for everyone? After you save, every customer sees it gone. You can restore it before saving." : removal === "yours" ? "Remove “{name}” from your design only? Other people still see it on the original model. You can restore it." : "Remove “{name}” from this model? It is left out of the saved model and requests. You can restore it.", { name: label })) && onRemove(part.id)}
                       title={canRemove && !canRemove(part.id) ? t("This part shares one mesh with others in the file, so it cannot be removed alone. Hide it instead.") : t("Remove part")}
-                      aria-label={t("Remove {name}", { name: partLabel(t, part.name, part.nameAr) })}
-                      className="rounded-md p-1 text-slate-400 transition hover:bg-white hover:text-red-600 disabled:opacity-30 disabled:hover:text-slate-400"
+                      aria-label={t("Remove {name}", { name: label })}
+                      className={`rounded-lg p-1.5 text-slate-400 transition hover:bg-white hover:text-red-600 disabled:opacity-30 disabled:hover:text-slate-400 ${active ? "" : "opacity-0 group-hover:opacity-100 focus:opacity-100"}`}
                     >
                       <Trash2 className="size-3.5" aria-hidden />
+                    </button>
+                  )}
+                  {onToggle && (
+                    // Showing or hiding is its own control, apart from selecting the part.
+                    <button
+                      type="button"
+                      onClick={() => onToggle(part.id, Boolean(off))}
+                      aria-pressed={!off}
+                      title={off ? t("Show it again") : onRename ? t("Hide in the 3D view") : t("Hide it: it is left out of your request")}
+                      aria-label={t(off ? "Show {name}" : "Hide {name}", { name: label })}
+                      className={`rounded-lg p-1.5 transition hover:bg-white ${off ? "text-brand-amber" : "text-slate-400 hover:text-brand-navy"}`}
+                    >
+                      {off ? <EyeOff className="size-4" aria-hidden /> : <Eye className="size-4" aria-hidden />}
                     </button>
                   )}
                 </span>
@@ -149,16 +167,16 @@ export function PartList({
             </li>
           );
         })}
-        {shown.length === 0 && <li className="px-2 py-3 text-center text-xs text-slate-400">{t("No parts match.")}</li>}
+        {shown.length === 0 && <li className="px-2 py-6 text-center text-sm text-slate-400">{t("No parts match.")}</li>}
       </ul>
       {removedCount > 0 && onRestore && (
-        <div className="flex items-center justify-between gap-2 border-t border-slate-100 px-4 py-2.5 text-xs text-slate-500">
+        <div className={`flex items-center justify-between gap-2 border-t border-slate-100 py-2.5 text-xs text-slate-500 ${flat ? "mt-2" : "px-4"}`}>
           <span>{t("{n} removed", { n: removedCount })}</span>
           <button type="button" onClick={onRestore} className="font-medium text-brand-navy underline-offset-2 hover:underline">{t("Restore removed parts")}</button>
         </div>
       )}
-      {onToggle && <p className="border-t border-slate-100 px-4 py-2.5 text-[11px] leading-snug text-slate-400">{onRename ? t("Tick to show or hide a part. Double-click a name to rename it.") : t("Untick a part you do not want made: it is left out of your request.")}</p>}
-      {limits && <p className="border-t border-slate-100 px-4 py-3 text-xs leading-snug text-slate-500">{t(limits)}</p>}
+      {onToggle && !flat && <p className="border-t border-slate-100 px-4 py-2.5 text-[11px] leading-snug text-slate-400">{onRename ? t("Use the eye to show or hide a part. Double-click a name to rename it.") : t("Hide a part with the eye to leave it out of your request.")}</p>}
+      {limits && <p className={`border-t border-slate-100 py-3 text-xs leading-snug text-slate-500 ${flat ? "mt-2" : "px-4"}`}>{t(limits)}</p>}
     </aside>
   );
 }
@@ -166,12 +184,12 @@ export function PartList({
 /** A collapsible panel section (native <details>, so keyboard and screen readers work without extra code). */
 export function Section({ title, defaultOpen = true, children }: { title: string; defaultOpen?: boolean; children: ReactNode }) {
   return (
-    <details open={defaultOpen} className="group border-t border-slate-100 pt-2 first:border-t-0 first:pt-0">
-      <summary className="flex cursor-pointer list-none items-center justify-between gap-2 py-1 text-[11px] font-medium uppercase tracking-wide text-slate-500 hover:text-brand-navy [&::-webkit-details-marker]:hidden">
+    <details open={defaultOpen} className="group border-t border-slate-100 pt-3 first:border-t-0 first:pt-0">
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-2 rounded-lg py-1 text-[13px] font-semibold text-brand-navy transition-colors hover:text-brand-navy/80 [&::-webkit-details-marker]:hidden">
         {title}
-        <ChevronDown className="size-3.5 transition-transform group-open:rotate-180" aria-hidden />
+        <ChevronDown className="size-4 text-slate-400 transition-transform duration-200 group-open:rotate-180" aria-hidden />
       </summary>
-      <div className="space-y-2 pt-1.5">{children}</div>
+      <div className="space-y-3 pt-3">{children}</div>
     </details>
   );
 }
@@ -187,7 +205,19 @@ export function PartControls({
   onRedo,
   canUndo,
   canRedo,
+  flat = false,
+  onBrowse,
+  edited = true,
+  look,
 }: {
+  /** Inside the customer's panel: no card; the part's name leads, the empty state offers the parts list. */
+  flat?: boolean;
+  /** Opens the parts list (customers' "Change part"). */
+  onBrowse?: () => void;
+  /** The part has a material of its own (Reset is shown only then). */
+  edited?: boolean;
+  /** The part's look now, for its chip: a pattern image or a colour. */
+  look?: { url?: string; color?: string };
   name: string | null;
   edit: MaterialEdit | null;
   mapping?: "uv" | "box";
@@ -211,12 +241,46 @@ export function PartControls({
   onRoughness?: (value: number) => void;
   onMetalness?: (value: number) => void;
   onReset: () => void;
-  onUndo: () => void;
-  onRedo: () => void;
+  /** Left out: no undo / redo here (the page has its own). */
+  onUndo?: () => void;
+  onRedo?: () => void;
   canUndo: boolean;
   canRedo: boolean;
 }) {
   const t = useT();
+  if (flat) {
+    if (!name)
+      return (
+        <div className="flex flex-col items-center px-4 py-6 text-center">
+          <span className="flex size-12 items-center justify-center rounded-2xl bg-brand-amber-soft text-brand-amber"><MousePointerClick className="size-6" aria-hidden /></span>
+          <p className="mt-3 text-[15px] font-semibold text-brand-navy">{t("Pick a part to customise")}</p>
+          <p className="mt-1 text-sm text-slate-500">{t("Tap it on the model, or choose it from the list.")}</p>
+          {onBrowse && <button type="button" onClick={onBrowse} className="mt-4 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-brand-navy transition hover:border-slate-300 hover:bg-slate-50">{t("Choose a part")}</button>}
+        </div>
+      );
+    return (
+      <div className="space-y-4">
+        <div className="flex items-center gap-3">
+          <span className="size-11 shrink-0 overflow-hidden rounded-xl bg-slate-100 ring-1 ring-slate-200" style={look?.color && !look.url ? { background: look.color } : undefined} aria-hidden>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            {look?.url && <img src={look.url} alt="" className="size-full object-cover" />}
+          </span>
+          <div className="min-w-0 flex-1">
+            <p className="text-xs text-slate-500">{t("Customising")}</p>
+            <p className="truncate text-base font-bold tracking-tight text-brand-navy">{name}</p>
+          </div>
+          {onBrowse && <button type="button" onClick={onBrowse} className="shrink-0 rounded-lg px-2.5 py-1.5 text-xs font-semibold text-slate-600 transition hover:bg-slate-100 hover:text-brand-navy">{t("Change part")}</button>}
+        </div>
+        <MaterialPicker mode="fabric" edit={edit} area={area} onPick={(next) => onLibrary(next.mapUrl!, next.tile ?? 0.3, next)} onClear={onReset} />
+        {onPaint && <MaterialPicker mode="paint" edit={edit} area={area} onPick={onPaint} />}
+        {edited && (
+          <button type="button" onClick={onReset} className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-xs font-medium text-slate-500 transition hover:bg-slate-100 hover:text-brand-navy">
+            <RotateCcw className="size-3.5" aria-hidden /> {t("Back to its original look")}
+          </button>
+        )}
+      </div>
+    );
+  }
   return (
     <aside className="space-y-3 rounded-2xl border border-slate-200/80 bg-white p-3 text-sm shadow-sm">
       <div className="flex items-start justify-between gap-2">
@@ -224,14 +288,14 @@ export function PartControls({
           <p className="text-[11px] font-medium uppercase tracking-wide text-slate-500">{t("Selected")}</p>
           <p className="truncate text-[15px] font-semibold tracking-tight text-brand-navy">{name ?? "—"}</p>
         </div>
-        <div className="flex shrink-0 gap-1">
+        {onUndo && <div className="flex shrink-0 gap-1">
           <button type="button" disabled={!canUndo} onClick={onUndo} title={t("Undo")} aria-label={t("Undo")} className="rounded-lg border border-slate-200 p-1.5 text-slate-600 transition hover:bg-slate-50 hover:text-brand-navy disabled:opacity-35">
             <Undo2 className="size-4" aria-hidden />
           </button>
           <button type="button" disabled={!canRedo} onClick={onRedo} title={t("Redo")} aria-label={t("Redo")} className="rounded-lg border border-slate-200 p-1.5 text-slate-600 transition hover:bg-slate-50 hover:text-brand-navy disabled:opacity-35">
             <Redo2 className="size-4" aria-hidden />
           </button>
-        </div>
+        </div>}
       </div>
       {!name && (
         // One line: on a phone the materials under it (the model's wood) stay in view.

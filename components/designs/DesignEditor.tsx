@@ -5,7 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Box, Camera, Hammer, Loader2, Save, Trash2 } from "lucide-react";
+import { ArrowLeft, Box, Camera, ChevronDown, Hammer, Loader2, Save, Trash2 } from "lucide-react";
 import { Header } from "@/components/shatably/Header";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { appView, useInApp } from "@/lib/app";
@@ -427,41 +427,22 @@ export function DesignEditor({ id, model }: { id: string; model?: string }) {
         ? setNotice(t("Show at least one part: the parts shown are the ones requested."))
         : (setShownParts(editor.current?.visibleParts?.() ?? null), setRequesting(true));
   // Where the customer is in the made-to-order flow (shown above the editor until a request exists).
-  const step = design ? 3 : 1; // saved: requesting bids is next
-  const steps = (
-    <ol className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500 max-lg:hidden" aria-label={t("How it works")}>
-      {["Customise", "Save", "Request bids", "Choose a vendor"].map((label, i) => (
-        <li key={label} className="inline-flex items-center gap-2">
-          {i > 0 && <span className="text-slate-300" aria-hidden>→</span>}
-          <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 font-medium ${i + 1 === step ? "bg-brand-navy text-white" : i + 1 < step ? "bg-emerald-50 text-emerald-700" : "bg-white ring-1 ring-slate-200"}`}>
-            <span className="tabular-nums">{i + 1}</span> {t(label)}
-          </span>
-        </li>
-      ))}
-    </ol>
-  );
-
+  // What happens after "Request offers" (the button itself is in the top bar, and at the bottom on phones).
   const requestCard = design?.kind === "item" && (
-    <div className="space-y-3 rounded-2xl bg-brand-navy p-4 text-white shadow-sm">
-      <div>
-        <p className="text-sm font-semibold">{t("Have it made")}</p>
-        <p className="mt-1 text-xs leading-relaxed text-white/70">
-          {exclusive
-            ? t("This model is {vendor}'s design, so only {vendor} can make it: they see the saved model with its size and materials, send an offer and can chat with you.", { vendor: target?.vendor?.name || t("the vendor") })
-            : t("Vendors see the saved model with its size and materials, send bids and can chat with you. Only the parts ticked in the parts list are requested.")}
-        </p>
-        {exclusive && target && !target.available && (
-          <p className="mt-2 rounded-lg bg-white/10 px-2.5 py-1.5 text-xs text-amber-200">{t("{vendor} is not taking requests right now. Try again later.", { vendor: target.vendor?.name || t("the vendor") })}</p>
-        )}
-      </div>
-      <button
-        type="button"
-        disabled={busy || (exclusive && target?.available === false)}
-        onClick={askBids}
-        className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-white px-3 py-2 text-sm font-semibold text-brand-navy transition hover:bg-brand-amber disabled:opacity-60"
-      >
-        <Hammer className="size-4" aria-hidden /> {requestLabel}
-      </button>
+    <div className="rounded-2xl bg-slate-50 p-4 text-xs leading-relaxed text-slate-600">
+      <p className="text-sm font-semibold text-brand-navy">{t("After you request offers")}</p>
+      {exclusive ? (
+        <p className="mt-1">{t("This model is {vendor}'s design, so only {vendor} can make it: they see the saved model with its size and materials, send an offer and can chat with you.", { vendor: target?.vendor?.name || t("the vendor") })}</p>
+      ) : (
+        <ol className="mt-1.5 list-decimal space-y-0.5 ps-4">
+          <li>{t("Vendors see your saved design: size, parts and materials.")}</li>
+          <li>{t("They send a price and a timeline, or ask questions in the chat.")}</li>
+          <li>{t("You compare offers and choose one. Free, with no commitment.")}</li>
+        </ol>
+      )}
+      {exclusive && target && !target.available && (
+        <p className="mt-2 rounded-lg bg-amber-50 px-2.5 py-1.5 text-amber-800 ring-1 ring-amber-200">{t("{vendor} is not taking requests right now. Try again later.", { vendor: target.vendor?.name || t("the vendor") })}</p>
+      )}
     </div>
   );
 
@@ -493,10 +474,10 @@ export function DesignEditor({ id, model }: { id: string; model?: string }) {
     // In the app the native screen has its own header, so the site's is left out.
     <div className={`min-h-full overflow-x-hidden bg-slate-50 ${item ? "flex h-dvh flex-col overflow-hidden" : ""}`}>
       {!inApp && <Header />}
-      <main className={`mx-auto w-full max-w-[1600px] space-y-4 px-3 py-4 sm:px-6 ${item ? "flex min-h-0 flex-1 flex-col space-y-0 max-lg:px-0 max-lg:py-0 lg:gap-3" : ""}`}>
+      <main className={item ? "flex min-h-0 w-full flex-1 flex-col" : "mx-auto w-full max-w-[1600px] space-y-4 px-3 py-4 sm:px-6"}>
         {/* Workspace header: back, the name (edit in place), its version, and Save (always in reach). Phones: one
             compact bar, icons for the secondary actions. */}
-        <div className={`flex flex-wrap items-center gap-x-3 gap-y-2 ${item ? "max-lg:flex-nowrap max-lg:gap-2 max-lg:border-b max-lg:border-slate-200 max-lg:bg-white max-lg:px-3 max-lg:py-2" : ""}`}>
+        <div className={`flex flex-wrap items-center gap-x-3 gap-y-2 ${item ? "shrink-0 flex-nowrap border-b border-slate-200 bg-white px-3 py-2 max-lg:gap-2 lg:px-6" : ""}`}>
           <Link href="/designs" aria-label={t("My designs")} className="inline-flex shrink-0 items-center gap-1.5 text-sm text-slate-500 transition hover:text-brand-navy max-lg:size-10 max-lg:justify-center max-lg:rounded-full max-lg:hover:bg-slate-100">
             <ArrowLeft className="size-4 rtl:-scale-x-100" aria-hidden /> <span className="max-lg:hidden">{t("My designs")}</span>
           </Link>
@@ -563,11 +544,11 @@ export function DesignEditor({ id, model }: { id: string; model?: string }) {
                 disabled={busy}
                 onClick={save}
                 title={design ? t("Saves your changes to this design.") : t("Saves a draft in My designs. You can name it later.")}
-                className={`inline-flex shrink-0 items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-semibold max-lg:h-10 max-lg:px-4 ${item ? "max-lg:hidden" : ""} transition disabled:opacity-60 ${design?.kind === "item" ? "border border-slate-200 bg-white text-brand-navy shadow-sm hover:bg-slate-50" : "bg-brand-amber text-brand-navy shadow-sm shadow-brand-amber/30 hover:-translate-y-px hover:bg-[#e8952a] hover:shadow-md active:translate-y-0"}`}
+                className={`${item ? "hidden" : "inline-flex"} shrink-0 items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-semibold max-lg:h-10 max-lg:px-4 transition disabled:opacity-60 ${design?.kind === "item" ? "border border-slate-200 bg-white text-brand-navy shadow-sm hover:bg-slate-50" : "bg-brand-amber text-brand-navy shadow-sm shadow-brand-amber/30 hover:-translate-y-px hover:bg-[#e8952a] hover:shadow-md active:translate-y-0"}`}
               >
                 {busy ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <Save className="size-4" aria-hidden />} {design || kind !== "item" ? t("Save") : t("Save draft")}
               </button>
-              {design?.kind === "item" && (
+              {design?.kind === "item" && !item && (
                 // After saving, the next step: publish the saved design as a request for bids.
                 <button
                   type="button"
@@ -581,9 +562,8 @@ export function DesignEditor({ id, model }: { id: string; model?: string }) {
             </>
           )}
         </div>
-        {item && steps}
-        {error && <p className="shrink-0 rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700 max-lg:mx-3 max-lg:mt-2">{error}</p>}
-        {notice && <p role="status" onClick={() => setNotice(null)} className="shrink-0 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm text-emerald-800 max-lg:mx-3 max-lg:mt-2">{notice}</p>}
+        {error && <p className={`shrink-0 rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700 ${item ? "mx-3 mt-2 lg:mx-6" : ""}`}>{error}</p>}
+        {notice && <p role="status" onClick={() => setNotice(null)} className={`shrink-0 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm text-emerald-800 ${item ? "mx-3 mt-2 lg:mx-6" : ""}`}>{notice}</p>}
         {!shown && !error && <p className="text-sm text-slate-500">{t("Loading…")}</p>}
         {shown && item && (!listingId || liveParts !== undefined) && (
           // The catalogue original plus every saved edit: reset and undo always go back to the vendor's model.
@@ -606,26 +586,34 @@ export function DesignEditor({ id, model }: { id: string; model?: string }) {
             // Phones: Save, then Request bids, at the bottom of the screen (one hand).
             phoneAction={
               <div className="flex gap-2">
-                <button type="button" disabled={busy} onClick={save} className={`inline-flex h-12 flex-1 items-center justify-center gap-2 rounded-2xl text-sm font-semibold transition disabled:opacity-60 ${design && kind === "item" ? "border border-slate-200 bg-white text-brand-navy" : "bg-brand-amber text-brand-navy shadow-sm"}`}>
+                <button type="button" disabled={busy} onClick={save} title={design ? t("Saves your changes to this design.") : t("Saves a draft in My designs. You can name it later.")} className={`inline-flex h-12 flex-1 items-center justify-center gap-2 rounded-2xl text-sm font-semibold transition disabled:opacity-60 ${design && kind === "item" ? "border border-slate-200 bg-white text-brand-navy hover:bg-slate-50" : "bg-brand-amber text-brand-navy shadow-sm hover:bg-[#e8952a]"}`}>
                   {busy ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <Save className="size-4" aria-hidden />} {busy && stage ? <span className="truncate text-xs">{stage}</span> : design ? t("Save") : t("Save draft")}
                 </button>
                 {design && (
-                  <button type="button" disabled={busy || (exclusive && target?.available === false)} onClick={askBids} className="inline-flex h-12 flex-1 items-center justify-center gap-2 rounded-2xl bg-brand-amber text-sm font-semibold text-brand-navy shadow-sm disabled:opacity-60">
-                    <Hammer className="size-4" aria-hidden /> {t("Request bids")}
+                  <button type="button" disabled={busy || (exclusive && target?.available === false)} onClick={askBids} title={t("Vendors reply with a price and a timeline. Free, with no commitment.")} className="inline-flex h-12 flex-[1.4] items-center justify-center gap-2 rounded-2xl bg-brand-amber text-sm font-semibold text-brand-navy shadow-sm shadow-brand-amber/30 transition hover:bg-[#e8952a] disabled:opacity-60">
+                    <Hammer className="size-4 shrink-0" aria-hidden /> <span className="truncate sm:hidden">{exclusive ? requestLabel : t("Request bids")}</span><span className="truncate max-sm:hidden">{requestLabel}</span>
                   </button>
                 )}
               </div>
             }
             removedParts={base ? [] : item.removed_parts ?? []}
+            removal="yours"
             onApi={(api) => { editor.current = api; }}
             partsFooter={requestCard}
             woodVendor={target?.audience === "vendor_exclusive" ? target.vendor?.id ?? null : null}
             woodModel={item.source.source_type === "user" ? null : item.source.model_id}
-            actionsLabel="Size & more"
+            actionsLabel="Dimensions & more"
             actions={
               <div className="space-y-3">
-                <DimensionFields dims={dims} original={original} unit={unit} proportional={proportional} onProportional={setProportional} onUnit={setUnit} onChange={setDims} />
+                <DimensionFields flat dims={dims} original={original} unit={unit} proportional={proportional} onProportional={setProportional} onUnit={setUnit} onChange={setDims} />
                 {match}
+                {/* Rarely needed: tucked away until asked for. */}
+                <details className="group">
+                  <summary className="flex cursor-pointer list-none items-center justify-between gap-2 py-1 text-[13px] font-semibold text-brand-navy [&::-webkit-details-marker]:hidden">
+                    {t("More options")}
+                    <ChevronDown className="size-4 text-slate-400 transition-transform duration-200 group-open:rotate-180" aria-hidden />
+                  </summary>
+                  <div className="space-y-3 pt-3">
                 {userId && (
                   <ReplaceGlb
                     upload={(file) => uploadPublicFile(userId, file, `designs/${designId ?? `new-${token.current}`}/base`)}
@@ -635,6 +623,8 @@ export function DesignEditor({ id, model }: { id: string; model?: string }) {
                   />
                 )}
                 {deleteButton}
+                  </div>
+                </details>
                 {item.source.source_type === "user" ? (
                   <p className="px-1 text-[11px] leading-relaxed text-slate-500">{t("Based on your own model “{title}”. Your model is never changed by this design.", { title: item.source.title })}</p>
                 ) : (
@@ -715,14 +705,68 @@ export function DesignEditor({ id, model }: { id: string; model?: string }) {
 
 /** Overall size, typed in the unit chosen (stored in metres); the viewer's handles change the same numbers. */
 export function DimensionFields({
-  dims, original, unit, proportional, onProportional, onUnit, onChange,
+  dims, original, unit, proportional, onProportional, onUnit, onChange, flat = false,
 }: {
+  /** The customer's panel: no card; inputs with their unit, a switch for proportions. */
+  flat?: boolean;
   dims: Dimensions | null; original: Dimensions | null; unit: Unit; proportional: boolean;
   onProportional: (on: boolean) => void; onUnit: (u: Unit) => void; onChange: (d: Dimensions) => void;
 }) {
   const t = useT();
   if (!dims) return <p className="text-xs text-slate-500">{t("This listing has no catalogue size, so the model is shown at its file size.")}</p>;
   const stretched = original ? stretch(dims, original) > 1.02 : false;
+  if (flat) {
+    const value = (key: keyof Dimensions) => Number((dims[key] * FACTOR[unit]).toFixed(unit === "m" ? 3 : 1));
+    return (
+      <div className="space-y-4">
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-[13px] font-semibold text-brand-navy">{t("Dimensions")}</p>
+          <div className="flex rounded-lg bg-slate-100 p-0.5 text-xs font-medium" role="radiogroup" aria-label={t("Unit")}>
+            {(["cm", "m", "mm"] as const).map((u) => (
+              <button key={u} type="button" role="radio" aria-checked={unit === u} onClick={() => onUnit(u)} className={`rounded-md px-2.5 py-1 transition ${unit === u ? "bg-white text-brand-navy shadow-sm" : "text-slate-500 hover:text-brand-navy"}`}>{u}</button>
+            ))}
+          </div>
+        </div>
+        <div className="grid grid-cols-3 gap-2">
+          {(["width", "height", "depth"] as const).map((key) => (
+            <label key={key} className="block">
+              <span className="text-xs text-slate-500">{t(key === "width" ? "Width" : key === "height" ? "Height" : "Depth")}</span>
+              <span className="relative mt-1 block">
+                <input
+                  type="number"
+                  inputMode="decimal"
+                  min={0.05 * FACTOR[unit]}
+                  step={unit === "m" ? 0.01 : 1}
+                  value={value(key)}
+                  onChange={(e) => {
+                    const next = Number(e.target.value) / FACTOR[unit];
+                    if (next > 0 && next <= 50) onChange(resized(dims, key, next, proportional));
+                  }}
+                  className="h-11 w-full rounded-xl border border-slate-200 bg-white pe-9 ps-3 text-sm font-semibold tabular-nums text-brand-navy outline-none transition focus:border-brand-amber focus:ring-2 focus:ring-brand-amber/20 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none"
+                />
+                <span className="pointer-events-none absolute end-3 top-1/2 -translate-y-1/2 text-xs text-slate-400">{unit}</span>
+              </span>
+            </label>
+          ))}
+        </div>
+        <label className="flex cursor-pointer items-center justify-between gap-3 rounded-xl bg-slate-50 px-3 py-2.5" title={t(proportional ? "Changing one size changes the others" : "Width, height and depth change separately")}>
+          <span>
+            <span className="block text-sm font-medium text-brand-navy">{t("Keep proportions")}</span>
+            <span className="block text-xs text-slate-500">{t(proportional ? "One size changes all three, so the shape stays the same." : "Each size changes on its own; the piece is stretched.")}</span>
+          </span>
+          <span className="relative inline-flex shrink-0">
+            <input type="checkbox" checked={proportional} onChange={(e) => onProportional(e.target.checked)} className="peer sr-only" />
+            <span className="h-6 w-11 rounded-full bg-slate-300 transition peer-checked:bg-brand-amber peer-focus-visible:ring-2 peer-focus-visible:ring-brand-amber/40" />
+            <span className="absolute start-0.5 top-0.5 size-5 rounded-full bg-white shadow transition peer-checked:translate-x-5 rtl:peer-checked:-translate-x-5" />
+          </span>
+        </label>
+        {original && (["width", "height", "depth"] as const).some((k) => Math.abs(dims[k] - original[k]) > 0.0005) && (
+          <button type="button" onClick={() => onChange(original)} className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-xs font-medium text-slate-500 transition hover:bg-slate-100 hover:text-brand-navy">{t("Back to the catalogue size")}</button>
+        )}
+        {stretched && <p className="rounded-xl bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-800">{t("Width, height and depth were changed separately: the model is stretched to this size, and vendors are asked to check the proportions of cushions, legs and frame.")}</p>}
+      </div>
+    );
+  }
   const field = (key: keyof Dimensions, label: string) => (
     <label className="text-xs text-slate-500">
       {t(label)}

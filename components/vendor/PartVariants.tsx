@@ -18,7 +18,10 @@ export function PartVariants({
   onUpload,
   onChange,
   onValidate,
+  flat = false,
 }: {
+  /** Inside the customer's panel: no card of its own. */
+  flat?: boolean;
   variants: PartVariant[];
   chosen: string | null;
   busy: string | null;
@@ -33,10 +36,14 @@ export function PartVariants({
   const money = (x: number) => `${x > 0 ? "+" : x < 0 ? "−" : ""}${Math.abs(x).toLocaleString()} ${t("EGP")}`;
 
   return (
-    <div className="rounded-2xl border border-slate-200/80 bg-white p-3 text-sm shadow-sm">
-      <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
-        <Shapes className="size-4 text-brand-amber" aria-hidden /> {t("Variants of this part")}
-      </p>
+    <div className={flat ? "text-sm" : "rounded-2xl border border-slate-200/80 bg-white p-3 text-sm shadow-sm"}>
+      {flat ? (
+        <p className="text-[13px] font-semibold text-brand-navy">{t("Shape of this part")}</p>
+      ) : (
+        <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+          <Shapes className="size-4 text-brand-amber" aria-hidden /> {t("Variants of this part")}
+        </p>
+      )}
       {onChoose ? (
         <div role="radiogroup" aria-label={t("Variants of this part")} className="mt-3 grid grid-cols-2 gap-2">
           {[null, ...variants].map((variant) => {

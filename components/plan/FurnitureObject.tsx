@@ -1,5 +1,6 @@
 "use client";
 
+import { assetUrl } from "@/lib/api";
 import { tilted } from "@/lib/plan/placementValidation";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Box3, Color, Group, Mesh, Vector3, type Object3D } from "three";
@@ -42,7 +43,7 @@ export function FurnitureObject({
   /** Movable parts: the configuration checked on this model's meshes, or one opened / closed by a click on it. */
   onMovable?: (change: { config?: AnimationConfig; toggle?: string }) => void;
 }) {
-  const { scene } = useGLTF(item.glbUrl);
+  const { scene } = useGLTF(assetUrl(item.glbUrl));
   const placed = useRef<Group>(null);
   const slots = useRef<Slot[]>([]);
   const prepared = useRef<Object3D | null>(null);
@@ -59,7 +60,7 @@ export function FurnitureObject({
   // The open state (a wardrobe): its own file, placed exactly like the closed one (same scale, rotation, origin), so
   // switching never moves or resizes the item. Edits and part poses are by part id, the same in both states.
   const open = item.state === "open" && item.openGlbUrl ? item.openGlbUrl : null;
-  const { scene: openScene } = useGLTF(open ?? item.glbUrl); // the closed file again (cached) when closed
+  const { scene: openScene } = useGLTF(assetUrl(open ?? item.glbUrl)); // the closed file again (cached) when closed
   const object = useMemo(() => (open ? alignLike(openScene, closed) : closed), [open, openScene, closed]);
 
   useEffect(() => {

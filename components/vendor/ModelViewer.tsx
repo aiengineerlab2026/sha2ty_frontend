@@ -2,9 +2,10 @@
 
 import { useT } from "@/lib/i18n";
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type ComponentRef, type CSSProperties, type ReactNode } from "react";
-import { DoorOpen, Download, Layers, Link2, Pointer, Loader2, Palette, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, RotateCcw, RotateCw, SlidersHorizontal } from "lucide-react";
+import { ChevronDown, CircleHelp, DoorOpen, FileText, Lightbulb, Download, Eraser, Layers, Link2, Maximize, Minimize, Pointer, Loader2, Palette, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Redo2, RotateCcw, RotateCw, Ruler, Focus, SlidersHorizontal, Undo2, X, ZoomIn, ZoomOut } from "lucide-react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { Bounds, ContactShadows, OrbitControls, useBounds, useGLTF } from "@react-three/drei";
+import { assetUrl } from "@/lib/api";
 import { OutlinePass } from "three/examples/jsm/postprocessing/OutlinePass.js";
 import { Box3, BufferGeometry, Color, DirectionalLight, Euler, Group, LinearSRGBColorSpace, Matrix4, Mesh, MeshStandardMaterial, NeutralToneMapping, NormalBlending, Object3D, PerspectiveCamera, PMREMGenerator, Quaternion, Raycaster, RepeatWrapping, Scene, Sphere, SRGBColorSpace, Texture, Vector2, Vector3, WebGLRenderer, type Material } from "three";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
@@ -869,8 +870,8 @@ export const DRAG = 4;
 const GRID = "editor-grid";
 const GUIDES_KEY = "sha2ty.showDimensions";
 const HANDS_KEY = "sha2ty.showHandIcons";
-type Tab = "parts" | "properties" | "actions";
-const TAB_ICON: Record<Tab, typeof Layers> = { parts: Layers, properties: Palette, actions: SlidersHorizontal };
+type Tab = "details" | "parts" | "properties" | "actions";
+const TAB_ICON: Record<Tab, typeof Layers> = { details: FileText, parts: Layers, properties: Palette, actions: SlidersHorizontal };
 
 /** Blender-style selection: a screen-space silhouette with a soft glow around the selected mesh only (three's
  * OutlinePass). The scene renders as without it (same colours); the pass then draws only its overlay on top, so the
@@ -1045,8 +1046,10 @@ function LoadedModel({
   /** Which part a click selects among everything under the pointer (lib/vendor/parts3d.ts choosePart). */
   choose?: (hits: { object: Object3D; distance: number; face?: { materialIndex?: number } | null }[]) => string | null;
 }) {
-  const { scene } = useGLTF(url);
-  const { scene: frame } = useGLTF(frameUrl ?? url); // the same file (already loaded) when there is no frame
+  const file = assetUrl(url);
+  const frameFile = assetUrl(frameUrl ?? url);
+  const { scene } = useGLTF(file);
+  const { scene: frame } = useGLTF(frameFile); // the same file (already loaded) when there is no frame
   const gl = useThree((state) => state.gl);
   useEffect(() => {
     maxAnisotropy = gl.capabilities.getMaxAnisotropy();
@@ -1131,6 +1134,7 @@ export function ModelViewer({
   actions,
   actionsLabel = "Save",
   removedParts,
+  removal,
   partVariants: savedVariants = null,
   onUploadVariant,
   onVariantChange,
@@ -1194,6 +1198,8 @@ export function ModelViewer({
   actionsLabel?: string;
   /** Parts removed from the model (saved with the design). With it, the parts list can remove and restore parts. */
   removedParts?: string[] | null;
+  /** yours: a customer's removal stays on their design. everyone: a vendor or admin removal is saved into the shared model. */
+  removal?: "yours" | "everyone";
   /** The customer's saved variant per part (part id → variant id), put in place on load. */
   partVariants?: Record<string, string> | null;
   /** Vendors and admins: stores a part variant's GLB and returns its URL. With it, variants are added and removed
@@ -1383,6 +1389,38 @@ export function ModelViewer({
   const [sheet, setSheet] = useState<"peek" | "half" | "full">("peek");
   const orbit = useRef<ComponentRef<typeof OrbitControls>>(null);
   const [turned, setTurned] = useState(false); // the rotate hint goes after the first drag or turn
+  // Customers: a short note after each change ("Applied to Seat"), and the first-visit walkthrough.
+  const [flash, setFlash] = useState<string | null>(null);
+  const flashTimer = useRef<number | undefined>(undefined);
+  const say = (message: string) => {
+    setFlash(message);
+    window.clearTimeout(flashTimer.current);
+    flashTimer.current = window.setTimeout(() => setFlash(null), 2400);
+  };
+  // Customers: the steps behind the help icon (closed until asked for), and one short tip when it helps.
+  const [guideOpen, setGuideOpen] = useState(false);
+  const [tipHidden, setTipHidden] = useState<string | null>(null);
+  const [fitKey, setFitKey] = useState(0); // the camera frames the whole model again when it changes
+  const viewer = useRef<HTMLDivElement>(null);
+  const [fullscreen, setFullscreen] = useState(false);
+  useEffect(() => {
+    const onChange = () => setFullscreen(document.fullscreenElement === viewer.current && viewer.current !== null);
+    document.addEventListener("fullscreenchange", onChange);
+    return () => document.removeEventListener("fullscreenchange", onChange);
+  }, []);
+  const toggleFullscreen = () => {
+    if (document.fullscreenElement) void document.exitFullscreen();
+    else void viewer.current?.requestFullscreen?.().catch(() => undefined);
+  };
+  /** One step closer (`in`) or further, as the mouse wheel does (OrbitControls' own dolly, within its limits). */
+  const zoom = (closer: boolean) => {
+    const controls = orbit.current as (ComponentRef<typeof OrbitControls> & { dollyIn?: (s: number) => void; dollyOut?: (s: number) => void }) | null;
+    if (!controls) return;
+    if (closer) controls.dollyOut?.(1.25);
+    else controls.dollyIn?.(1.25);
+    controls.update();
+  };
+  const [panelOpen, setPanelOpen] = useState(true);
   const turn = (dir: 1 | -1) => {
     const controls = orbit.current;
     if (!controls) return;
@@ -1395,11 +1433,6 @@ export function ModelViewer({
     setTab(next);
     setSheet((s) => (s === "peek" ? "half" : s));
   };
-  // Studio layout below 1024 px: which side panel is open (tablet drawer / phone tab). Phones open on Details;
-  // tablets start with both drawers closed. (Client-only component: matchMedia is safe here.)
-  const [studioPanel, setStudioPanel] = useState<"details" | "materials" | null>(() =>
-    typeof window !== "undefined" && window.matchMedia("(max-width: 767px)").matches ? "details" : null,
-  );
   const [leftOpen, setLeftOpen] = useState(true);
   const [rightOpen, setRightOpen] = useState(true);
   const [guides, setGuides] = useState(() => {
@@ -1481,6 +1514,18 @@ export function ModelViewer({
   // The model shown at exactly the size on screen (the customer's, else the catalogue's): one dimension source for
   // the product page, the editor and the request (lib/plan/modelNormalization fitScale).
   const factor = base ? fitScale(designSize ?? dimensions, base, !proportional) : ([1, 1, 1] as [number, number, number]);
+  const factorKey = factor.map((v) => v.toFixed(3)).join(",");
+  const firstFactor = useRef(factorKey);
+  useEffect(() => {
+    if (!shopper || factorKey === firstFactor.current) return;
+    const timer = window.setTimeout(() => setFitKey((k) => k + 1), 600);
+    return () => window.clearTimeout(timer);
+  }, [factorKey, shopper]);
+  // The size lines need room around the model: frame it again when they are turned on or off.
+  const firstGuides = useRef(guides);
+  useEffect(() => {
+    if (shopper && guides !== firstGuides.current) setFitKey((k) => k + 1);
+  }, [guides, shopper]);
   // Metres per model unit (the model at its real size, with the customer's size on top): sizes shown in m / cm.
   const realScale = useMemo(() => {
     if (!modelRoot) return null;
@@ -1615,6 +1660,7 @@ export function ModelViewer({
     setFuture(0);
     dirty.current = true;
     const next = { ...editsRef.current };
+    say(selection.length > 1 ? t("Applied to {n} parts", { n: selection.length }) : t("Applied to {part}", { part: partLabel(t, selection[0].name, selection[0].nameAr) }));
     for (const item of selection) {
       next[item.id] = { ...next[item.id], ...patch };
       const current = standard(slotMaterial(item))?.map;
@@ -1634,6 +1680,7 @@ export function ModelViewer({
     setFuture(0);
     dirty.current = true;
     const next = { ...editsRef.current };
+    say(t("Wood changed on the whole piece"));
     for (const item of woodParts) {
       next[item.id] = { ...next[item.id], ...patch };
       const texture = textures.get(item.id);
@@ -1657,6 +1704,7 @@ export function ModelViewer({
     setFuture(ahead.current.length);
     setEdits(prev);
     applyAll(prev);
+    say(t("Undone"));
   };
   const redo = () => {
     const next = ahead.current.pop();
@@ -1666,6 +1714,19 @@ export function ModelViewer({
     setFuture(ahead.current.length);
     setEdits(next);
     applyAll(next);
+    say(t("Redone"));
+  };
+  /** Every colour and material back to the original model's, in one undo step. */
+  const resetLooks = () => {
+    if (!Object.keys(editsRef.current).length) return;
+    history.current.push(editsRef.current);
+    ahead.current = [];
+    setPast(history.current.length);
+    setFuture(0);
+    dirty.current = true;
+    setEdits({});
+    applyAll({});
+    say(t("Original colours and materials back. Undo brings your changes back."));
   };
 
   // The edited model as a GLB (every part, the edits baked in, in the file's own units): saved by the page, or downloaded.
@@ -1711,8 +1772,8 @@ export function ModelViewer({
       exportGlb,
       document: () => ({
         modelType: server?.modelType,
-        separated: slots.length > 1,
-        components: slots.map((item) => ({ id: item.id, name: item.name, editable: true, ...(item.naming ? { naming: item.naming } : {}), ...(item.nameAr ? { nameAr: item.nameAr } : {}), ...(item.analysisId ? { analysisId: item.analysisId } : {}), ...(item.variants?.length ? { variants: item.variants } : {}) })),
+        separated: slots.filter((item) => !removedRef.current.has(item.id)).length > 1,
+        components: slots.filter((item) => !removedRef.current.has(item.id)).map((item) => ({ id: item.id, name: item.name, editable: true, ...(item.naming ? { naming: item.naming } : {}), ...(item.nameAr ? { nameAr: item.nameAr } : {}), ...(item.analysisId ? { analysisId: item.analysisId } : {}), ...(item.variants?.length ? { variants: item.variants } : {}) })),
         limits: slots.length > 1 ? null : WHOLE,
         ...(anim ? { animation: { ...anim, state: Object.fromEntries(Object.entries(openTarget).filter(([, v]) => v > 0)) } } : {}),
         ...(partsEditor.added.length ? { added: partsEditor.added } : {}),
@@ -1731,7 +1792,7 @@ export function ModelViewer({
         const woodArea = woodIds.reduce((sum, id) => sum + areas.get(id)!, 0);
         const whole = woodIds.length ? quote(editsRef.current[woodIds[0]].material!, woodArea) : null;
         const share = (x: number | null | undefined, id: string) => (x == null ? x : Math.round((x * areas.get(id)!) / (woodArea || 1) * 1000) / 1000);
-        return Object.fromEntries(Object.entries(editsRef.current).map(([id, value]) => {
+        return Object.fromEntries(Object.entries(editsRef.current).filter(([id]) => !removedRef.current.has(id)).map(([id, value]) => {
           if (!value.material || !areas.has(id)) return [id, value];
           if (value.material.kind === "wood" && whole) {
             return [id, { ...value, material: { ...value.material, quantity: share(whole.quantity, id) ?? undefined, finish_quantity: share(whole.finish_quantity, id) ?? undefined, total: share(whole.total, id) } }];
@@ -1783,8 +1844,9 @@ export function ModelViewer({
   const canvas = (
     // A soft studio backdrop (CSS gradient behind a transparent canvas): the model is the only thing that stands out.
     <div
+      ref={viewer}
       {...(edit ? partsEditor.surface : {})}
-      className={`relative w-full overflow-hidden ${details !== undefined ? "" : "rounded-2xl border border-slate-200/80"} bg-[radial-gradient(ellipse_at_50%_35%,#ffffff_0%,#f1f5f9_55%,#e2e8f0_100%)] ${
+      className={`relative w-full overflow-hidden ${details !== undefined || (shopper && fill) ? "" : "rounded-2xl border border-slate-200/80"} bg-[radial-gradient(ellipse_at_50%_35%,#ffffff_0%,#f1f5f9_55%,#e2e8f0_100%)] ${
         edit ? (details !== undefined ? "h-full min-h-[280px] md:min-h-[420px]" : fill ? "h-full min-h-0 max-lg:rounded-none max-lg:border-0" : "h-[52vh] min-h-[320px] lg:h-[calc(100dvh-12.5rem)] lg:min-h-[520px]") : tall ? "h-[min(78vh,780px)] min-h-[480px]" : "h-[min(70vh,640px)]"
       }`}
     >
@@ -1799,7 +1861,7 @@ export function ModelViewer({
         <directionalLight position={FILL_POSITION} intensity={STUDIO_LIGHT.fill} />
         <Suspense fallback={null}>
           {/* Room for the floating size bar above the model while editing. */}
-          <Bounds fit clip observe margin={edit && designSize ? (narrowCanvas ? 1.75 : 1.45) : 1.25}>
+          <Bounds fit clip observe margin={shopper && fill ? (guides ? (narrowCanvas ? 1.8 : 1.6) : narrowCanvas ? 1.4 : 1.3) : edit && designSize ? (narrowCanvas ? 1.75 : 1.45) : 1.25}>
             <group ref={sizer} name={SIZER} scale={factor}>
               <LoadedModel url={url} frameUrl={frameUrl} dimensions={dimensions} edit={edit} server={server} saved={saved} replay={replay} onReport={onLoaded} onSlots={onSlots} movable={anim} liveSlots={liveSlots} choose={choosePick} onPick={(id, add) => {
                 // Phones: tapping the selected part again while its properties show deselects it and lowers the sheet.
@@ -1812,7 +1874,7 @@ export function ModelViewer({
                 if (id) openTab("properties");
               }} track={track} />
             </group>
-            <FitOnSignal signal={resetView} />
+            <FitOnSignal signal={(resetView ?? 0) + fitKey} />
           </Bounds>
           <Animator slots={slots} root={modelRoot} config={anim} target={openTarget} />
           {hands && <IconTracker icons={icons} els={iconEls} />}
@@ -1852,7 +1914,7 @@ export function ModelViewer({
           })()}
           {partSizes && <PartSizes target={sizer} names={partSizes.names} show={partSizes.show} onSizes={partSizes.onSizes} lit={partSizes.lit} onLit={partSizes.onLit} signal={`${url}|${factor}`} />}
           {edit && guides && designSize && onDesignSize && base && (
-            <ResizeGizmo target={sizer} size={designSize} proportional={proportional} guides={guides} unit={guideUnit} onSize={onDesignSize} onDrag={() => undefined} />
+            <ResizeGizmo target={sizer} size={designSize} proportional={proportional} guides={guides} unit={guideUnit} onSize={onDesignSize} onDrag={() => undefined} draggable={!shopper} />
           )}
           <NeutralRoom />
         </Suspense>
@@ -1914,7 +1976,7 @@ export function ModelViewer({
           );
         })}
       </div>
-      {edit && designSize && onDesignSize && (
+      {edit && designSize && onDesignSize && !(shopper && fill) && (
         // Floating toolbar: typed sizes, the handles / dimensions switch and the unit. Phones: none (the sizes are in "Size & more").
         <div className={`absolute inset-x-3 top-3 flex justify-center ${fill ? "max-lg:hidden" : ""}`}>
           <div className="flex max-w-full flex-wrap items-end gap-3 rounded-2xl border border-white/70 bg-white/80 px-3 py-2 shadow-lg shadow-slate-900/5 backdrop-blur-md">
@@ -1944,7 +2006,7 @@ export function ModelViewer({
           </div>
         </div>
       )}
-      {edit && fill && loadedUrl === url && (
+      {edit && fill && loadedUrl === url && !shopper && (
         // Phones: turn the model by hand (a one-finger drag), or 45° at a time with these.
         <>
           {!turned && sheet === "peek" && (
@@ -1958,6 +2020,32 @@ export function ModelViewer({
               </button>
             ))}
           </div>
+        </>
+      )}
+      {shopper && edit && loadedUrl === url && (
+        <>
+          {/* Phones: undo, redo and reset beside the model (on wide screens they head the panel). */}
+          <div className="absolute start-3 top-3 flex gap-2 lg:hidden" role="toolbar" aria-label={t("Edit history")}>
+            <ToolButton icon={Undo2} label="Undo" hint="Undo the last change" onClick={undo} off={past === 0} />
+            <ToolButton icon={Redo2} label="Redo" hint="Redo the change you undid" onClick={redo} off={future === 0} />
+            <ToolButton icon={Eraser} label="Reset looks" hint="Put back the original colours and materials (you can undo this)" onClick={resetLooks} off={!Object.keys(edits).length} />
+          </div>
+          {/* The camera: in a corner, out of the model's way. */}
+          <div className="absolute end-3 top-3 flex gap-2 lg:bottom-4 lg:end-4 lg:top-auto lg:flex-col lg:gap-1 lg:rounded-2xl lg:border lg:border-white/70 lg:bg-white/85 lg:p-1 lg:shadow-lg lg:shadow-slate-900/10 lg:backdrop-blur-md" role="toolbar" aria-label={t("View controls")}>
+            <CamButton icon={ZoomIn} label="Zoom in" onClick={() => zoom(true)} wide />
+            <CamButton icon={ZoomOut} label="Zoom out" onClick={() => zoom(false)} wide />
+            <CamButton icon={RotateCcw} label="Rotate" onClick={() => turn(1)} />
+            <CamButton icon={Focus} label="Fit the whole model" onClick={() => setFitKey((k) => k + 1)} />
+            {designSize && onDesignSize && <CamButton icon={Ruler} label={guides ? "Hide dimensions" : "Show dimensions"} onClick={() => showGuides(!guides)} on={guides} wide />}
+            <CamButton icon={fullscreen ? Minimize : Maximize} label={fullscreen ? "Exit full screen" : "Full screen"} onClick={toggleFullscreen} />
+            {fill && <CamButton icon={panelOpen ? PanelLeftClose : PanelLeftOpen} label={panelOpen ? "Hide the panel" : "Show the panel"} onClick={() => setPanelOpen((o) => !o)} wide mirror />}
+          </div>
+          {!turned && sheet === "peek" && (
+            <p className="pointer-events-none absolute inset-x-0 bottom-4 mx-auto w-fit rounded-full bg-brand-navy/75 lg:hidden px-3 py-1.5 text-xs font-medium text-white backdrop-blur">{t("Drag to rotate · pinch or scroll to zoom")}</p>
+          )}
+          {flash && (
+            <p role="status" className="pointer-events-none absolute inset-x-0 top-16 z-10 mx-auto w-fit max-w-[80%] rounded-full bg-emerald-600 px-4 py-2 text-center text-xs font-semibold text-white shadow-lg lg:top-4">{flash}</p>
+          )}
         </>
       )}
       {loadedUrl !== url && (
@@ -2040,8 +2128,8 @@ export function ModelViewer({
     <div className="flex min-h-0 flex-1 flex-col gap-3">
     {/* At least a few parts in view: on a short window the column scrolls instead of squeezing the list away. */}
     <div className="flex min-h-48 flex-1 flex-col [&>aside]:flex-1">
-    <PartList parts={list} selected={selected} also={also} several={slots.length > 1 ? several : undefined} onSeveral={setSeveral} limits={slots.length > 1 ? null : WHOLE} onSelect={(id, add) => { pick(id, add); openTab("properties"); }} onRename={shopper ? undefined : rename} hidden={hidden} onToggle={slots.length > 1 ? toggle : undefined}
-      {...(removedParts !== undefined && slots.length > 1 ? { onRemove: removePart, canRemove: removable, removedCount: removed.size, onRestore: restoreParts } : {})} />
+    <PartList parts={list} selected={selected} also={also} several={slots.length > 1 ? several : undefined} onSeveral={setSeveral} limits={slots.length > 1 ? null : WHOLE} onSelect={(id, add) => { pick(id, add); openTab("properties"); }} onRename={shopper ? undefined : rename} hidden={hidden} onToggle={slots.length > 1 ? toggle : undefined} flat={(shopper && fill) || details !== undefined}
+      {...(removedParts !== undefined && slots.length > 1 ? { onRemove: removePart, canRemove: removable, removedCount: removed.size, onRestore: restoreParts, removal } : {})} />
     </div>
     {!shopper && <button type="button" onClick={() => void download()} disabled={downloading} className="flex w-full shrink-0 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-brand-navy shadow-sm hover:bg-slate-50 disabled:opacity-60">
       <Download className="size-4" aria-hidden />
@@ -2063,7 +2151,7 @@ export function ModelViewer({
   const estimate = guideWithOptions(priceGuide, optionDeltas);
   const controls = (
     <>
-      {shopper && priceGuide !== undefined && (
+      {shopper && priceGuide !== undefined && !(fill && phoneAction) && (
         // An estimate, said as one, with what it rests on; no figure without enough earlier bids.
         <section className="rounded-2xl border border-slate-200/80 bg-white p-3 text-sm shadow-sm" aria-live="polite">
           <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{t("Estimated price")}</p>
@@ -2083,14 +2171,18 @@ export function ModelViewer({
       )}
       <div id="sha2ty-part-controls" className="scroll-mt-4" />
       <PartControls
+        flat={(shopper && fill) || details !== undefined}
+        onBrowse={() => openTab("parts")}
+        edited={selection.some((item) => Boolean(edits[item.id]))}
+        look={slot ? { url: edits[slot.id]?.mapUrl ?? undefined, color: edits[slot.id]?.color ?? `#${standard(slotMaterial(slot))?.color.getHexString() ?? "cccccc"}` } : undefined}
         name={slot ? (selection.length > 1 ? t("{n} parts selected", { n: selection.length }) : partLabel(t, slot.name, slot.nameAr)) : null}
         edit={slot ? { color: `#${(standard(slotMaterial(slot))?.color.getHexString() ?? "cccccc")}`, roughness: standard(slotMaterial(slot))?.roughness, metalness: standard(slotMaterial(slot))?.metalness, ...edits[slot.id] } : null}
         mapping={slot ? edits[slot.id]?.mapping : undefined}
         area={area}
         canUndo={past > 0}
         canRedo={future > 0}
-        onUndo={undo}
-        onRedo={redo}
+        onUndo={shopper && fill ? undefined : undo}
+        onRedo={shopper && fill ? undefined : redo}
         onLibrary={(mapUrl, tile, picked) => {
           if (!slot) return;
           const next = { ...picked, mapUrl, color: "#ffffff", tile };
@@ -2118,6 +2210,7 @@ export function ModelViewer({
       {slot && selection.length === 1 && takesVariants(slot) && (onUploadVariant || slot.variants?.some((v) => v.offered !== false)) && (
         <PartVariants
           key={slot.id}
+          flat={(shopper && fill) || details !== undefined}
           // Customers see the variants the vendor offers; vendors all of theirs.
           variants={onUploadVariant ? slot.variants ?? [] : (slot.variants ?? []).filter((v) => v.offered !== false)}
           onValidate={(url) => variantFileProblem(slot, url, slot.variants ?? [], t)}
@@ -2132,7 +2225,7 @@ export function ModelViewer({
       {shopper ? (
         <>
       {woodParts.length > 0 && (
-        <div className="rounded-2xl border border-slate-200/80 bg-white p-3 text-sm shadow-sm">
+        <div className={fill ? "text-sm" : "rounded-2xl border border-slate-200/80 bg-white p-3 text-sm shadow-sm"}>
           <MaterialPicker
             mode="wood"
             edit={woodEdit}
@@ -2150,9 +2243,12 @@ export function ModelViewer({
         </div>
       )}
           {/* Adding parts: only the types the vendor offers for this model, folded until asked for. */}
-          {addable.length > 0 && <details className="group rounded-2xl border border-slate-200/80 bg-white shadow-sm">
-            <summary className="cursor-pointer list-none px-4 py-3 text-sm font-semibold text-brand-navy marker:hidden">{t("Add parts (shelves, drawers, legs…)")}</summary>
-            <div className="px-1 pb-1">
+          {addable.length > 0 && <details className={`group ${fill ? "" : "rounded-2xl border border-slate-200/80 bg-white shadow-sm"}`}>
+            <summary className={`flex cursor-pointer list-none items-center justify-between gap-2 text-[13px] font-semibold text-brand-navy [&::-webkit-details-marker]:hidden ${fill ? "py-1" : "px-4 py-3"}`}>
+              {t("Add parts (shelves, drawers, legs…)")}
+              <ChevronDown className="size-4 text-slate-400 transition-transform duration-200 group-open:rotate-180" aria-hidden />
+            </summary>
+            <div className={fill ? "pt-3" : "px-1 pb-1"}>
       <AddComponentsPanel
         allowed={addable}
         editor={partsEditor}
@@ -2206,36 +2302,6 @@ export function ModelViewer({
       )}
     </>
   );
-  if (details !== undefined) {
-    // Phones: the panels are part of the page, which scrolls; from tablets up each scrolls on its own.
-    const side = "md:overflow-y-auto md:overscroll-contain [scrollbar-width:thin] bg-white p-4";
-    const drawer = "md:max-lg:fixed md:max-lg:inset-y-0 md:max-lg:z-40 md:max-lg:w-[min(24rem,88vw)] md:max-lg:shadow-2xl";
-    return (
-      <div className="flex min-h-0 flex-1 flex-col max-md:overflow-y-auto max-md:overscroll-contain md:relative lg:grid lg:grid-cols-[minmax(18rem,22rem)_minmax(0,1fr)_minmax(17rem,20rem)] lg:grid-rows-[minmax(0,1fr)]">
-        {/* Tablets: buttons that slide the side panels in; phones: tabs under the canvas. */}
-        <div className="flex shrink-0 gap-1 border-b border-slate-200 bg-white p-1.5 max-md:order-2 lg:hidden" role="tablist">
-          {([["details", "Details"], ["materials", "Parts & materials"]] as const).map(([id, label]) => (
-            <button key={id} type="button" role="tab" aria-selected={studioPanel === id} onClick={() => setStudioPanel((open) => (open === id && !window.matchMedia("(max-width: 767px)").matches ? null : id))} className={`flex-1 rounded-lg px-3 py-2 text-sm font-medium transition ${studioPanel === id ? "bg-brand-navy text-white shadow-sm" : "text-slate-600 hover:bg-slate-50"}`}>
-              {t(label)}
-            </button>
-          ))}
-        </div>
-        {studioPanel && <button type="button" aria-label={t("Close")} onClick={() => setStudioPanel(null)} className="fixed inset-0 z-30 hidden bg-slate-900/30 md:max-lg:block" />}
-        <aside className={`${side} space-y-4 max-md:order-3 lg:border-e lg:border-slate-200 ${drawer} md:max-lg:start-0 ${studioPanel === "details" ? "" : "max-lg:hidden"}`}>
-          {details}
-        </aside>
-        <div className="relative max-md:sticky max-md:top-0 max-md:z-10 max-md:order-1 max-md:h-[45vh] max-md:shrink-0 md:flex-1 lg:min-h-0">
-          {canvas}
-          {overlay}
-        </div>
-        <aside className={`${side} space-y-3 max-md:order-4 lg:border-s lg:border-slate-200 ${drawer} md:max-lg:end-0 ${studioPanel === "materials" ? "" : "max-lg:hidden"}`}>
-          {partsPanel}
-          {controls}
-          {actions}
-        </aside>
-      </div>
-    );
-  }
   if (stacked) {
     const scroll = "lg:overflow-y-auto lg:overscroll-contain [scrollbar-width:thin]";
     return (
@@ -2253,7 +2319,122 @@ export function ModelViewer({
       </div>
     );
   }
-  const TABS = [["parts", "Parts"], ["properties", "Properties"], ...(actions ? [["actions", actionsLabel]] : [])] as [Tab, string][];
+  // The customer's editor and the vendor's / admin's model page share one layout: a tabbed panel beside the 3D view.
+  const panelLayout = (shopper && fill) || details !== undefined;
+  const TABS = [...(details !== undefined ? [["details", "Details"]] : []), ["parts", "Parts"], ["properties", panelLayout ? "Materials & colours" : "Properties"], ...(actions ? [["actions", actionsLabel]] : [])] as [Tab, string][];
+  if (panelLayout) {
+    const SHEET_H = { peek: "", half: "max-lg:h-[55%]", full: "max-lg:h-[calc(100%-3.5rem)]" } as const;
+    const step = (dir: 1 | -1) => setSheet((now) => (["peek", "half", "full"] as const)[Math.min(2, Math.max(0, ["peek", "half", "full"].indexOf(now) + dir))]);
+    const tip = !shopper ? null : tab === "parts" && !slot
+      ? t("Tap a part on the model or in the list to change its look.")
+      : past > 0 && tab !== "parts"
+        ? t("Done? Save your design, then request offers from the bar below.")
+        : null;
+    const priceLine = priceGuide !== undefined && (
+      <div className="min-w-0 max-lg:flex max-lg:items-baseline max-lg:gap-1.5" title={estimate ? t("From {n} vendor bids on {r} earlier requests for this model, adjusted to your size. An estimate only: the final price comes from vendors' bids.", { n: priceGuide!.count, r: priceGuide!.requests }) : t("Not enough earlier bids on this model to estimate a price yet.")}>
+        <p className="shrink-0 text-[11px] font-medium text-slate-500 lg:text-xs">{t("Estimated price")}</p>
+        <p className="truncate text-sm font-bold tabular-nums text-brand-navy lg:text-lg" aria-live="polite">
+          {estimate ? <><bdi>{formatPrice(estimate.low)} – {formatPrice(estimate.high)}</bdi> <span className="text-xs font-medium text-slate-500">{t("per piece")}</span></> : <span className="text-sm">{t("Price determined by vendor bids")}</span>}
+        </p>
+      </div>
+    );
+    const bar = (priceLine || phoneAction) && (
+      <div className="flex w-full items-center gap-4 max-lg:flex-col max-lg:items-stretch max-lg:gap-1.5">
+        <div className="min-w-0 flex-1">{priceLine}</div>
+        {phoneAction && <div className="shrink-0 lg:w-[28rem]">{phoneAction}</div>}
+      </div>
+    );
+    const historyTools = (
+      <div className="flex items-center gap-1" role="toolbar" aria-label={t("Edit history")}>
+        <PanelIcon icon={Undo2} label="Undo" onClick={undo} off={past === 0} mirror />
+        <PanelIcon icon={Redo2} label="Redo" onClick={redo} off={future === 0} mirror />
+        <PanelIcon icon={Eraser} label="Reset looks" hint="Put back the original colours and materials (you can undo this)" onClick={resetLooks} off={!Object.keys(edits).length} />
+        <PanelIcon icon={CircleHelp} label="How it works" onClick={() => setGuideOpen(!guideOpen)} on={guideOpen} />
+      </div>
+    );
+    return (
+      // Wide screens: the customisation panel (a third) beside the 3D view (the rest), a bar with the price, Save and
+      // Request offers under both. Phones: the view fills the screen and the panel is a bottom sheet.
+      <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
+        <div className="relative min-h-0 flex-1 lg:grid lg:grid-rows-[minmax(0,1fr)] lg:[grid-template-columns:var(--cols)]" style={{ "--cols": panelOpen ? "minmax(20rem,32%) minmax(0,1fr)" : "0px minmax(0,1fr)" } as CSSProperties}>
+          <section aria-label={t("Customise")} className={`z-20 flex flex-col bg-white max-lg:absolute max-lg:inset-x-0 max-lg:bottom-0 max-lg:rounded-t-3xl max-lg:border-t max-lg:border-slate-200/70 max-lg:shadow-[0_-12px_32px_-12px_rgba(15,23,42,0.25)] max-lg:transition-[height] max-lg:duration-300 ${SHEET_H[sheet]} lg:h-full lg:min-h-0 lg:border-e lg:border-slate-200 ${panelOpen ? "" : "lg:invisible"}`}>
+            <button
+              type="button"
+              onClick={() => step(sheet === "full" ? -1 : 1)}
+              onPointerDown={(e) => (sheetDrag.current = e.clientY)}
+              onPointerUp={(e) => {
+                const start = sheetDrag.current;
+                sheetDrag.current = null;
+                if (start !== null && Math.abs(e.clientY - start) > 30) {
+                  e.preventDefault();
+                  step(e.clientY < start ? 1 : -1);
+                }
+              }}
+              aria-label={t(sheet === "full" ? "Collapse panel" : "Expand panel")}
+              className="flex h-6 shrink-0 touch-none items-center justify-center lg:hidden"
+            >
+              <span className="h-1.5 w-10 rounded-full bg-slate-300" aria-hidden />
+            </button>
+            <div className="relative hidden shrink-0 items-center justify-between gap-2 px-5 pb-1 pt-4 lg:flex">
+              <div className="min-w-0">
+                <p className="text-base font-bold tracking-tight text-brand-navy">{t(shopper ? "Customise your piece" : "Edit the model")}</p>
+                <p className="truncate text-xs text-slate-500">{slot ? t("Customising {part}", { part: selection.length > 1 ? t("{n} parts selected", { n: selection.length }) : partLabel(t, slot.name, slot.nameAr) }) : t("No part selected")}</p>
+              </div>
+              {historyTools}
+            </div>
+            {guideOpen && (
+              <div className="relative z-10 mx-3 mb-2 rounded-2xl bg-brand-navy p-4 text-white shadow-xl lg:mx-5">
+                <div className="flex items-center justify-between">
+                  <p className="text-sm font-semibold">{t("How it works")}</p>
+                  <button type="button" onClick={() => setGuideOpen(false)} aria-label={t("Close")} className="rounded-md p-1 text-white/70 hover:bg-white/10 hover:text-white"><X className="size-4" aria-hidden /></button>
+                </div>
+                <ol className="mt-2 space-y-1.5 text-[13px] text-white/85">
+                  {(["Tap a part on the model or in the list.", "Choose its wood, fabric or colour.", "Turn the model to see it from every side.", "Save your design.", "Request offers: makers reply with a price and a timeline."] as const).map((line, i) => (
+                    <li key={line} className="flex gap-2"><span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-brand-amber text-[11px] font-bold text-brand-navy tabular-nums">{i + 1}</span>{t(line)}</li>
+                  ))}
+                </ol>
+              </div>
+            )}
+            <div className="flex shrink-0 border-b border-slate-200 px-2 lg:px-4" role="tablist">
+              {TABS.map(([id, label]) => {
+                const Icon = TAB_ICON[id];
+                const on = tab === id;
+                return (
+                  <button key={id} type="button" role="tab" aria-selected={on} onClick={() => (on && sheet !== "peek" && window.matchMedia("(max-width: 1023px)").matches ? setSheet("peek") : openTab(id))} className={`relative flex h-12 min-w-0 flex-1 items-center justify-center gap-1.5 px-1.5 text-[13px] font-semibold transition-colors after:absolute after:inset-x-3 after:-bottom-px after:h-0.5 after:rounded-full after:transition-colors ${on ? "text-brand-navy after:bg-brand-amber" : "text-slate-500 after:bg-transparent hover:text-brand-navy"}`}>
+                    <Icon className={`size-4 shrink-0 lg:max-xl:hidden ${on ? "text-brand-amber" : ""}`} aria-hidden />
+                    <span className="truncate max-sm:hidden">{t(label)}</span>
+                    <span className="truncate sm:hidden">{t(({ details: "Details", parts: "Parts", properties: "Materials", actions: "Dimensions" } as const)[id])}</span>
+                  </button>
+                );
+              })}
+            </div>
+            <div className={`min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-5 pt-4 [scrollbar-width:thin] lg:px-5 ${sheet === "peek" ? "max-lg:hidden" : ""}`}>
+              {tip && tipHidden !== tip && (
+                <p className="mb-4 flex items-start gap-2 rounded-xl bg-slate-50 px-3 py-2.5 text-xs leading-relaxed text-slate-600">
+                  <Lightbulb className="mt-px size-4 shrink-0 text-brand-amber" aria-hidden />
+                  <span className="flex-1">{tip}</span>
+                  <button type="button" onClick={() => setTipHidden(tip)} aria-label={t("Hide")} className="-m-1 rounded-md p-1 text-slate-400 hover:bg-white hover:text-slate-600"><X className="size-3.5" aria-hidden /></button>
+                </p>
+              )}
+              {/* One workspace: sections divided by hairlines, not cards. */}
+              <div className="divide-y divide-slate-100 [&>*:empty]:hidden [&>*]:py-5 [&>*:first-child]:pt-0 [&>*:last-child]:pb-0">
+                {tab === "details" && details}
+                {tab === "parts" && partsPanel}
+                {tab === "properties" && controls}
+                {tab === "actions" && actions}
+              </div>
+            </div>
+            {bar && <div className="mx-3 mb-[max(0.75rem,env(safe-area-inset-bottom))] mt-1 shrink-0 lg:hidden">{bar}</div>}
+          </section>
+          <div className={`relative max-lg:absolute max-lg:inset-x-0 max-lg:top-0 max-lg:transition-[bottom] max-lg:duration-300 ${sheet === "peek" ? (bar ? "max-lg:bottom-[11.5rem]" : "max-lg:bottom-[5.5rem]") : "max-lg:bottom-[55%]"} lg:h-full lg:min-h-0`}>
+            {canvas}
+            {overlay}
+          </div>
+        </div>
+        {bar && <div className="hidden shrink-0 border-t border-slate-200 bg-white px-6 py-3 shadow-[0_-8px_24px_-16px_rgba(15,23,42,0.25)] lg:flex">{bar}</div>}
+      </div>
+    );
+  }
   const SHEET = { peek: "", half: "max-lg:h-[52%]", full: "max-lg:h-[calc(100%-3.5rem)]" } as const;
   const sheetStep = (dir: 1 | -1) => setSheet((s) => (["peek", "half", "full"] as const)[Math.min(2, Math.max(0, ["peek", "half", "full"].indexOf(s) + dir))]);
   return (
@@ -2364,5 +2545,38 @@ function AddableEditor({ value, onChange }: { value: AddablePart[]; onChange: (n
         })}
       </ul>
     </section>
+  );
+}
+
+
+/** A camera button over the 3D view: its name in a tooltip (wide screens), large enough for a finger. `wide`: wide
+ * screens only (phones pinch to zoom, and have no side panel). */
+function CamButton({ icon: Icon, label, onClick, on = false, wide = false, mirror = false }: { icon: typeof Undo2; label: string; onClick: () => void; on?: boolean; wide?: boolean; mirror?: boolean }) {
+  const t = useT();
+  return (
+    <button type="button" onClick={onClick} title={t(label)} aria-label={t(label)} aria-pressed={on || undefined} className={`group relative size-11 items-center justify-center rounded-full border border-white/70 bg-white/90 text-brand-navy shadow-lg shadow-slate-900/10 backdrop-blur-md transition active:scale-95 lg:size-9 lg:rounded-xl lg:border-0 lg:bg-transparent lg:shadow-none lg:hover:bg-slate-100 ${wide ? "hidden lg:flex" : "flex"} ${on ? "lg:bg-brand-amber-soft lg:text-brand-navy" : ""}`}>
+      <Icon className={`size-[18px] ${mirror ? "rtl:-scale-x-100" : ""}`} aria-hidden />
+      <span className="pointer-events-none absolute end-full top-1/2 me-2 hidden -translate-y-1/2 whitespace-nowrap rounded-md bg-brand-navy px-2 py-1 text-xs font-medium text-white opacity-0 shadow transition group-hover:opacity-100 lg:block">{t(label)}</span>
+    </button>
+  );
+}
+
+/** A small icon button in the panel's header, named in its tooltip. */
+function PanelIcon({ icon: Icon, label, hint, onClick, off = false, on = false, mirror = false }: { icon: typeof Undo2; label: string; hint?: string; onClick: () => void; off?: boolean; on?: boolean; mirror?: boolean }) {
+  const t = useT();
+  return (
+    <button type="button" onClick={onClick} disabled={off} title={t(hint ?? label)} aria-label={t(label)} aria-pressed={on || undefined} className={`flex size-9 items-center justify-center rounded-lg text-slate-600 transition hover:bg-slate-100 hover:text-brand-navy disabled:opacity-35 disabled:hover:bg-transparent ${on ? "bg-brand-amber-soft text-brand-navy" : ""}`}>
+      <Icon className={`size-[18px] ${mirror ? "rtl:-scale-x-100" : ""}`} aria-hidden />
+    </button>
+  );
+}
+
+function ToolButton({ icon: Icon, label, hint, onClick, off }: { icon: typeof Undo2; label: string; hint: string; onClick: () => void; off: boolean }) {
+  const t = useT();
+  return (
+    <button type="button" onClick={onClick} disabled={off} title={t(hint)} aria-label={t(label)} className="group relative flex size-11 items-center justify-center rounded-full border border-white/70 bg-white/90 text-brand-navy shadow-lg shadow-slate-900/10 backdrop-blur-md transition hover:bg-white active:scale-95 disabled:opacity-40 lg:size-10">
+      <Icon className="size-[18px] rtl:-scale-x-100" aria-hidden />
+      <span className="pointer-events-none absolute start-full top-1/2 ms-2 hidden -translate-y-1/2 whitespace-nowrap rounded-md bg-brand-navy px-2 py-1 text-xs font-medium text-white opacity-0 shadow transition group-hover:opacity-100 lg:block">{t(label)}</span>
+    </button>
   );
 }

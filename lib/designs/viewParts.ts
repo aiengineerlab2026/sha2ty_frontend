@@ -71,7 +71,7 @@ function colorOf(material: Material | Material[]): string | null {
  * exact saved size (`mpu`: metres per model unit on x, y, z) and their offsets in the compartment they were fitted
  * into; original parts have no compartment saved, so no offsets (never guessed). Numbered: added parts, and original
  * parts at least `minShare` of the model's largest side that are not accessories riding on another part. */
-export function partsTable({ slots, names, namesAr = new Map(), added, mpu, edits, accessories, whole, minShare = 0.12, moving = new Map(), bounds }: {
+export function partsTable({ slots, names, namesAr = new Map(), added, mpu, edits, accessories, whole, minShare = 0.12, moving = new Map(), bounds, decorative = new Set() }: {
   slots: { id: string; mesh: Mesh }[];
   names: Map<string, string>;
   /** The vendor's Arabic names, where there are some. */
@@ -88,6 +88,8 @@ export function partsTable({ slots, names, namesAr = new Map(), added, mpu, edit
   moving?: Map<string, "rotation" | "translation">;
   /** The whole model's box (world): a flat board at its very top or bottom is the body's, not a shelf. */
   bounds?: Box3;
+  /** Parts classed decorative (pillows, throws, props): shown on the model, kept out of the carpenter's parts list. */
+  decorative?: Set<string>;
 }): ViewPart[] {
   const specs = new Map(added.map((a) => [a.id, a]));
   const groups = new Map<string, Mesh[]>();
@@ -109,7 +111,7 @@ export function partsTable({ slots, names, namesAr = new Map(), added, mpu, edit
     }
     const name = names.get(id) ?? meshes[0].name ?? id;
     const nameAr = arabicName(name, namesAr.get(id));
-    const soft = isSoft(name) || isSoft(nameAr); // bedding: not in the close-ups or the parts list
+    const soft = isSoft(name) || isSoft(nameAr) || decorative.has(id); // bedding and decor: not in the close-ups or the parts list
     const shown = !soft && (Boolean(spec) || (!accessories.has(id) && Math.max(size.x, size.y, size.z) >= minShare * biggest));
     const roughness = edit?.roughness;
     rows.push({

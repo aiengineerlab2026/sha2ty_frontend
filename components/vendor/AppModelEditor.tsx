@@ -96,6 +96,7 @@ export function AppModelEditor({ table, id }: { table: "models" | "user_models";
           url={replaced ?? row.glb_url!}
           woodModel={table === "models" ? row.id : null}
           removedParts={[]}
+          removal={table === "models" ? "everyone" : "yours"}
         />
         </div>
       )}
