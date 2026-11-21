@@ -31,6 +31,7 @@ import { choosePart, offsetAxis, specBox, type Side, type Surroundings } from "@
 import { checkMovers, movedBox, openCavities, rebuildPanel, type Added } from "@/lib/vendor/reconstruct";
 import { animationClips, animationOf, applyAnimations, attachmentsFrom, boxInModel, carried, enabledAnimations, handleOf, meshesOf, refine, step, type AnimationConfig, type Openness } from "@/lib/vendor/animation";
 import { MIN_SIZE, resized, sizeCm } from "@/lib/designs/resize";
+import { restoreMaterial } from "@/lib/designs/materialRestore";
 
 export type Slot = { id: string; name: string; nameAr?: string | null; analysisId?: string; naming?: PartInfo["naming"]; variants?: PartVariant[]; mesh: Mesh; materialIndex: number };
 
@@ -502,14 +503,7 @@ export function restore(slot: Slot) {
   const from = original ? standard(original) : null;
   const to = standard(current);
   if (!from || !to) return;
-  to.color.copy(from.color);
-  to.roughness = from.roughness;
-  to.metalness = from.metalness;
-  to.map = from.map;
-  to.normalMap = from.normalMap;
-  to.emissive.copy(from.emissive);
-  to.emissiveIntensity = from.emissiveIntensity;
-  to.needsUpdate = true;
+  restoreMaterial(to, from); // every loaded property, maps and transparency included
   const source = originalGeometry.get(slot.mesh);
   if (source && slot.mesh.geometry !== source) {
     slot.mesh.geometry.dispose();

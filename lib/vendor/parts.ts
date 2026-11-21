@@ -27,16 +27,35 @@ export type MeshAnalysis = { objectType: string; summary?: string; components: R
 export type Modularity = { level: "full" | "partial" | "none"; matched: string[]; missing: string[]; unmatchedMeshes: string[]; note?: string | null };
 export type CarpenterPart = {
   id: string; name: string; source: "observed" | "inferred"; materialCategory: string; classification: string; role?: string;
+  /** The photo-reading component it was built from: the link to the visual part with the same `analysisId`. */
+  specId?: string; materialClass?: string;
   sizeCm: { width: number; height: number; depth: number }; positionCm: { x: number; y: number; z: number }; orientation: number[]; estimated: boolean;
 };
+/** One part's material, read from the photo (backend services/material_spec.py): shared by both models. */
+export type MaterialSpec = { class: string; color?: string | null; finish?: string; woodType?: string | null; roughness?: number; metallic?: number; confidence?: number; source?: string };
 export type CarpenterModel = {
   url?: string; fabricationReady: boolean; estimated: boolean; note: string; furnitureType?: string;
+  /** Built from the photo's spec (backend services/structural.py); what it could not tell. */
+  source?: string; uncertain?: string[]; sizeM?: { width: number; height: number; depth: number }; scaleKnown?: boolean;
+  /** The vendor's edits to the structural model (its own file; the visual model is never changed by them). */
+  material_edits?: Record<string, MaterialEdit>;
+  materials?: Record<string, MaterialSpec>;
   components: CarpenterPart[]; excluded: { name: string; reason: string }[];
   checks?: { closed?: boolean; triangles?: number; warnings?: string[] };
   hierarchy?: { name: string; children: { name: string; components: string[] }[] };
 };
+/** Where the visual model lost fidelity (backend services/fidelity.py): each stage against the one before it. */
+export type FidelityStage = { stage: "cleaning" | "provider" | "processing" | "materials" | "structural"; ok: boolean | null; issues: string[]; notes?: string[] };
+export type FidelityReport = { ok: boolean; quality: "ok" | "low"; lostAt: string | null; structuralOk?: boolean | null; stages: FidelityStage[] };
 export type PartDocument = {
   modelType?: string; separated?: boolean; components: PartInfo[]; limits?: string | null; method?: string; validation?: ModelValidation;
+  fidelity?: FidelityReport;
+  /** The provider's GLB exactly as it arrived, before any processing. */
+  raw_glb_url?: string;
+  /** The structural model's status (built or not, and what it could not tell). */
+  structural?: { built: boolean; uncertain?: string[]; source?: string };
+  /** The shared material spec, per photo-reading component id. */
+  materials?: { parts: Record<string, MaterialSpec>; estimated?: boolean; note?: string };
   quality?: GeometryQuality;
   /** A lighter copy for mobile AR, made in the background (the full model is used until it exists). */
   ar?: { url: string; status: string };
