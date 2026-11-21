@@ -3,7 +3,7 @@
 import { authSession } from "@/lib/auth/client";
 import { useT } from "@/lib/i18n";
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { ArrowLeft, Box, ChevronDown, Download, FileBox, FileText, Focus, Loader2, RotateCw, Ruler, Save, Shapes, Tag, Trees } from "lucide-react";
+import { ArrowLeft, Box, ChevronDown, Download, FileBox, FileText, Focus, Loader2, RotateCw, Ruler, Save, Shapes, Tag, Trees, TriangleAlert } from "lucide-react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { Header } from "@/components/shatably/Header";
@@ -25,11 +25,15 @@ import { catalogDimensions } from "@/lib/plan/modelNormalization";
 import { customizedModelFields, updateModel, type PartEditorApi } from "@/lib/vendor/parts";
 import { uploadPublicFile } from "@/lib/vendor/storage";
 import { ReplaceGlb } from "./ReplaceGlb";
+import { fidelityProblem, linkedVisual, structuralEdits, structuralParts } from "@/lib/designs/structural";
 
 const ModelViewer = dynamic(() => import("./ModelViewer").then((mod) => mod.ModelViewer), {
   ssr: false,
   loading: () => <LoadingViewer />,
 });
+
+/** The pipeline step a fidelity check failed at, in words (backend services/fidelity.py stage ids). */
+const STAGES: Record<string, string> = { cleaning: "photo cleaning", provider: "3D generation", processing: "model processing", materials: "materials" };
 
 function LoadingViewer() {
   const t = useT();
@@ -61,6 +65,8 @@ export function ModelDetail({ id }: { id: string }) {
   const [saved, setSaved] = useState(false);
   const [busy, setBusy] = useState(false);
   const editor = useRef<PartEditorApi | null>(null);
+  // Structural mode edits its own file (the carpenter model); the visual model is never changed by them.
+  const structuralEditor = useRef<PartEditorApi | null>(null);
   // A new 3D file uploaded but not saved yet: Save puts it on the listing (a fresh part list, look and picture).
   const [replaced, setReplaced] = useState<string | null>(null);
   // A wardrobe with two states (supabase/model_states.sql): the one being edited. Each keeps its own edits and file.
@@ -70,6 +76,10 @@ export function ModelDetail({ id }: { id: string }) {
   const showingOpen = shownState === "open" && Boolean(openState);
   const carpenter = !showingOpen && !replaced ? model?.components?.carpenter : null;
   const reviewing = Boolean(review && carpenter?.url);
+  // Both representations come from one photo reading: a structural part names the visual parts of the same component.
+  const links = carpenter ? linkedVisual(carpenter, model?.components) : {};
+  const problem = fidelityProblem(model?.components);
+  const structuralStatus = model?.components?.structural;
 
   /** The open state's edits exported into its own file (no thumbnail: the product's picture is its closed state). */
   const openFields = async (): Promise<ModelStates | null> => {
@@ -169,6 +179,14 @@ export function ModelDetail({ id }: { id: string }) {
         : null;
       // Customers' designs keep the file they started from (their design stores it); new ones start from this file.
       const newFile = replaced ? { glb_url: replaced, source_glb_url: replaced, components: null, material_edits: {} } : {};
+      // Structural mode: its edits and exported file replace the carpenter model only (glb_url is the visual model).
+      const structural = reviewing && carpenter && vendor && model.components && structuralEditor.current?.dirty()
+        ? await (async () => {
+            const blob = await structuralEditor.current!.exportGlb();
+            const url = blob ? await uploadPublicFile(vendor.id, new File([blob], "structural.glb", { type: "model/gltf-binary" }), `${model.id}/structural`) : carpenter.url;
+            return { components: { ...model.components!, carpenter: { ...carpenter, url, material_edits: structuralEditor.current!.edits() } } };
+          })()
+        : null;
       const updated = await updateModel(model.id, {
           title: title.trim() || model.title,
           description,
@@ -188,6 +206,7 @@ export function ModelDetail({ id }: { id: string }) {
           updated_at: new Date().toISOString(),
           ...newFile,
           ...(materials?.fields ?? {}),
+          ...(structural ?? {}),
           ...(states ? { states } : {}),
           // Only when changed: saving keeps working before woods.sql adds the column.
           // Sha2ty's models are offered in every wood (an earlier pick is cleared); a vendor's keep their choice.
@@ -197,7 +216,8 @@ export function ModelDetail({ id }: { id: string }) {
         setError(updated.error.message);
         return;
       }
-      setModel({ ...model, furniture_type: kind, listed, production_days: Number(days) || null, ...newFile, ...(materials?.fields ?? {}), ...(states ? { states } : {}), woods: vendor?.platform ? null : woods, title: title.trim() || model.title } as CatalogModel);
+      if (structural) structuralEditor.current?.markClean?.();
+      setModel({ ...model, furniture_type: kind, listed, production_days: Number(days) || null, ...newFile, ...(materials?.fields ?? {}), ...(structural ?? {}), ...(states ? { states } : {}), woods: vendor?.platform ? null : woods, title: title.trim() || model.title } as CatalogModel);
       setReplaced(null);
       if (materials?.thumbnailError) {
         setError(t("Saved, but the model image could not be updated ({error}). The previous image is kept; save again to retry.", { error: materials.thumbnailError }));
@@ -305,6 +325,18 @@ export function ModelDetail({ id }: { id: string }) {
       </div>
       {(error ?? (supabaseConfigured() ? null : t("Supabase is not configured."))) && <p className="shrink-0 border-b border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700">{error ?? t("Supabase is not configured.")}</p>}
       {replaced && <p role="status" className="shrink-0 border-b border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-900">{t("New 3D file loaded. Save changes to put it on the listing.")}</p>}
+      {problem && !replaced && (
+        // Flagged, not hidden: the generated model lost fidelity at this step (backend services/fidelity.py).
+        <div role="status" className="shrink-0 border-b border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-900">
+          <p className="flex items-center gap-1.5 font-medium"><TriangleAlert className="size-4 shrink-0" aria-hidden /> {t("Low-quality model: it differs from the photo at the {stage} step. Check it before publishing.", { stage: t(STAGES[problem.stage] ?? problem.stage) })}</p>
+          {problem.issues.length > 0 && <ul className="ms-6 mt-1 list-disc text-xs text-amber-800">{problem.issues.slice(0, 4).map((issue) => <li key={issue} dir="ltr" className="text-start">{issue}</li>)}</ul>}
+        </div>
+      )}
+      {structuralStatus && !structuralStatus.built && !replaced && (
+        <p role="status" className="shrink-0 border-b border-slate-200 bg-slate-50 px-4 py-2 text-xs text-slate-600">
+          {t("No structural model: the photo did not show enough of the structure.")} {structuralStatus.uncertain?.[0] && <span dir="ltr">({structuralStatus.uncertain[0]})</span>}
+        </p>
+      )}
 
       {model && !model.glb_url && (
         <div className="grid min-h-0 flex-1 gap-4 overflow-y-auto p-4 md:grid-cols-[minmax(18rem,24rem)_1fr]">
@@ -322,10 +354,14 @@ export function ModelDetail({ id }: { id: string }) {
           edit
           fill
           details={form}
-          parts={reviewing && carpenter ? { separated: true, components: carpenter.components.map((part) => ({ id: part.id, name: part.name, editable: true, estimated: part.source === "inferred" })) } : showingOpen ? openState!.components ?? null : replaced ? null : model.components}
-          edits={showingOpen || reviewing ? null : replaced ? {} : model.material_edits}
-          replay={!reviewing && !showingOpen && (Boolean(replaced) || !model.source_glb_url || model.source_glb_url === model.glb_url)}
-          onApi={(api) => { editor.current = reviewing ? null : api; }}
+          parts={reviewing && carpenter ? structuralParts(carpenter) : showingOpen ? openState!.components ?? null : replaced ? null : model.components}
+          edits={reviewing && carpenter ? structuralEdits(carpenter, model.components?.materials?.parts) : showingOpen ? null : replaced ? {} : model.material_edits}
+          // Structural mode: its saved edits (and the spec's woods) are laid on the boards each time it opens.
+          replay={reviewing || (!showingOpen && (Boolean(replaced) || !model.source_glb_url || model.source_glb_url === model.glb_url))}
+          onApi={(api) => {
+            if (reviewing) structuralEditor.current = api;
+            else editor.current = api;
+          }}
           // One viewer for both states: the camera stays put; the open file is placed exactly like the closed one.
           url={reviewing && carpenter?.url ? carpenter.url : showingOpen ? openState!.glb_url : replaced ?? model.glb_url}
           frameUrl={showingOpen ? model.glb_url : undefined}
@@ -351,12 +387,14 @@ export function ModelDetail({ id }: { id: string }) {
               {reviewing && carpenter && (
                 <div className="absolute start-3 top-3 z-10 max-h-[55%] w-64 overflow-auto rounded-xl border border-amber-200 bg-white/95 p-2.5 text-[11px] leading-snug text-slate-700 shadow-lg">
                   <p className="font-medium text-amber-800">{t("Not fabrication-ready until dimensions, materials, structural design, and assembly are verified.")}</p>
+                  <p className="mt-1 text-slate-500">{t("Built from the photo reading. Sizes and materials are estimates, not photographic matches.")}</p>
                   <ul className="mt-2 space-y-1">
                     {carpenter.components.map((part) => (
                       <li key={part.id}>
                         <span className="font-medium text-brand-navy">{part.name}</span>
                         {" · "}{part.sizeCm.width}×{part.sizeCm.height}×{part.sizeCm.depth} cm
                         {" · "}{t(part.source === "inferred" ? "Inferred" : "Observed")}
+                        {links[part.id]?.length ? <span className="block text-slate-500">{t("Visual: {parts}", { parts: links[part.id].join("، ") })}</span> : null}
                       </li>
                     ))}
                   </ul>
@@ -379,9 +417,14 @@ export function ModelDetail({ id }: { id: string }) {
                       <FileBox className="size-4 sm:size-3.5" aria-hidden /> <span className={label}>{t("Original GLB")}</span>
                     </a>
                   )}
+                  {model.components?.raw_glb_url && (
+                    <a href={model.components.raw_glb_url} target="_blank" rel="noreferrer" className={tool} title={t("Provider GLB (unprocessed)")} aria-label={t("Provider GLB (unprocessed)")}>
+                      <FileBox className="size-4 sm:size-3.5" aria-hidden /> <span className={label}>{t("Provider GLB (unprocessed)")}</span>
+                    </a>
+                  )}
                   {carpenter?.url && (
-                    <button type="button" aria-pressed={reviewing} onClick={() => { setReview((on) => !on); editor.current = null; }} className={`${tool} ${reviewing ? "bg-brand-amber-soft text-brand-navy" : ""}`} title={t(reviewing ? "Visual model" : "Carpenter model")} aria-label={t(reviewing ? "Visual model" : "Carpenter model")}>
-                      <Trees className="size-4 sm:size-3.5" aria-hidden /> <span className={label}>{t(reviewing ? "Visual model" : "Carpenter model")}</span>
+                    <button type="button" aria-pressed={reviewing} onClick={() => { setReview((on) => !on); editor.current = null; structuralEditor.current = null; }} className={`${tool} ${reviewing ? "bg-brand-amber-soft text-brand-navy" : ""}`} title={t(reviewing ? "Visual model" : "Structural model")} aria-label={t(reviewing ? "Visual model" : "Structural model")}>
+                      <Trees className="size-4 sm:size-3.5" aria-hidden /> <span className={label}>{t(reviewing ? "Visual model" : "Structural model")}</span>
                     </button>
                   )}
                   {reviewing && carpenter?.url && (
