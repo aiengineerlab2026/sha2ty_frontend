@@ -37,6 +37,9 @@ export type PartAnimation = {
   front?: Direction;
   /** The file already shows this part open. Openness 0 is that pose; 1 swings it shut. Absent: 0 is closed, 1 is open. */
   rest?: "open";
+  /** The hinge side was not proven by hinges, a handle, the file's own open pose, a pair or the photo: the vendor
+   * should confirm it (AnimationPanel). The door still opens, on the likelier side. */
+  hingeUnsure?: boolean;
 };
 export type AnimationFlag = { label: string; labelAr?: string | null; motion?: string; component?: string; reason: string };
 export type AnimationConfig = {
@@ -91,6 +94,8 @@ export function localFrame(anim: Pick<PartAnimation, "face" | "up" | "front">): 
 }
 const cornersOf = (b: Box3) => [0, 1].flatMap((x) => [0, 1].flatMap((y) => [0, 1].map((z) => new Vector3(x ? b.max.x : b.min.x, y ? b.max.y : b.min.y, z ? b.max.z : b.min.z))));
 const inFrame = (b: Box3, m: Matrix4) => new Box3().setFromPoints(cornersOf(b).map((p) => p.applyMatrix4(m)));
+/** Fixed fittings named after a drawer: the runners it slides on, a rail, the shelf over a stack of drawers. */
+const DRAWER_FITTING = /\bdrawers?\b[\w\s]{0,24}?\b(runners?|rails?|slides?|tracks?|guides?|shelf|shelves|stack|divider)\b|\b(runners?|rails?|slides?|tracks?|guides?)\s+(of\s+)?(the\s+)?drawers?\b|(?:^|[\s\d_])(?:مجرى|مجاري|سكة)\s*(?:ال)?درج/i;
 /** A drawer's own box, as a generated file or an earlier save names its pieces. */
 const DRAWER_BOX = /\bdrawers?\b[\w\s]{0,24}?\b(box|side|sides|bottom|base|back|panel)\b|\b(box|side|bottom|base|back)\s+(of\s+)?(the\s+)?drawer\b|(?:^|[\s\d_])(?:صندوق|جانب|قاع|ظهر)\s*(?:ال)?درج(?=$|[\s\d_])/i;
 
@@ -277,6 +282,7 @@ const words = (s: string) => s.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/[_\-
 export function moverKind(...names: (string | null | undefined)[]): Kind | null {
   const text = words(names.filter(Boolean).join(" "));
   if (DRAWER_BOX.test(text)) return null; // a drawer's side, bottom or back slides with its front, not on its own
+  if (DRAWER_FITTING.test(text)) return null; // a runner, rail or the shelf over a drawer stack stays in the carcass
   // On a door, not a door ("door lock key ring", "mirror door backing", "drawer box", "interior (door 1)").
   // A runner is part of the drawer, not a second drawer. "frame" here is a doorway surround, not a door leaf.
   if (/\b(handles?|knobs?|pulls?|hinges?|runners?|frame|body|carcass|lock|locks|key|keys|keyhole|ring|blade|tooth|teeth|backing|surround|trim|strip|mou?lding|decor|decoration|ornament|escutcheon|plate|interior|cavity|space|box)\b|(?:^|[\s\d_])(?:ال)?(?:مقبض|مقابض|مفصلة|هيكل|إطار|قفل|مفتاح|حلقة|زخرفة|حلية|فراغ|صندوق|داخلي)(?=$|[\s\d_])/i.test(text)) return null;
@@ -493,6 +499,22 @@ function pivotOnMesh(mesh: Mesh, modelRoot: Object3D, anim: PartAnimation): [num
   return pivot.toArray().map((v) => Math.round(v * 1e4) / 1e4) as [number, number, number];
 }
 
+/** The two upright edges of a door's sheet (model coordinates, mid-height, mid-thickness), wherever it is turned: the
+ * hinge is on one of them. */
+export function sheetEdges(mesh: Mesh, modelRoot: Object3D, up: Vector3): [Vector3, Vector3] {
+  if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
+  const bb = mesh.geometry.boundingBox!;
+  const toModel = modelRoot.matrixWorld.clone().invert().multiply(mesh.matrixWorld);
+  const s = bb.getSize(new Vector3()), c = bb.getCenter(new Vector3());
+  const axes = [new Vector3(1, 0, 0), new Vector3(0, 1, 0), new Vector3(0, 0, 1)];
+  const along = axes.map((a) => Math.abs(a.clone().transformDirection(toModel).dot(up)));
+  const upright = along.indexOf(Math.max(...along));
+  const rest = [0, 1, 2].filter((i) => i !== upright);
+  const width = s.getComponent(rest[0]) >= s.getComponent(rest[1]) ? rest[0] : rest[1];
+  const half = axes[width].clone().multiplyScalar(s.getComponent(width) / 2);
+  return [c.clone().sub(half).applyMatrix4(toModel), c.clone().add(half).applyMatrix4(toModel)];
+}
+
 /** Degrees this sheet is swung out from the closed face, about the hinge axis. 0: it is already shut. */
 export function authoredSwing(mesh: Mesh, modelRoot: Object3D, anim: Pick<PartAnimation, "face" | "axis">): number {
   if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
@@ -509,6 +531,34 @@ export function authoredSwing(mesh: Mesh, modelRoot: Object3D, anim: Pick<PartAn
   n.normalize();
   f.normalize();
   return Math.atan2(new Vector3().crossVectors(f, n).dot(axis), f.dot(n)) * 180 / Math.PI;
+}
+
+/** A door modelled open: its hinge edge, side and pivot, from the file itself. The edge with the door's hinge hardware
+ * when it has some; else the edge that stayed at the cabinet (the free edge swings out, away from it). The side is
+ * where that edge is, seen from the front, against where the free edge would close to. Null when the door is shut. */
+function hingeOfOpen(leaf: Mesh, modelRoot: Object3D, anim: PartAnimation, carried: { box: Box3; name: string }[], up: Vector3, R: Vector3): { hinge: Hinge; why: string; pivot: [number, number, number] } | null {
+  const face = anim.face ?? "front";
+  const swung = authoredSwing(leaf, modelRoot, { face, axis: axisOfVec(up) });
+  if (Math.abs(swung) <= 12) return null;
+  const [a, b] = sheetEdges(leaf, modelRoot, up);
+  const flat = (v: Vector3) => v.clone().addScaledVector(up, -v.dot(up));
+  const hardware = carried.filter((p) => HINGE_PART.test(words(p.name))).map((p) => p.box.getCenter(new Vector3()));
+  let edge: Vector3, why: string;
+  if (hardware.length) {
+    const at = hardware.reduce((sum, h) => sum.add(h), new Vector3()).multiplyScalar(1 / hardware.length);
+    edge = flat(a).distanceTo(flat(at)) <= flat(b).distanceTo(flat(at)) ? a : b;
+    why = "on its hinges (modelled open)";
+  } else {
+    const O = VEC[face];
+    edge = a.dot(O) <= b.dot(O) ? a : b; // the free edge stands out in front; the hinge edge stays at the cabinet
+    why = "the edge that stays at the cabinet (modelled open)";
+  }
+  const free = edge === a ? b : a;
+  // Closed, the free edge lies beside the hinge across the front: its side of the hinge is where the door is.
+  const closedFree = free.clone().sub(edge).applyAxisAngle(up.clone().normalize(), -swung * Math.PI / 180);
+  const hinge: Hinge = closedFree.dot(R) > 0 ? "left" : "right";
+  const pivot = edge.toArray().map((v) => Math.round(v * 1e4) / 1e4) as [number, number, number];
+  return { hinge, why, pivot };
 }
 
 /** The animations checked against the real meshes, at rest: pivots on each part's real box, side hinges from the
@@ -556,7 +606,7 @@ export function refine(
     // A front-sized panel named as a door is the door even with an accessory word ("Mirror door backing", "Glazed door
     // frame"); a small one ("door lock key ring") is not. A runner is the drawer's rail, not its own drawer.
     // Parts on a bigger moving part are sorted out below.
-    const kind = moverKind(p.id, p.name, p.nameAr) ?? (frontPanel(p.mesh, whole) && !surroundsLeaf(p.id, box) && !RUNNER.test(words(names.get(p.id) ?? "")) ? namedMover(p.id, p.name, p.nameAr) : null);
+    const kind = moverKind(p.id, p.name, p.nameAr) ?? (frontPanel(p.mesh, whole) && !surroundsLeaf(p.id, box) && !RUNNER.test(words(names.get(p.id) ?? "")) && !DRAWER_FITTING.test(words(names.get(p.id) ?? "")) ? namedMover(p.id, p.name, p.nameAr) : null);
     if (!kind) continue;
     const base: PartAnimation = { id: `anim_${p.id}`, component: p.id, follow: [], label: p.name ?? p.id, labelAr: p.nameAr ?? null, motion: kind.motion, type: "rotation", axis: "y", unit: "degrees", duration: kind.motion === "slide" ? 0.6 : 0.8, enabled: true, confidence: 0.7, source: "names", issues: [], reason: "named a movable part" };
     anims.push(kind.build(base, box, whole));
@@ -604,7 +654,14 @@ export function refine(
   const biggest = Math.max(...size(whole).toArray());
   const fixed = [...boxes].filter(([id, b]) => !carriedIds.has(id) && Math.max(...size(b).toArray()) >= 0.3 * biggest).reduce((all, [, b]) => all.union(b), new Box3());
   const structure = fixed.isEmpty() ? whole : fixed;
-  const doorBoxes = anims.filter((a) => a.type === "rotation" && (a.axis === "y")).map((a) => boxes.get(a.component)).filter((b): b is Box3 => Boolean(b));
+  // A door modelled open is not a closed neighbour of the door beside it: its swung box would make the pair rule see
+  // a neighbour on both sides and fall back to a guess.
+  const upAxis = axisOfVec(VEC[frame.up]);
+  const openIn = (id: string) => {
+    const leaf = partOf.get(id)?.mesh;
+    return Boolean(leaf) && Math.abs(authoredSwing(leaf!, modelRoot, { face: frame.front, axis: upAxis })) > 12;
+  };
+  const doorBoxes = anims.filter((a) => a.type === "rotation" && (a.axis === "y") && !openIn(a.component)).map((a) => boxes.get(a.component)).filter((b): b is Box3 => Boolean(b));
   const out = anims.map((a) => {
     const box = boxes.get(a.component);
     if (!box) return { ...a, issues: problems(a, parts) };
@@ -614,11 +671,16 @@ export function refine(
       const framed = !a.up && a.type === "rotation" ? withHinge({ ...a, face: faceOf(box, structure, frame), up: frame.up, front: frame.front }, a.hinge ?? "left", box) : a;
       return { ...framed, issues: problems(framed, parts) };
     }
-    const direct = partsOn(box, boxes, taken, names, depth);
-    const on = [...direct, ...chainedTo(box, [...direct, ...a.follow].filter((id) => boxes.has(id)), boxes, new Set([...taken, ...direct]), names)];
+    // The part's own frame first (where it faces out, the model's up and front: saved with it); what is mounted on it is
+    // found in that frame, so a model whose file faces sideways keeps its handles, glass and trims on their door.
+    const face = faceOf(box, structure, frame);
+    const own = localFrame({ face, up: frame.up, front: frame.front });
+    const local = new Map([...boxes].map(([id, b]) => [id, inFrame(b, own)]));
+    const lbox = local.get(a.component)!;
+    const direct = partsOn(lbox, local, taken, names, size(inFrame(whole, own)).z);
+    const on = [...direct, ...chainedTo(lbox, [...direct, ...a.follow].filter((id) => local.has(id)), local, new Set([...taken, ...direct]), names)];
     on.forEach((id) => taken.add(id));
-    // The part's own frame: where it faces out, and the model's up and front (saved with it).
-    let next: PartAnimation = { ...a, follow: [...new Set([...a.follow, ...on])].filter((id) => id !== a.component), face: faceOf(box, structure, frame), up: frame.up, front: frame.front };
+    let next: PartAnimation = { ...a, follow: [...new Set([...a.follow, ...on])].filter((id) => id !== a.component), face, up: frame.up, front: frame.front };
     if (next.type === "translation") {
       // The drawer's own box (bottom, sides, back), when the file has one: behind the front, within its outline. It
       // slides with it; no second box is made (reconstruct.openCavities).
@@ -635,11 +697,21 @@ export function refine(
       if (side) {
         const R = new Vector3().crossVectors(VEC[frame.up], VEC[next.face!]);
         const carried = [...next.follow].filter((id) => boxes.has(id)).map((id) => ({ box: boxes.get(id)!, name: names.get(id) ?? "" }));
-        const [hinge, why, sure] = hingeFromGeometry(box, carried, doorBoxes.filter((d) => d !== box), whole, R.lengthSq() > 0.5 ? R : new Vector3(1, 0, 0), a.source === "vision" ? a.hinge : undefined);
-        next = { ...withHinge(next, hinge, box), reason: sure ? why : `Hinge side: ${why}`, ...(sure ? {} : { confidence: Math.min(next.confidence ?? 0.7, 0.5) }) };
-      } else next = withHinge(next, next.hinge!, box);
-      const leaf = partOf.get(next.component)?.mesh;
-      if (leaf && next.hinge) next = { ...next, pivot: pivotOnMesh(leaf, modelRoot, next) };
+        const across = R.lengthSq() > 0.5 ? R : new Vector3(1, 0, 0);
+        const leaf = partOf.get(next.component)?.mesh;
+        const open = leaf ? hingeOfOpen(leaf, modelRoot, next, carried, VEC[frame.up], across) : null;
+        // A door the file shows open says where its hinge is: the edge on its hinge hardware, else the edge that stayed
+        // at the cabinet. Otherwise: hardware, handle, the photo, a pair, and only then a flagged guess.
+        const [hinge, why, sure] = open ? [open.hinge, open.why, true] as const
+          : hingeFromGeometry(box, carried, doorBoxes.filter((d) => d !== box), whole, across, a.source === "vision" ? a.hinge : undefined);
+        next = { ...withHinge(next, hinge, box), reason: sure ? why : `Hinge side: ${why}`, hingeUnsure: !sure || undefined, ...(sure ? {} : { confidence: Math.min(next.confidence ?? 0.7, 0.5) }) };
+        if (open) next = { ...next, pivot: open.pivot };
+        else if (leaf) next = { ...next, pivot: pivotOnMesh(leaf, modelRoot, next) };
+      } else {
+        next = withHinge(next, next.hinge!, box);
+        const leaf = partOf.get(next.component)?.mesh;
+        if (leaf && next.hinge) next = { ...next, pivot: pivotOnMesh(leaf, modelRoot, next) };
+      }
     } else if (!next.distance || next.source === "names") {
       // Out the way it faces, half the model's depth that way (a drawer in a sideways model slides sideways).
       const way = next.source === "vision" && next.direction ? next.direction : next.face!;
