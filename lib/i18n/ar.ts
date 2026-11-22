@@ -2074,4 +2074,8 @@ export const AR: Record<string, string> = {
   "Removed {name}": "تم حذف {name}",
   "Removed {n} parts": "تم حذف {n} أجزاء",
   "The painted parts keep their paint: the wood you choose is what they are made of (and priced as).": "تحتفظ الأجزاء المدهونة بدهانها: الخشب الذي تختاره هو ما تُصنع منه (ويُحسب سعرها عليه).",
+  "The hinge side is a guess: check it and choose Left or Right.": "جهة المفصلة تقديرية: تحقق منها واختر يسار أو يمين.",
+  "Opens": "يفتح",
+  "Outward": "للخارج",
+  "Inward": "للداخل",
 };

@@ -122,6 +122,7 @@ export function AnimationPanel({
                     )}
                   </div>
                   {a.issues.length > 0 && <p className="mt-1 flex gap-1 text-[11px] text-amber-700"><TriangleAlert className="mt-0.5 size-3 shrink-0" aria-hidden />{a.issues.map((i) => t(i)).join(" ")}</p>}
+                  {a.hingeUnsure && a.source !== "manual" && <p className="mt-1 flex gap-1 text-[11px] text-amber-700"><TriangleAlert className="mt-0.5 size-3 shrink-0" aria-hidden />{t("The hinge side is a guess: check it and choose Left or Right.")}</p>}
                   {edit && onRebuild && a.issues.some((i) => i.startsWith("An irregular piece")) && (
                     <button type="button" onClick={() => onRebuild(a.component)} className="mt-1 rounded-md px-2 py-0.5 text-[11px] font-semibold text-brand-navy ring-1 ring-slate-200 hover:bg-slate-50">{t("Rebuild as a flat panel")}</button>
                   )}
@@ -143,9 +144,20 @@ export function AnimationPanel({
                           <label className="space-y-0.5">{t("Angle (°)")}
                             <input type="number" min={5} max={180} className={field} value={Math.abs(a.to ?? 0)} onChange={(e) => set(a.id, { ...a, to: Math.sign(a.to || -1) * Math.min(180, Math.max(5, Number(e.target.value) || 0)) })} />
                           </label>
-                          <label className="col-span-2 flex items-center gap-1.5">
-                            <input type="checkbox" checked={(a.to ?? 0) > 0} onChange={() => set(a.id, { ...a, to: -(a.to ?? 0) })} className="size-3 accent-[#f2a33a]" />{t("Turn the other way")}
-                          </label>
+                          {a.rest === "open" ? (
+                            <label className="col-span-2 flex items-center gap-1.5">
+                              <input type="checkbox" checked={(a.to ?? 0) > 0} onChange={() => set(a.id, { ...a, to: -(a.to ?? 0) })} className="size-3 accent-[#f2a33a]" />{t("Turn the other way")}
+                            </label>
+                          ) : (
+                            // Outward is away from the furniture's own front (withHinge), never judged from the camera.
+                            <label className="col-span-2 space-y-0.5">{t("Opens")}
+                              <select className={field} value={Math.sign(a.to ?? 0) === Math.sign(withHinge(a, a.hinge ?? "left", boxOf(mesh)).to ?? 0) ? "out" : "in"}
+                                onChange={(e) => { const out = withHinge(a, a.hinge ?? "left", boxOf(mesh)); set(a.id, { ...a, to: (e.target.value === "out" ? 1 : -1) * Math.sign(out.to ?? 1) * Math.abs(a.to ?? 95) }); }}>
+                                <option value="out">{t("Outward")}</option>
+                                <option value="in">{t("Inward")}</option>
+                              </select>
+                            </label>
+                          )}
                         </>
                       ) : (
                         <>
