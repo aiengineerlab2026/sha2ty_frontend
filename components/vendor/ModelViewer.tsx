@@ -489,7 +489,8 @@ export function prepare(root: Object3D, server?: PartDocument | null): { slots: 
     list.forEach((mat, materialIndex) => {
       if (mat.name === CORE) return; // the sheet's cut edge belongs to the face part
       // The part id written into the file at export (glTF extras → userData) first: stable whatever the mesh order.
-      const saved = (mesh.userData.partIds as string[] | undefined)?.[materialIndex] ?? (list.length === 1 ? (mesh.userData.partId as string | undefined) : undefined);
+      // An added part saved before it carried an id keeps the id it was saved under (its name).
+      const saved = added(mesh) && byId.has(mesh.name) ? mesh.name : (mesh.userData.partIds as string[] | undefined)?.[materialIndex] ?? (list.length === 1 ? (mesh.userData.partId as string | undefined) : undefined);
       const linked: PartInfo | undefined = (saved ? byId.get(saved) ?? { id: saved, name: mesh.name, editable: true } : undefined)
         ?? (added(mesh) ? byId.get(mesh.name) ?? { id: mesh.name, name: mesh.name, naming: "estimated", editable: true } : named ? (list.length === 1 ? byId.get(mesh.name) : undefined) : inFile[k++]);
       // A photo name for another layer of the panel (the backing behind a mirror called "mirror"): the file's own wins.

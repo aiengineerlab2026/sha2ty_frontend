@@ -373,14 +373,45 @@ function interiorMaterial(from: Material | Material[], darker: number): MeshStan
   return new MeshStandardMaterial({ color: color.multiplyScalar(darker), roughness: 0.85, metalness: 0, side: DoubleSide });
 }
 
-/** The front's own material (colour, texture, PBR maps), for the box it pulls out. */
-const frontMaterial = (from: Material | Material[]) => (Array.isArray(from) ? from[0] : from).clone();
+/** A drawer box's boards: the front's own finish (paint, wood, laminate: colour, texture, maps) when the front is an
+ * opaque board, else the body's (a glass or mirror front is no material for a box's sides and bottom). Always solid:
+ * never transparent, transmissive or reflective, whatever it was copied from. The front itself is not touched. */
+export function boardMaterial(front: Material | Material[], body?: Material | Material[] | null): Material {
+  const first = (m: Material | Material[]) => (Array.isArray(m) ? m[0] : m);
+  const f = first(front) as MeshStandardMaterial;
+  const solid = layerOfLook(f as unknown as Parameters<typeof layerOfLook>[0]) === "solid" && !(f.transparent && f.opacity < 0.95) && (f.metalness ?? 0) < 0.5;
+  const base = (solid || !body ? f : first(body)) as MeshStandardMaterial;
+  const mat = base.clone() as MeshStandardMaterial & { transmission?: number; thickness?: number };
+  mat.name = `${base.name || "board"} (drawer box)`;
+  mat.transparent = false;
+  mat.opacity = 1;
+  if ("transmission" in mat) mat.transmission = 0;
+  if ("thickness" in mat) mat.thickness = 0;
+  mat.alphaTest = 0;
+  mat.depthWrite = true;
+  mat.side = FrontSide; // closed boards, faces outwards
+  if (!solid) mat.metalness = 0; // the body's board, never a mirror's metal
+  mat.needsUpdate = true;
+  return mat;
+}
+
+/** A part's label without its front's material ("Drawer 1 smoked glass front" → "Drawer 1 front"): a wooden box or an
+ * interior named "…glass…" would be taken for glass (wood choice, the request report). */
+export const plainLabel = (label: string) =>
+  label.replace(/\b(smoked|clear|frosted|tinted|reflective)?\s*(glass|glazed|mirrored|mirror)\b/gi, " ").replace(/(?:^|\s)(?:زجاج|مرآة|مراية)(?=\s|$)/g, " ").replace(/\s+/g, " ").trim() || label;
 
 export type Added = { id: string; name: string; nameAr: string; mesh: Mesh; follows?: string };
 
-/** A drawer already has a box: a part moving with its front reaches well behind it, or a box was added before. */
-function hasDrawerBox(a: PartAnimation, frontLocal: Box3, boxesLocal: Map<string, Box3>, modelRoot: Object3D, depth: number): boolean {
-  if (a.follow.some((id) => { const b = boxesLocal.get(id); return b && b.min.z < frontLocal.min.z - 0.15 * depth; })) return true;
+/** A drawer already has a box: a part moving with its front reaches well behind it AND spans most of its outline (a
+ * box's sides and bottom; not a rod, a runner or a fitting behind it), or a box was added for it before. */
+export function hasDrawerBox(a: PartAnimation, frontLocal: Box3, boxesLocal: Map<string, Box3>, modelRoot: Object3D, depth: number): boolean {
+  const fs = size(frontLocal);
+  if (fs.z > 0.15 * depth) return true; // the moving part is the whole drawer itself (a frame and box round its front)
+  if (a.follow.some((id) => {
+    const b = boxesLocal.get(id);
+    return b && b.min.z < frontLocal.min.z - 0.15 * depth
+      && overlap(b.min.x, b.max.x, frontLocal.min.x, frontLocal.max.x) >= 0.6 * fs.x && overlap(b.min.y, b.max.y, frontLocal.min.y, frontLocal.max.y) >= 0.4 * fs.y;
+  })) return true;
   let found = false;
   modelRoot.traverse((o) => { if (o.userData?.drawerBoxFor === a.component) found = true; });
   return found;
@@ -395,6 +426,8 @@ export function openCavities(config: AnimationConfig | null, slots: SlotLike[], 
   const movingIds = new Set(moving.flatMap((a) => [a.component, ...a.follow]));
   // Every fixed part can close an opening off (a solid body, a back panel's front, a divider): not only the biggest.
   const fixed = slots.filter((s) => !movingIds.has(s.id) && !s.mesh.userData?.estimated);
+  // The body: the biggest fixed part (its board makes a drawer box behind a glass or mirror front).
+  const carcass = [...fixed].sort((p, q) => volume(boxes.get(q.id)!) - volume(boxes.get(p.id)!))[0];
   const tris = new Map(fixed.map((s) => [s.id, triangles(s.mesh, modelRoot)]));
   const remove = new Map<string, Set<number>>();
   const added: Added[] = [];
@@ -435,6 +468,7 @@ export function openCavities(config: AnimationConfig | null, slots: SlotLike[], 
       const mesh = new Mesh(geometry, material);
       mesh.name = name;
       mesh.userData.estimated = true;
+      mesh.userData.partId = id; // the same id however often the scene is prepared, and in a saved file
       if (follows) mesh.userData.drawerBoxFor = a.component;
       mesh.matrix.copy(toModel).setPosition(centre.clone().applyMatrix4(toModel));
       mesh.matrix.decompose(mesh.position, mesh.quaternion, mesh.scale);
@@ -450,7 +484,7 @@ export function openCavities(config: AnimationConfig | null, slots: SlotLike[], 
       }
       const body = fixed.find((p) => hits.get(p.id)?.area === Math.max(...[...hits.values()].map((h) => h.area)));
       const centre = new Vector3((x0 + x1) / 2, (y0 + y1) / 2, (inner + back) / 2);
-      const space = a.type === "translation" ? `Drawer space (${a.label})` : `Interior (${a.label})`;
+      const space = a.type === "translation" ? `Drawer space (${plainLabel(a.label)})` : `Interior (${plainLabel(a.label)})`;
       const spaceAr = a.type === "translation" ? `فراغ الدرج (${a.labelAr ?? a.label})` : `الفراغ الداخلي (${a.labelAr ?? a.label})`;
       place(openBox(x1 - x0, y1 - y0, d, 4), centre, interiorMaterial(body?.mesh.material ?? front.mesh.material, 0.82), `cavity_${a.component}`, space, spaceAr);
     }
@@ -460,8 +494,8 @@ export function openCavities(config: AnimationConfig | null, slots: SlotLike[], 
     const w = (x1 - x0) * 0.96, h = (y1 - y0) * 0.8, boxDepth = d * 0.95;
     const t = Math.max(Math.min(0.06 * Math.min(w, h), 0.08 * boxDepth), 1e-4);
     if (Math.abs(a.distance ?? 0) > 0.85 * boxDepth) a.distance = Math.sign(a.distance ?? 1) * 0.85 * boxDepth;
-    place(drawerBox(w, h, boxDepth, t), new Vector3((x0 + x1) / 2, y0 + h / 2, inner - boxDepth / 2), frontMaterial(front.mesh.material),
-      `drawer_box_${a.component}`, `Drawer box (${a.label})`, `صندوق الدرج (${a.labelAr ?? a.label})`, a.id);
+    place(drawerBox(w, h, boxDepth, t), new Vector3((x0 + x1) / 2, y0 + h / 2, inner - boxDepth / 2), boardMaterial(front.mesh.material, carcass?.mesh.material),
+      `drawer_box_${a.component}`, `Drawer box (${plainLabel(a.label)})`, `صندوق الدرج (${a.labelAr ?? a.label})`, a.id);
   }
   for (const [id, set] of remove) keepTriangles(slots.find((s) => s.id === id)!.mesh.geometry, (t) => !set.has(t));
   return added;
@@ -509,8 +543,9 @@ export function paneBacks(config: AnimationConfig | null, slots: SlotLike[], mod
     keepTriangles(g, (t) => front[t]);
     const mesh = new Mesh(backGeometry, interiorMaterial(body?.mesh.material ?? new MeshStandardMaterial({ color: "#8a6a4a" }), 0.9));
     (mesh.material as MeshStandardMaterial).side = FrontSide;
-    mesh.name = `Backing (${a.label})`;
+    mesh.name = `Backing (${plainLabel(a.label)})`;
     mesh.userData.estimated = true;
+    mesh.userData.partId = `backing_${a.component}`;
     mesh.position.copy(door.position);
     mesh.quaternion.copy(door.quaternion);
     mesh.scale.copy(door.scale);

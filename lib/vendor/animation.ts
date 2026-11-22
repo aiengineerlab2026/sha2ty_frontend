@@ -747,16 +747,27 @@ export function refine(
     const on = [...direct, ...chainedTo(lbox, [...direct, ...a.follow].filter((id) => local.has(id)), local, new Set([...taken, ...direct]), names)];
     on.forEach((id) => taken.add(id));
     let next: PartAnimation = { ...a, follow: [...new Set([...a.follow, ...on])].filter((id) => id !== a.component), face, up: frame.up, front: frame.front };
+    let reach = 0; // how deep the drawer's own box reaches behind its front
     if (next.type === "translation") {
       // The drawer's own box (bottom, sides, back), when the file has one: behind the front, within its outline. It
       // slides with it; no second box is made (reconstruct.openCavities).
-      const m = localFrame(next), f = inFrame(box, m);
+      // Behind the front within its outline, or a frame-and-box around a front inlaid in it (a glass front): reaching
+      // back behind the front, standing at most a few centimetres proud of it.
+      const m = localFrame(next), f = inFrame(box, m), fs = size(f);
       const own = [...boxes].filter(([id]) => !taken.has(id) && id !== a.component && (DRAWER_BOX.test(words(names.get(id) ?? "")) || partOf.get(id)?.mesh.userData?.drawerBoxFor === a.component)).filter(([, b]) => {
         const l = inFrame(b, m), s3 = size(l);
-        return overlap(l.min.x, l.max.x, f.min.x, f.max.x) >= 0.8 * s3.x && overlap(l.min.y, l.max.y, f.min.y, f.max.y) >= 0.8 * s3.y && l.max.z <= f.max.z + 1e-6 && l.min.z < f.min.z;
+        const within = overlap(l.min.x, l.max.x, f.min.x, f.max.x) >= 0.8 * s3.x && overlap(l.min.y, l.max.y, f.min.y, f.max.y) >= 0.8 * s3.y;
+        const around = overlap(l.min.x, l.max.x, f.min.x, f.max.x) >= 0.95 * fs.x && overlap(l.min.y, l.max.y, f.min.y, f.max.y) >= 0.95 * fs.y && s3.x <= 1.6 * fs.x && s3.y <= 1.6 * fs.y;
+        return (within || around) && l.max.z <= f.max.z + 0.03 && l.min.z < f.min.z;
       }).map(([id]) => id);
       own.forEach((id) => taken.add(id));
-      next = { ...next, follow: [...new Set([...next.follow, ...own])] };
+      reach = Math.max(0, ...own.map((id) => f.max.z - local.get(id)!.min.z));
+      // What is held on its own box (a pull on the frame round a glass front) slides with it too.
+      const face = own.reduce((all, id) => all.union(local.get(id)!), lbox.clone());
+      face.min.z = Math.max(face.min.z, lbox.min.z - 0.05); // the drawer's front: its face and frame, not its depth
+      const held = own.length ? chainedTo(face, own, local, taken, names).filter((id) => !RUNNER.test(words(names.get(id) ?? ""))) : [];
+      held.forEach((id) => taken.add(id));
+      next = { ...next, follow: [...new Set([...next.follow, ...own, ...held])] };
     }
     if (next.type === "rotation") {
       const side = !next.hinge || next.hinge === "left" || next.hinge === "right";
@@ -782,6 +793,9 @@ export function refine(
       // Out the way it faces, half the model's depth that way (a drawer in a sideways model slides sideways).
       const way = next.source === "vision" && next.direction ? next.direction : next.face!;
       next = withDirection(next, way, 0.5 * Math.abs(size(whole).dot(VEC[way])));
+    }
+    if (next.type === "translation" && next.source !== "manual" && reach > 0 && Math.abs(next.distance ?? 0) > 0.75 * reach) {
+      next = { ...next, distance: Math.sign(next.distance ?? 1) * 0.75 * reach }; // out three quarters of its own box, as on runners
     }
     const s = size(box), w = size(whole);
     const issues = [...problems(next, parts), ...(s.x >= 0.9 * w.x && s.y >= 0.9 * w.y && s.z >= 0.9 * w.z ? ["This mesh is (almost) the whole model: moving it would move everything."] : [])];
