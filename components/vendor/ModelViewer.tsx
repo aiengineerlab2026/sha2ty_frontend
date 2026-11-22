@@ -2,7 +2,7 @@
 
 import { useT } from "@/lib/i18n";
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type ComponentRef, type CSSProperties, type ReactNode } from "react";
-import { ChevronDown, CircleHelp, DoorOpen, FileText, Lightbulb, Download, Eraser, Layers, Link2, Maximize, Minimize, Pointer, Loader2, Palette, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Redo2, RotateCcw, RotateCw, Ruler, Focus, SlidersHorizontal, Undo2, X, ZoomIn, ZoomOut } from "lucide-react";
+import { ChevronDown, CircleHelp, DoorOpen, FileText, Lightbulb, Download, Eraser, Layers, Link2, Maximize, Minimize, Loader2, Palette, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Redo2, RotateCcw, RotateCw, Ruler, Focus, SlidersHorizontal, Undo2, X, ZoomIn, ZoomOut } from "lucide-react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { Bounds, ContactShadows, OrbitControls, useBounds, useGLTF } from "@react-three/drei";
 import { assetUrl } from "@/lib/api";
@@ -18,7 +18,7 @@ import { sameShape, variantProblems } from "@/lib/vendor/variantCheck";
 import { formatPrice } from "@/lib/plan/pricing";
 import { guideWithOptions } from "@/lib/designs/api";
 import { REGISTRY } from "@/lib/vendor/parts3d";
-import { quote } from "@/lib/designs/materials";
+import { paintOf, quote, withBoard, withPaint } from "@/lib/designs/materials";
 import { boxProject, fabricNormals, inspectUv, seamlessFabric, splitSheetEdge, type Mapping } from "@/lib/vendor/tiling";
 import { PartControls, PartList, partLabel } from "./PartEditor";
 import { MaterialPicker } from "./MaterialPicker";
@@ -32,6 +32,8 @@ import { checkMovers, movedBox, openCavities, rebuildPanel, type Added } from "@
 import { animationClips, animationOf, applyAnimations, attachmentsFrom, boxInModel, carried, enabledAnimations, handleOf, meshesOf, refine, step, type AnimationConfig, type Openness } from "@/lib/vendor/animation";
 import { MIN_SIZE, resized, sizeCm } from "@/lib/designs/resize";
 import { restoreMaterial } from "@/lib/designs/materialRestore";
+import { TurnIcon } from "./TurnIcon";
+import { boardOnly, specClasses, woodBlocked } from "@/lib/designs/woodTargets";
 
 export type Slot = { id: string; name: string; nameAr?: string | null; analysisId?: string; naming?: PartInfo["naming"]; variants?: PartVariant[]; mesh: Mesh; materialIndex: number };
 
@@ -78,6 +80,7 @@ function dropCore(mesh: Mesh) {
 
 /** An opaque finish hides the core on the faces only. Clear lacquer seals the edge too. Raw MDF is smooth on the edge as well. */
 function showCore(edit: MaterialEdit): boolean {
+  if (paintOf(edit.material)) return false; // painted: the edge is painted too
   const type = edit.material?.kind === "wood" ? edit.material.wood_type : undefined;
   if (!type || !CORED.has(type)) return false;
   const finish = edit.material?.finish?.wood_type;
@@ -89,8 +92,8 @@ function showCore(edit: MaterialEdit): boolean {
 export function paint(mat: Material, edit: MaterialEdit) {
   const std = standard(mat);
   if (!std) return;
-  // Painted: a flat colour, no fabric or wood pattern under it.
-  if (edit.material?.kind === "paint") {
+  // Painted (a painted-only part, or a board with its paint coat): a flat colour, no fabric or wood pattern under it.
+  if (paintOf(edit.material)) {
     std.map = null;
     std.normalMap = null;
   }
@@ -1483,6 +1486,36 @@ export function ModelViewer({
     dirty.current = true;
     setRemoved(new Set());
   };
+  // Delete / Backspace on the selected part(s): asks first (the same question as the parts list's remove button), then
+  // removes them from the model. Not while typing in a field, and only where parts can be removed at all.
+  const canDelete = edit && removedParts !== undefined && slots.length > 1;
+  useEffect(() => {
+    if (!canDelete) return;
+    const onKey = (event: KeyboardEvent) => {
+      if ((event.key !== "Delete" && event.key !== "Backspace") || event.repeat) return;
+      const target = event.target as HTMLElement | null;
+      if (target && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))) return;
+      const ids = [...new Set([selected, ...also])].filter((id): id is string => Boolean(id) && !removed.has(id!));
+      if (!ids.length) return;
+      event.preventDefault();
+      const ok = ids.filter(removable);
+      if (!ok.length) {
+        window.alert(t("This part shares one mesh with others in the file, so it cannot be removed alone. Hide it instead."));
+        return;
+      }
+      const slot = slots.find((item) => item.id === ok[0]);
+      const name = slot ? partLabel(t, slot.name, slot.nameAr) : ok[0];
+      const question = ok.length === 1
+        ? t(removal === "everyone" ? "Remove “{name}” from this model for everyone? After you save, every customer sees it gone. You can restore it before saving." : removal === "yours" ? "Remove “{name}” from your design only? Other people still see it on the original model. You can restore it." : "Remove “{name}” from this model? It is left out of the saved model and requests. You can restore it.", { name })
+        : t(removal === "everyone" ? "Remove {n} parts from this model for everyone? After you save, every customer sees them gone. You can restore them before saving." : removal === "yours" ? "Remove {n} parts from your design only? Other people still see them on the original model. You can restore them." : "Remove {n} parts from this model? They are left out of the saved model and requests. You can restore them.", { n: ok.length });
+      const skipped = ids.length - ok.length;
+      if (!window.confirm(skipped ? `${question}\n${t("{n} selected parts share a mesh with others and stay.", { n: skipped })}` : question)) return;
+      ok.forEach(removePart);
+      say(ok.length === 1 ? t("Removed {name}", { name }) : t("Removed {n} parts", { n: ok.length }));
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
   const loading = useRef(new Set<Promise<unknown>>());
   // Texture loads in flight: the thumbnail waits for them, so it shows the final materials.
   const track = useMemo(() => <T,>(load: Promise<T>) => {
@@ -1537,13 +1570,27 @@ export function ModelViewer({
   // by name (mattress, pillows, bedding…).
   // Upholstered in the file too: a part whose own material has a fabric sheen (glTF KHR_materials_sheen) is never
   // turned into wood, even before the customer picks its fabric.
-  const fabricInFile = (item: Slot) => ((originals.get(item.mesh)?.[item.materialIndex] ?? slotMaterial(item)) as { sheen?: number }).sheen! > 0;
+  // A part painted or coloured (by the vendor, the customer or its own file), or made of glass, mirror, metal, fabric
+  // or stone (its file's material or the photo reading's material spec), keeps that finish: wood is never laid over it.
+  const woodBlock = (item: Slot) => {
+    const loaded = (originals.get(item.mesh)?.[item.materialIndex] ?? slotMaterial(item)) as Material & { metalness?: number; transmission?: number; sheen?: number };
+    const look = { name: loaded.name, materialClass: (loaded.userData?.materialClass as string | undefined) ?? null, metalness: loaded.metalness, opacity: loaded.opacity, transparent: loaded.transparent, transmission: loaded.transmission, sheen: loaded.sheen };
+    return woodBlocked(look, edits[item.id], specClasses(server, item.analysisId, slots.length === 1));
+  };
+  const woodCandidates = slots.filter((item) => !removed.has(item.id) && !hidden.has(item.id) && !SOFT.test(item.name) && !NOT_WOOD.test(item.name));
   const woodParts = useMemo(
-    () => slots.filter((item) => !removed.has(item.id) && !hidden.has(item.id) && !["fabric", "paint"].includes(edits[item.id]?.material?.kind ?? "") && !(edits[item.id]?.material?.kind !== "wood" && fabricInFile(item)) && !SOFT.test(item.name) && !NOT_WOOD.test(item.name)),
-    [slots, removed, hidden, edits],
+    () => woodCandidates.filter((item) => !woodBlock(item)),
+    [slots, removed, hidden, edits, server], // eslint-disable-line react-hooks/exhaustive-deps
   );
-  const woodEdit = woodParts.map((item) => edits[item.id]).find((e) => e?.material?.kind === "wood") ?? null;
-  const woodArea = useMemo(() => woodParts.reduce((sum, item) => sum + partArea(item, factor), 0), [woodParts, factor[0], factor[1], factor[2]]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Painted or coloured parts are made of the wood too: their board changes, their paint stays (materials.withBoard).
+  const boardParts = useMemo(
+    () => woodCandidates.filter((item) => boardOnly(woodBlock(item))),
+    [slots, removed, hidden, edits, server], // eslint-disable-line react-hooks/exhaustive-deps
+  );
+  // Parts that could have been wood but keep their paint or material: said, not silently skipped.
+  const woodKept = woodCandidates.length - woodParts.length;
+  const woodEdit = [...woodParts, ...boardParts].map((item) => edits[item.id]).find((e) => e?.material?.kind === "wood") ?? null;
+  const woodArea = useMemo(() => [...woodParts, ...boardParts].reduce((sum, item) => sum + partArea(item, factor), 0), [woodParts, boardParts, factor[0], factor[1], factor[2]]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const onSlots = useMemo(() => (next: Slot[], object: Object3D, cleaned: boolean) => {
     root.current = object;
@@ -1655,11 +1702,16 @@ export function ModelViewer({
     dirty.current = true;
     const next = { ...editsRef.current };
     say(selection.length > 1 ? t("Applied to {n} parts", { n: selection.length }) : t("Applied to {part}", { part: partLabel(t, selection[0].name, selection[0].nameAr) }));
+    const coat = patch.material?.kind === "paint" ? paintOf(patch.material) : null;
     for (const item of selection) {
-      next[item.id] = { ...next[item.id], ...patch };
+      if (coat) {
+        // A paint goes OVER the part's board (kept for making and pricing), and nothing of a pattern stays under it.
+        const { mapUrl: _m, normalUrl: _n, mapping: _p, tile: _t, repeat: _r, rotation: _o, offset: _f, ...rest } = next[item.id] ?? {}; // eslint-disable-line @typescript-eslint/no-unused-vars
+        next[item.id] = { ...rest, ...patch, material: withPaint(next[item.id]?.material, coat) };
+      } else next[item.id] = { ...next[item.id], ...patch };
       const current = standard(slotMaterial(item))?.map;
       const pattern = textures?.get(item.id) ?? (patch.tile != null && next[item.id].mapUrl ? current : null);
-      if (patch.material?.kind === "paint") dropCore(item.mesh);
+      if (coat) dropCore(item.mesh);
       if (pattern) next[item.id] = { ...next[item.id], mapping: layPattern(item, pattern, next[item.id]) };
       else paint(slotMaterial(item), next[item.id]);
     }
@@ -1680,6 +1732,8 @@ export function ModelViewer({
       const texture = textures.get(item.id);
       if (texture) next[item.id] = { ...next[item.id], mapping: layPattern(item, texture, next[item.id]) };
     }
+    // Painted parts: a new board under the same paint. The look (colour, no grain) is exactly what it was.
+    for (const item of boardParts) if (patch.material) next[item.id] = { ...next[item.id], material: withBoard(next[item.id]?.material, patch.material) };
     setEdits(next);
   };
 
@@ -1784,12 +1838,18 @@ export function ModelViewer({
         // shared out by each part's surface, so the parts add up to the model's estimate.
         const woodIds = Object.keys(editsRef.current).filter((id) => editsRef.current[id].material?.kind === "wood" && areas.has(id));
         const woodArea = woodIds.reduce((sum, id) => sum + areas.get(id)!, 0);
-        const whole = woodIds.length ? quote(editsRef.current[woodIds[0]].material!, woodArea) : null;
+        const board = woodIds.length ? { ...editsRef.current[woodIds[0]].material! } : null;
+        if (board) delete board.paint; // the board is bought for all wooden parts together; each part's paint is its own
+        const whole = board ? quote(board, woodArea) : null;
         const share = (x: number | null | undefined, id: string) => (x == null ? x : Math.round((x * areas.get(id)!) / (woodArea || 1) * 1000) / 1000);
         return Object.fromEntries(Object.entries(editsRef.current).filter(([id]) => !removedRef.current.has(id)).map(([id, value]) => {
           if (!value.material || !areas.has(id)) return [id, value];
           if (value.material.kind === "wood" && whole) {
-            return [id, { ...value, material: { ...value.material, quantity: share(whole.quantity, id) ?? undefined, finish_quantity: share(whole.finish_quantity, id) ?? undefined, total: share(whole.total, id) } }];
+            const coat = value.material.paint ? quote({ ...value.material.paint, kind: "paint" }, areas.get(id)!) : null;
+            const boardTotal = share(whole.total, id);
+            const total = coat ? (boardTotal == null || coat.total == null ? null : Math.round((boardTotal + coat.total) * 100) / 100) : boardTotal;
+            return [id, { ...value, material: { ...value.material, quantity: share(whole.quantity, id) ?? undefined, finish_quantity: share(whole.finish_quantity, id) ?? undefined, total,
+              ...(coat && value.material.paint ? { paint: { ...value.material.paint, coats: coat.coats, quantity: coat.quantity, total: coat.total ?? null } } : {}) } }];
           }
           return [id, { ...value, material: quote(value.material, areas.get(id)!) }];
         }));
@@ -1940,7 +2000,7 @@ export function ModelViewer({
         // Hide or show the hand icons.
         <label className="absolute start-3 top-3 z-20 flex cursor-pointer items-center gap-1.5 rounded-full border border-white/70 bg-white/90 px-2.5 py-1.5 text-[11px] font-medium text-slate-600 shadow-sm backdrop-blur">
           <input type="checkbox" checked={hands} onChange={(e) => showHands(e.target.checked)} className="size-3.5 accent-brand-amber" />
-          <Pointer className="size-3.5" aria-hidden /> {t("Show hand icons")}
+          <TurnIcon className="size-3.5" /> {t("Show hand icons")}
         </label>
       )}
       <div className="pointer-events-none absolute inset-0 z-10 overflow-hidden" hidden={!hands}>
@@ -1965,7 +2025,7 @@ export function ModelViewer({
               className={`group absolute left-0 top-0 grid size-5 place-items-center rounded-full border border-white/90 shadow shadow-slate-900/30 transition-colors ${open ? "bg-brand-amber text-brand-navy" : "bg-brand-navy/85 text-white"}`}
             >
               <span className="pointer-events-none absolute inset-0 rounded-full bg-brand-amber/60 opacity-0 group-hover:animate-ping group-hover:opacity-100" aria-hidden />
-              <Pointer className="relative size-3" aria-hidden />
+              <TurnIcon className="relative size-3" />
             </button>
           );
         })}
@@ -2218,7 +2278,16 @@ export function ModelViewer({
       )}
       {shopper ? (
         <>
-      {woodParts.length > 0 && (
+      {woodParts.length === 0 && boardParts.length === 0 && woodKept > 0 && (
+        <p className="rounded-2xl border border-slate-200/80 bg-white p-3 text-xs text-slate-500 shadow-sm">{t("Wood is not applied: this model's finish is paint, a chosen colour or another material. Change each part's paint or material instead.")}</p>
+      )}
+      {woodParts.length === 0 && boardParts.length > 0 && (
+        <p className="text-xs text-slate-500">{t("The painted parts keep their paint: the wood you choose is what they are made of (and priced as).")}</p>
+      )}
+      {woodParts.length > 0 && woodKept > 0 && (
+        <p className="text-xs text-slate-500">{t("Wood goes on the wooden parts only: {n} painted or other-material parts keep their finish.", { n: woodKept })}</p>
+      )}
+      {woodParts.length + boardParts.length > 0 && (
         <div className={fill ? "text-sm" : "rounded-2xl border border-slate-200/80 bg-white p-3 text-sm shadow-sm"}>
           <MaterialPicker
             mode="wood"
@@ -2273,7 +2342,16 @@ export function ModelViewer({
           document.getElementById("sha2ty-part-controls")?.scrollIntoView({ behavior: "smooth", block: "start" });
         }}
       />
-      {woodParts.length > 0 && (
+      {woodParts.length === 0 && boardParts.length === 0 && woodKept > 0 && (
+        <p className="rounded-2xl border border-slate-200/80 bg-white p-3 text-xs text-slate-500 shadow-sm">{t("Wood is not applied: this model's finish is paint, a chosen colour or another material. Change each part's paint or material instead.")}</p>
+      )}
+      {woodParts.length === 0 && boardParts.length > 0 && (
+        <p className="text-xs text-slate-500">{t("The painted parts keep their paint: the wood you choose is what they are made of (and priced as).")}</p>
+      )}
+      {woodParts.length > 0 && woodKept > 0 && (
+        <p className="text-xs text-slate-500">{t("Wood goes on the wooden parts only: {n} painted or other-material parts keep their finish.", { n: woodKept })}</p>
+      )}
+      {woodParts.length + boardParts.length > 0 && (
         <div className="rounded-2xl border border-slate-200/80 bg-white p-3 text-sm shadow-sm">
           <MaterialPicker
             mode="wood"

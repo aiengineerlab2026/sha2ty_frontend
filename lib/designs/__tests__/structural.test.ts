@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Color, MeshPhysicalMaterial, Texture } from "three";
-import { fidelityProblem, linkedVisual, structuralEdits, structuralParts } from "../structural";
+import { fidelityProblem, linkedVisual, structuralEdits, structuralParts, visualModularity } from "../structural";
 import { restoreMaterial } from "../materialRestore";
 import type { CarpenterModel, PartDocument } from "../../vendor/parts";
 
@@ -38,14 +38,17 @@ test("structural and visual parts are linked by the spec, never by mesh id or or
   assert.deepEqual(linkedVisual(carpenter, null).left_door_1, []);
 });
 
-test("woods from the material spec are laid on boards the vendor has not edited; saved edits win", () => {
-  const edits = structuralEdits({ ...carpenter, material_edits: { drawer_1_2: { color: "#112233" } } }, {
-    door_left: { class: "mirror", woodType: null }, drawer_1: { class: "solid_wood", woodType: "oak" }, body: { class: "solid_wood", woodType: "walnut" },
-  });
-  assert.equal(edits.left_door_1, undefined); // a mirror keeps the file's material
-  assert.deepEqual(edits.drawer_1_2, { color: "#112233" });
-  assert.deepEqual(edits.back_panel_3, { mapUrl: "/woods/walnut.jpg", mapping: "box", tile: 0.6 });
-  assert.equal(edits.leg_4, undefined); // no spec component: nothing assumed
+test("structural mode shows only the vendor's saved edits: no default material is laid on", () => {
+  assert.deepEqual(structuralEdits({ ...carpenter, material_edits: { drawer_1_2: { color: "#112233" } } }), { drawer_1_2: { color: "#112233" } });
+  assert.deepEqual(structuralEdits(carpenter), {});
+});
+
+test("the visual model is modular only when its file really has several meshes", () => {
+  assert.deepEqual(visualModularity(visual), { modular: true, meshes: 3, splitRefused: null });
+  const fused: PartDocument = { separated: false, components: [{ id: "whole", name: "Whole model", editable: true }],
+    split: { accepted: false, status: "SUCCEEDED", issues: ["Auto Split returned one fused mesh."], meshesBefore: 1, meshesAfter: 1 } };
+  assert.deepEqual(visualModularity(fused), { modular: false, meshes: 1, splitRefused: "Auto Split returned one fused mesh." });
+  assert.equal(visualModularity(null).modular, false);
 });
 
 test("a low-quality model names the step where it lost fidelity", () => {

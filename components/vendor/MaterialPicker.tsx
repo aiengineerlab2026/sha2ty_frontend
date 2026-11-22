@@ -6,7 +6,7 @@ import { Search } from "lucide-react";
 import { supabase, supabaseConfigured } from "@/lib/supabase/client";
 import { vendorBrands } from "@/lib/tasks";
 import { formatPrice } from "@/lib/plan/pricing";
-import { PAINT_COATS, quote, UNIT_LABEL, woodType, type PartMaterial, type PartMaterialOption } from "@/lib/designs/materials";
+import { PAINT_COATS, paintOf, quote, UNIT_LABEL, woodType, type PartMaterial, type PartMaterialOption } from "@/lib/designs/materials";
 import { ROLL_WIDTH_M } from "@/lib/designs/fabric";
 import type { MaterialEdit } from "@/lib/vendor/parts";
 import { Section } from "./PartEditor";
@@ -142,7 +142,8 @@ export function MaterialPicker({ mode, edit, area, woodVendor, woodModel, onPick
   const paintsIn = (c: PaintColor) => (library ?? []).filter((m) => m.kind === "paint" && m.color?.id === c.id).sort((a, b) => (a.price ?? Infinity) - (b.price ?? Infinity));
   // Only colours someone sells (a vendor's paint, or Sha2ty's own from its studio).
   const sold = library === null ? null : colors?.filter((c) => paintsIn(c).length) ?? null;
-  const paintColor = chosen?.kind === "paint" ? colors?.find((c) => c.hex === chosen.color) : undefined;
+  const coat = paintOf(chosen); // painted-only, or the paint over the part's board
+  const paintColor = coat ? colors?.find((c) => c.hex === coat.color) : undefined;
   const pickPaint = (c: PaintColor, m?: PartMaterialOption) => {
     const product = m ?? paintsIn(c)[0];
     if (!product) return;
@@ -197,7 +198,8 @@ export function MaterialPicker({ mode, edit, area, woodVendor, woodModel, onPick
       </div>
     );
 
-  const estimate = chosen && chosen.kind === mode && area ? quote(chosen, area) : null;
+  // Paint mode prices the paint only (a painted board's board is priced with the model's wood).
+  const estimate = !chosen || !area ? null : mode === "paint" ? (coat ? quote({ ...coat, kind: "paint" }, area) : null) : chosen.kind === mode ? quote(chosen, area) : null;
   return (
     <>
       {mode === "fabric" && <Section title={t("Upholstery fabric")}>

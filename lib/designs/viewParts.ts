@@ -3,6 +3,7 @@ import type { MaterialEdit } from "../vendor/parts";
 import { offsetsOf, type AddedSpec, type Side } from "../vendor/parts3d";
 import { arabicName, isFitting, isSoft, mainName } from "./partNames";
 import { partSize } from "./measure";
+import { paintOf } from "./materials";
 
 /** One row of the request report's parts table (backend app/api/marketplace.py ViewPart): sizes in cm. */
 export type ViewPart = {
@@ -126,7 +127,7 @@ export function partsTable({ slots, names, namesAr = new Map(), added, mpu, edit
       board_mm: edit?.material?.thickness_mm ?? null,
       surface: edit?.material?.finish?.name ?? null,
       surface_type: edit?.material?.finish?.wood_type ?? null,
-      paint: edit?.material?.kind === "paint" ? edit.material.color_name ?? null : null,
+      paint: paintOf(edit?.material)?.color_name ?? null, // painted-only, or the coat over its board
       texture: edit?.mapUrl ?? null,
       group: spec ? ADDED_GROUP[spec.type] ?? "structure"
         : moving.has(id) ? (moving.get(id) === "rotation" ? "doors" : "drawers")

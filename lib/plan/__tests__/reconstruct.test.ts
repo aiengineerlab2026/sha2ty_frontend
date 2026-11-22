@@ -99,3 +99,39 @@ test("rebuilding an irregular piece gives a full flat panel of the same outline,
   assert.ok(after.min.distanceTo(box.min) < 1e-3 && after.max.distanceTo(box.max) < 1e-3 && shard.material === material);
   assert.ok(frontFill(triangles(shard, model), after) > 0.99);
 });
+
+/** A cabinet built from separate panels (as GPT Astra writes it): HOLLOW behind its drawer front, no drawer box. */
+function panelCabinet() {
+  const model = new Group();
+  const add = (id: string, name: string, g: BoxGeometry) => {
+    const mesh = new Mesh(g, new MeshStandardMaterial({ color: "#efe8dc" }));
+    mesh.name = id;
+    model.add(mesh);
+    return { id, name, mesh };
+  };
+  const slots = [
+    add("left", "Left side panel", new BoxGeometry(0.02, 0.8, 0.5).translate(-0.49, 0.4, 0)),
+    add("right", "Right side panel", new BoxGeometry(0.02, 0.8, 0.5).translate(0.49, 0.4, 0)),
+    add("bottom", "Bottom panel", new BoxGeometry(0.96, 0.02, 0.5).translate(0, 0.01, 0)),
+    add("top", "Top panel", new BoxGeometry(0.96, 0.02, 0.5).translate(0, 0.79, 0)),
+    add("back", "Back panel", new BoxGeometry(0.96, 0.8, 0.01).translate(0, 0.4, -0.245)),
+    add("drawer_1", "Drawer 1", new BoxGeometry(0.94, 0.25, 0.02).translate(0, 0.15, 0.26)),
+  ];
+  model.updateMatrixWorld(true);
+  return { model, slots };
+}
+
+test("a drawer in a hollow, panel-built cabinet still gets its box (base, sides, back), once, sliding with its front", () => {
+  const { model, slots } = panelCabinet();
+  const config = checkMovers(refine(null, slots, model), slots, model)!;
+  const drawer = config.animations.find((a) => a.component === "drawer_1")!;
+  assert.ok(drawer.enabled && drawer.type === "translation");
+  const added = openCavities(config, slots, model);
+  assert.deepEqual(added.map((a) => [a.id, a.follows]), [["drawer_box_drawer_1", drawer.id]]);
+  const box = boxInModel(added[0].mesh, model);
+  const front = boxInModel(slots[5].mesh, model);
+  assert.ok(box.max.z <= front.min.z && box.min.z >= -0.25, "behind its front, inside the cabinet");
+  assert.ok(box.min.y >= front.min.y - 1e-6 && box.max.x <= front.max.x, "within the front's outline");
+  assert.ok(Math.abs(box.min.z - box.max.z) >= Math.abs(drawer.distance ?? 0), "deep enough to stay in the cabinet when open");
+  assert.deepEqual(openCavities(config, slots, model), []); // added once
+});

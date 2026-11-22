@@ -283,10 +283,11 @@ function Swatch({ mat, small = false }: { mat?: SpecMaterial; small?: boolean })
   );
 }
 
-/** "Oak (Solid oak)": the wood used, without quantities or prices. */
+/** "Oak (Solid oak)": the wood used, without quantities or prices; "MDF · Paint: White" when it is painted over. */
 function woodName(t: T, m: PartMaterial) {
   const kind = t(woodType(m.wood_type)?.name ?? "Wood");
-  return m.name && m.name !== kind ? `${m.name} (${kind})` : kind;
+  const board = m.name && m.name !== kind ? `${m.name} (${kind})` : kind;
+  return m.paint ? `${board} · ${t("Paint")}${m.paint.color_name ? `: ${t(m.paint.color_name)}` : ""}` : board;
 }
 
 /** "Green linen (Fabric)" / "Sage paint (Paint: Sage green)": the material used on the wood, without amounts or prices. */

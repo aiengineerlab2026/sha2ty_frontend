@@ -1,13 +1,10 @@
-import type { CarpenterModel, CarpenterPart, MaterialEdit, MaterialSpec, PartDocument, PartInfo } from "../vendor/parts";
+import type { CarpenterModel, MaterialEdit, PartDocument, PartInfo } from "../vendor/parts";
 
 /** The two representations of one generated product (backend app/api/vendor.py): the visual model matches the photo;
  * the structural one is built from the same photo reading (its spec) as separate, editable boards. They are separate
  * meshes with different topology and ids: they are linked only through the spec's component id (visual parts carry it
  * as `analysisId`, structural parts as `specId`). */
 export type ModelMode = "visual" | "structural";
-
-/** Built-in wood maps (public/woods/<name>.jpg) the material spec can name. */
-const WOODS = new Set(["oak", "walnut", "beech", "ash", "pine", "teak", "mahogany", "mdf", "laminate", "veneer"]);
 
 /** The structural model's parts as editor parts: every board selectable, recolourable and resizable on its own. */
 export function structuralParts(carpenter: CarpenterModel): PartDocument {
@@ -34,23 +31,19 @@ export function linkedVisual(carpenter: CarpenterModel, visual: PartDocument | n
   return Object.fromEntries(carpenter.components.map((part) => [part.id, part.specId ? bySpec.get(part.specId) ?? [] : []]));
 }
 
-/** Starting looks for structural parts the vendor has not edited: the spec's wood as its built-in map (laid by box
- * projection: generated boards have no UVs). Saved edits always win; non-wood parts keep the colour in the file. */
-export function structuralEdits(carpenter: CarpenterModel, materials?: Record<string, MaterialSpec> | null): Record<string, MaterialEdit> {
-  const saved = carpenter.material_edits ?? {};
-  const out: Record<string, MaterialEdit> = { ...saved };
-  for (const part of carpenter.components) {
-    if (out[part.id]) continue;
-    const wood = woodOf(part, materials ?? carpenter.materials);
-    if (wood) out[part.id] = { mapUrl: `/woods/${wood}.jpg`, mapping: "box", tile: 0.6 };
-  }
-  return out;
+/** The structural model's saved edits, and nothing else: the file's own materials (the shared material spec's colours)
+ * show until the vendor changes one. No texture is laid on by default. */
+export function structuralEdits(carpenter: CarpenterModel): Record<string, MaterialEdit> {
+  return { ...(carpenter.material_edits ?? {}) };
 }
 
-function woodOf(part: CarpenterPart, materials: Record<string, MaterialSpec> | undefined): string | null {
-  const spec = part.specId ? materials?.[part.specId] : undefined;
-  const wood = spec?.woodType ?? null;
-  return wood && WOODS.has(wood) ? wood : null;
+/** Whether the visual model really is several meshes, and why not when it is not (one fused mesh, or an Auto Split
+ * result that was refused). Never counted from the structural model. */
+export function visualModularity(doc: PartDocument | null | undefined): { modular: boolean; meshes: number; splitRefused: string | null } {
+  const meshes = doc?.components?.length ?? 0;
+  const modular = Boolean(doc?.separated) && meshes > 1;
+  const split = doc?.split;
+  return { modular, meshes, splitRefused: split && split.accepted === false ? split.issues?.[0] ?? split.status ?? "refused" : null };
 }
 
 /** What to tell the vendor about the visual model's checks: the stage where it lost fidelity and why (null: fine). */
