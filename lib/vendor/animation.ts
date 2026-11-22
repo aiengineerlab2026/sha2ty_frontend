@@ -35,6 +35,8 @@ export type PartAnimation = {
   face?: Direction;
   up?: Direction;
   front?: Direction;
+  /** The file already shows this part open. Openness 0 is that pose; 1 swings it shut. Absent: 0 is closed, 1 is open. */
+  rest?: "open";
 };
 export type AnimationFlag = { label: string; labelAr?: string | null; motion?: string; component?: string; reason: string };
 export type AnimationConfig = {
@@ -226,6 +228,16 @@ export function animationClips(slots: SlotLike[], modelRoot: Object3D, config: A
     });
 }
 
+/** True when the part is showing open. A door authored open is open at 0 and shut at 1. */
+export function shownOpen(anim: Pick<PartAnimation, "rest">, t: number): boolean {
+  return anim.rest === "open" ? t < 0.5 : t >= 0.5;
+}
+
+/** The openness value that shows the part open or shut. */
+export function targetFor(anim: Pick<PartAnimation, "rest">, open: boolean): number {
+  return anim.rest === "open" ? (open ? 0 : 1) : (open ? 1 : 0);
+}
+
 /** Steps each open fraction towards its target (at the animation's own speed): true while anything still moves. */
 export function step(current: Openness, target: Openness, config: AnimationConfig | null | undefined, dt: number): boolean {
   let moving = false;
@@ -266,7 +278,8 @@ export function moverKind(...names: (string | null | undefined)[]): Kind | null 
   const text = words(names.filter(Boolean).join(" "));
   if (DRAWER_BOX.test(text)) return null; // a drawer's side, bottom or back slides with its front, not on its own
   // On a door, not a door ("door lock key ring", "mirror door backing", "drawer box", "interior (door 1)").
-  if (/\b(handles?|knobs?|pulls?|hinges?|frame|body|carcass|lock|locks|key|keys|keyhole|ring|blade|tooth|teeth|backing|surround|trim|strip|mou?lding|decor|decoration|ornament|escutcheon|plate|interior|cavity|space|box)\b|(?:^|[\s\d_])(?:ال)?(?:مقبض|مقابض|مفصلة|هيكل|إطار|قفل|مفتاح|حلقة|زخرفة|حلية|فراغ|صندوق|داخلي)(?=$|[\s\d_])/i.test(text)) return null;
+  // A runner is part of the drawer, not a second drawer. "frame" here is a doorway surround, not a door leaf.
+  if (/\b(handles?|knobs?|pulls?|hinges?|runners?|frame|body|carcass|lock|locks|key|keys|keyhole|ring|blade|tooth|teeth|backing|surround|trim|strip|mou?lding|decor|decoration|ornament|escutcheon|plate|interior|cavity|space|box)\b|(?:^|[\s\d_])(?:ال)?(?:مقبض|مقابض|مفصلة|هيكل|إطار|قفل|مفتاح|حلقة|زخرفة|حلية|فراغ|صندوق|داخلي)(?=$|[\s\d_])/i.test(text)) return null;
   return KINDS.find(([re]) => re.test(text))?.[1] ?? null;
 }
 /** Named a door / drawer / lid at all, accessory words included ("Mirror door backing"): for a part big enough to be one. */
@@ -278,10 +291,26 @@ const overlap = (a0: number, a1: number, b0: number, b1: number) => Math.max(0, 
 const outlineShare = (a: Box3, b: Box3) => overlap(a.min.x, a.max.x, b.min.x, b.max.x) * overlap(a.min.y, a.max.y, b.min.y, b.max.y);
 /** Big enough to be a door or a drawer front: 12 % of the model's front, or a tall thin front panel (a narrow door of a
  * wide wardrobe is far less than 12 % of it). */
-const frontPanel = (box: Box3, whole: Box3) => {
-  const s = size(box), w = size(whole);
-  return s.x * s.y >= 0.12 * w.x * w.y || (s.y >= 0.35 * w.y && s.x >= 0.04 * w.x && s.z <= 0.15 * w.z);
+/** The part's own size, ignoring the swing it was saved in (a door posed open is still a thin sheet). */
+function sheetSize(mesh: Mesh): Vector3 {
+  if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
+  const s = mesh.geometry.boundingBox!.getSize(new Vector3());
+  const scale = new Vector3();
+  mesh.getWorldScale(scale);
+  return new Vector3(Math.abs(s.x * scale.x), Math.abs(s.y * scale.y), Math.abs(s.z * scale.z));
+}
+const sheetArea = (mesh: Mesh) => {
+  const [long, mid] = [sheetSize(mesh).x, sheetSize(mesh).y, sheetSize(mesh).z].sort((a, b) => b - a);
+  return long * mid;
 };
+/** Big enough to be a door or a drawer front, measured on the sheet rather than its swung bounding box. */
+const frontPanel = (mesh: Mesh, whole: Box3) => {
+  const dims = [sheetSize(mesh).x, sheetSize(mesh).y, sheetSize(mesh).z].sort((a, b) => a - b);
+  const w = size(whole);
+  const span = Math.max(w.x, w.y, w.z, 1e-6);
+  return dims[1] * dims[2] >= 0.12 * w.x * w.y || (dims[2] >= 0.35 * span && dims[1] >= 0.04 * span && dims[0] <= 0.15 * span);
+};
+const RUNNER = /\brunners?\b|(?:^|[\s\d_])(?:ال)?(?:مجرى|مجرى درج)(?=$|[\s\d_])/i;
 
 /** Structural parts never ride on a door or drawer, wherever they are (they hold the object together). */
 const STRUCTURAL = /\b(shelf|shelves|rail|rod|body|carcass|cabinet|back|plinth|base|divider|partition|side|frame|leg|top)\b|(?:^|[\s\d_])(?:ال)?(?:رف|رفوف|قضيب|هيكل|ظهر|قاعدة|فاصل|جانب|رجل|أرجل|إطار|لوح خلفي)(?=$|[\s\d_])/i; // Arabic as whole words (\b is ASCII only: "رف" is in "زخرفة")
@@ -405,7 +434,81 @@ export function faceOf(box: Box3, whole: Box3, frame: { up: Direction; front: Di
     return v.getComponent(i) > 0 ? whole.max.getComponent(i) - box.max.getComponent(i) : box.min.getComponent(i) - whole.min.getComponent(i);
   };
   const flush = ways.filter((d) => gap(d) <= 0.03 * Math.abs(size(whole).dot(VEC[d])) + 1e-4); // or beyond it
-  return flush.find((d) => Math.abs(VEC[d].getComponent(thin)) > 0.5) ?? flush.find((d) => d === frame.front) ?? (flush.length === 1 ? flush[0] : frame.front);
+  // Only a side across the thin axis is the face. A tall door whose top touches the cabinet is not a lid.
+  const alongThin = flush.filter((d) => Math.abs(VEC[d].getComponent(thin)) > 0.5);
+  return alongThin.find((d) => d === frame.front) ?? alongThin[0] ?? frame.front;
+}
+
+/** Model → the part's own sheet: +z along its thin axis (whichever way it is swung), +y up the sheet. */
+function sheetFrame(mesh: Mesh, modelRoot: Object3D): Matrix4 {
+  if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
+  const s = mesh.geometry.boundingBox!.getSize(new Vector3());
+  const thin = s.x <= s.y && s.x <= s.z ? new Vector3(1, 0, 0) : s.y <= s.z ? new Vector3(0, 1, 0) : new Vector3(0, 0, 1);
+  const toModel = modelRoot.matrixWorld.clone().invert().multiply(mesh.matrixWorld);
+  const normal = thin.transformDirection(toModel).normalize();
+  let up = new Vector3(0, 1, 0);
+  if (Math.abs(up.dot(normal)) > 0.85) up = new Vector3(1, 0, 0);
+  const x = new Vector3().crossVectors(up, normal).normalize();
+  const y = new Vector3().crossVectors(normal, x).normalize();
+  return new Matrix4().makeBasis(x, y, normal).transpose();
+}
+
+/** The sheet's thin axis in model space. */
+function sheetNormal(mesh: Mesh, modelRoot: Object3D): Vector3 {
+  if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
+  const s = mesh.geometry.boundingBox!.getSize(new Vector3());
+  const thin = s.x <= s.y && s.x <= s.z ? new Vector3(1, 0, 0) : s.y <= s.z ? new Vector3(0, 1, 0) : new Vector3(0, 0, 1);
+  return thin.transformDirection(modelRoot.matrixWorld.clone().invert().multiply(mesh.matrixWorld)).normalize();
+}
+
+/** Glass or a mirror lying on a door's sheet (the door may already be swung, so a world box is the wrong test). */
+function onSheet(host: Mesh, child: Mesh, modelRoot: Object3D): boolean {
+  // A door swung open is not on the closed door beside it: their sheets point different ways.
+  if (Math.abs(sheetNormal(host, modelRoot).dot(sheetNormal(child, modelRoot))) < 0.98) return false;
+  const frame = sheetFrame(host, modelRoot);
+  const hb = inFrame(boxInModel(host, modelRoot), frame);
+  const cb = inFrame(boxInModel(child, modelRoot), frame);
+  const f = size(cb);
+  const within = overlap(cb.min.x, cb.max.x, hb.min.x, hb.max.x) >= 0.8 * f.x && overlap(cb.min.y, cb.max.y, hb.min.y, hb.max.y) >= 0.8 * f.y;
+  const near = Math.abs(cb.getCenter(new Vector3()).z - hb.getCenter(new Vector3()).z) <= Math.max(size(hb).z, 0.03) + 0.04;
+  return within && near && sheetArea(child) <= 1.05 * sheetArea(host);
+}
+
+/** The hinge point on the real sheet, not on the box of a door that is already swung open. */
+function pivotOnMesh(mesh: Mesh, modelRoot: Object3D, anim: PartAnimation): [number, number, number] {
+  if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
+  const toModel = modelRoot.matrixWorld.clone().invert().multiply(mesh.matrixWorld);
+  const bb = mesh.geometry.boundingBox!;
+  const corners = [0, 1].flatMap((x) => [0, 1].flatMap((y) => [0, 1].map((z) => new Vector3(x ? bb.max.x : bb.min.x, y ? bb.max.y : bb.min.y, z ? bb.max.z : bb.min.z).applyMatrix4(toModel))));
+  const center = corners.reduce((sum, c) => sum.add(c), new Vector3()).multiplyScalar(1 / corners.length);
+  const { U, F, O, R } = partFrame(anim, anim.hinge ?? "left");
+  const E = { left: R.clone().negate(), right: R.clone(), top: U.clone(), bottom: U.clone().negate(), back: F.clone().negate(), front: F.clone() }[anim.hinge ?? "left"];
+  const dir = E.clone().normalize().add(O.clone().normalize());
+  const axis = new Vector3().crossVectors(O, E);
+  if (axis.lengthSq() < 1e-8) axis.copy(U);
+  axis.normalize();
+  const corner = corners.reduce((best, c) => (c.dot(dir) > best.dot(dir) ? c : best));
+  // Midpoint of the hinge edge: the corner nearest the hinge, then centred along that edge.
+  const pivot = corner.clone().addScaledVector(axis, center.dot(axis) - corner.dot(axis));
+  return pivot.toArray().map((v) => Math.round(v * 1e4) / 1e4) as [number, number, number];
+}
+
+/** Degrees this sheet is swung out from the closed face, about the hinge axis. 0: it is already shut. */
+export function authoredSwing(mesh: Mesh, modelRoot: Object3D, anim: Pick<PartAnimation, "face" | "axis">): number {
+  if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
+  const s = mesh.geometry.boundingBox!.getSize(new Vector3());
+  const thin = s.x <= s.y && s.x <= s.z ? new Vector3(1, 0, 0) : s.y <= s.z ? new Vector3(0, 1, 0) : new Vector3(0, 0, 1);
+  const toModel = modelRoot.matrixWorld.clone().invert().multiply(mesh.matrixWorld);
+  const normal = thin.transformDirection(toModel).normalize();
+  const face = VEC[anim.face ?? "front"];
+  if (normal.dot(face) < 0) normal.negate();
+  const axis = UNIT[anim.axis];
+  const n = normal.addScaledVector(axis, -normal.dot(axis));
+  const f = face.clone().addScaledVector(axis, -face.dot(axis));
+  if (n.lengthSq() < 1e-8 || f.lengthSq() < 1e-8) return 0;
+  n.normalize();
+  f.normalize();
+  return Math.atan2(new Vector3().crossVectors(f, n).dot(axis), f.dot(n)) * 180 / Math.PI;
 }
 
 /** The animations checked against the real meshes, at rest: pivots on each part's real box, side hinges from the
@@ -434,14 +537,26 @@ export function refine(
     return outlineShare(b, box) >= 0.5 * area(box);
   });
   let anims = (config?.animations ?? [])
-    .filter((a) => a.source !== "names" || moverKind(a.component, partOf.get(a.component)?.name, partOf.get(a.component)?.nameAr))
+    .filter((a) => {
+      const part = partOf.get(a.component);
+      if (a.source !== "manual" && RUNNER.test(words(names.get(a.component) ?? ""))) return false;
+      return a.source !== "names" || moverKind(a.component, part?.name, part?.nameAr);
+    })
     .map((a) => ({ ...a, follow: [...a.follow] }));
+  // A saved assembly can pin an open door to the closed door beside it. Keep a follower only while it still sits on
+  // its host; the door then gets its own swing below. A hand-built assembly is left as the vendor set it.
+  for (const a of anims) {
+    if (a.source === "manual") continue;
+    const box = boxes.get(a.component);
+    a.follow = box ? a.follow.filter((id) => id !== a.component && boxes.has(id) && attachedTo(box, boxes.get(id)!, depth)) : [];
+  }
   for (const p of parts) {
     if (anims.some((a) => a.component === p.id || a.follow.includes(p.id))) continue;
     const box = boxes.get(p.id)!;
     // A front-sized panel named as a door is the door even with an accessory word ("Mirror door backing", "Glazed door
-    // frame"); a small one ("door lock key ring") is not. Parts on a bigger moving part are sorted out below.
-    const kind = moverKind(p.id, p.name, p.nameAr) ?? (frontPanel(box, whole) && !surroundsLeaf(p.id, box) ? namedMover(p.id, p.name, p.nameAr) : null);
+    // frame"); a small one ("door lock key ring") is not. A runner is the drawer's rail, not its own drawer.
+    // Parts on a bigger moving part are sorted out below.
+    const kind = moverKind(p.id, p.name, p.nameAr) ?? (frontPanel(p.mesh, whole) && !surroundsLeaf(p.id, box) && !RUNNER.test(words(names.get(p.id) ?? "")) ? namedMover(p.id, p.name, p.nameAr) : null);
     if (!kind) continue;
     const base: PartAnimation = { id: `anim_${p.id}`, component: p.id, follow: [], label: p.name ?? p.id, labelAr: p.nameAr ?? null, motion: kind.motion, type: "rotation", axis: "y", unit: "degrees", duration: kind.motion === "slide" ? 0.6 : 0.8, enabled: true, confidence: 0.7, source: "names", issues: [], reason: "named a movable part" };
     anims.push(kind.build(base, box, whole));
@@ -453,11 +568,25 @@ export function refine(
     const box = boxes.get(a.component);
     if (!box || a.source === "manual") continue;
     const insert = ACCESSORY_WORDS.test(words(names.get(a.component) ?? ""));
-    const host = anims.find((o) => o !== a && boxes.get(o.component) && area(box) < (insert ? 1 : 0.4) * area(boxes.get(o.component)!) && attachedTo(boxes.get(o.component)!, box, depth));
+    const child = partOf.get(a.component)?.mesh;
+    const host = anims.find((o) => {
+      const hostBox = boxes.get(o.component);
+      const hostMesh = partOf.get(o.component)?.mesh;
+      if (o === a || !hostBox || !hostMesh || !child) return false;
+      if (sheetArea(child) >= (insert ? 1.05 : 0.4) * sheetArea(hostMesh)) return false;
+      return attachedTo(hostBox, box, depth) || (insert && onSheet(hostMesh, child, modelRoot));
+    });
     if (host) {
       host.follow.push(a.component, ...a.follow);
       anims = anims.filter((x) => x !== a);
     }
+  }
+  // A runner travels with the drawer front in the same column, instead of being its own control.
+  for (const p of parts) {
+    if (!RUNNER.test(words(names.get(p.id) ?? "")) || anims.some((a) => a.component === p.id || a.follow.includes(p.id))) continue;
+    const b = boxes.get(p.id);
+    const host = b && anims.find((a) => a.type === "translation" && boxes.has(a.component) && outlineShare(b, boxes.get(a.component)!) >= 0.5 * area(b));
+    if (host) host.follow.push(p.id);
   }
   // The vision analysis says what is attached to what: those parts join their moving parent.
   for (const [child, parent] of Object.entries(attached)) {
@@ -509,6 +638,8 @@ export function refine(
         const [hinge, why, sure] = hingeFromGeometry(box, carried, doorBoxes.filter((d) => d !== box), whole, R.lengthSq() > 0.5 ? R : new Vector3(1, 0, 0), a.source === "vision" ? a.hinge : undefined);
         next = { ...withHinge(next, hinge, box), reason: sure ? why : `Hinge side: ${why}`, ...(sure ? {} : { confidence: Math.min(next.confidence ?? 0.7, 0.5) }) };
       } else next = withHinge(next, next.hinge!, box);
+      const leaf = partOf.get(next.component)?.mesh;
+      if (leaf && next.hinge) next = { ...next, pivot: pivotOnMesh(leaf, modelRoot, next) };
     } else if (!next.distance || next.source === "names") {
       // Out the way it faces, half the model's depth that way (a drawer in a sideways model slides sideways).
       const way = next.source === "vision" && next.direction ? next.direction : next.face!;

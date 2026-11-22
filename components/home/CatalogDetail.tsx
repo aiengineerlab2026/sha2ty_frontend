@@ -15,6 +15,7 @@ import { StateToggle } from "@/components/vendor/StateToggle";
 import { PaintSwatch } from "@/components/vendor/PaintLibrary";
 import { fetchCatalogModel } from "@/lib/plan/api";
 import { formatPrice, type PriceUnit } from "@/lib/plan/pricing";
+import { catalogModelView } from "@/lib/plan/catalogView";
 import type { CatalogModel } from "@/lib/plan/types";
 import { supabase, supabaseConfigured } from "@/lib/supabase/client";
 import type { Carpet, Paint, VendorProfile, WindowItem } from "@/lib/vendor/types";
@@ -88,8 +89,10 @@ function ModelView({ model, signedIn }: { model: CatalogModel; signedIn: boolean
   const photos = useMemo(() => [...new Set([model.thumbnail, ...(model.variants ?? [])].filter((u): u is string => Boolean(u)))], [model]);
   const [shown, setShown] = useState<"3d" | number>(photos.length || !model.glb_url ? 0 : "3d");
   const [state, setState] = useState<"closed" | "open">("closed"); // a wardrobe with two states: shown closed first
+  const [pose, setPose] = useState<"open" | "closed" | null>(null); // unset until chosen, so a door modelled open stays open
   const description = useMemo(() => safeHtml(model.description ?? ""), [model.description]);
   const dims = model.width_m && model.height_m ? { width: model.width_m, height: model.height_m, ...(model.depth_m ? { depth: model.depth_m } : {}) } : null;
+  const view = catalogModelView(model, state);
 
   return (
     <Layout
@@ -98,16 +101,21 @@ function ModelView({ model, signedIn }: { model: CatalogModel; signedIn: boolean
         <div className="space-y-3">
           {shown === "3d" ? (
             <ModelViewer
-              url={state === "open" && model.open_glb_url ? model.open_glb_url : model.glb_url}
-              frameUrl={state === "open" && model.open_glb_url ? model.glb_url : undefined}
+              url={view.url}
+              frameUrl={view.legacy ? model.glb_url : undefined}
               dimensions={dims}
-              // Movable parts (doors, drawers…) open and close here; the open-state file has none of its own.
-              parts={state === "open" && model.open_glb_url ? null : model.components ?? null}
+              parts={view.legacy ? null : model.components ?? null}
+              pose={view.interactive ? pose : null}
             />
           ) : (
             <ImageCarousel images={photos} alt={model.title} className="aspect-4/3 bg-white" />
           )}
-          {shown === "3d" && model.open_glb_url && <StateToggle value={state} onChange={setState} />}
+          {shown === "3d" && view.legacy && (
+            <p className="rounded-xl bg-slate-50 px-3.5 py-2.5 text-sm text-slate-600 ring-1 ring-slate-200">{t("This open view is a fixed preview, so these doors cannot be opened or closed.")}</p>
+          )}
+          {shown === "3d" && (view.interactive || model.open_glb_url) && (
+            <StateToggle value={state} allowReselect={view.interactive} onChange={(next) => { setState(next); if (view.interactive) setPose(next); }} />
+          )}
           {/* Tabs only when there is a choice: photo-only models (no GLB) show just the photos. */}
           {model.glb_url && photos.length > 0 && (
             <div className="flex gap-2" role="tablist" aria-label={t("View")}>

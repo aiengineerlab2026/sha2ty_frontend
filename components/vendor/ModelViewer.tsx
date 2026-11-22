@@ -28,8 +28,8 @@ import { ResizeGizmo } from "@/components/designs/ResizeGizmo";
 import { AnimationPanel } from "./AnimationPanel";
 import { AddComponentsPanel, PickerBridge, PlacementOverlay, ResizeHandles, useComponentEditor } from "./AddComponents";
 import { choosePart, offsetAxis, specBox, type Side, type Surroundings } from "@/lib/vendor/parts3d";
-import { checkMovers, movedBox, openCavities, rebuildPanel, type Added } from "@/lib/vendor/reconstruct";
-import { animationClips, animationOf, applyAnimations, attachmentsFrom, boxInModel, carried, enabledAnimations, handleOf, meshesOf, refine, step, type AnimationConfig, type Openness } from "@/lib/vendor/animation";
+import { blocksPartIcon, checkMovers, movedBox, openCavities, rebuildPanel, type Added } from "@/lib/vendor/reconstruct";
+import { animationClips, animationOf, applyAnimations, attachmentsFrom, boxInModel, carried, enabledAnimations, handleOf, meshesOf, refine, shownOpen, step, targetFor, type AnimationConfig, type Openness } from "@/lib/vendor/animation";
 import { MIN_SIZE, resized, sizeCm } from "@/lib/designs/resize";
 import { restoreMaterial } from "@/lib/designs/materialRestore";
 import { TurnIcon } from "./TurnIcon";
@@ -668,7 +668,7 @@ export function IconTracker({ icons, els }: { icons: PartIcon[]; els: { current:
       return { icon, world, x: ((p.x + 1) / 2) * w, y: ((1 - p.y) / 2) * h, behind: p.z > 1 };
     });
     // Apart: two icons closer than an icon's width move away from each other, half each (two passes).
-    for (let pass = 0; pass < 2; pass++) {
+    for (let pass = 0; pass < 4; pass++) {
       for (let i = 0; i < at.length; i++) for (let j = i + 1; j < at.length; j++) {
         const dx = at[j].x - at[i].x, dy = at[j].y - at[i].y, d = Math.hypot(dx, dy);
         if (d >= ICON + 2) continue;
@@ -683,8 +683,8 @@ export function IconTracker({ icons, els }: { icons: PartIcon[]; els: { current:
         const to = a.world.clone().sub(camera.position);
         const distance = to.length();
         ray.set(camera.position, to.normalize());
-        const hit = ray.intersectObject(scene, true).find((x) => (x.object as Mesh).isMesh && x.object.visible);
-        hidden.current.set(a.icon.id, Boolean(hit && !a.icon.own.has(hit.object as Mesh) && hit.distance < distance - 0.01));
+        const hit = ray.intersectObject(scene, true).find((x) => blocksPartIcon(x.object as Mesh, a.icon.own));
+        hidden.current.set(a.icon.id, Boolean(hit && hit.distance < distance - 0.01));
       }
     }
     for (const a of at) {
@@ -1136,6 +1136,7 @@ export function ModelViewer({
   onUploadVariant,
   onVariantChange,
   partSizes = null,
+  pose = null,
 }: {
   url: string;
   /** Show `url` as another state of `frameUrl`'s product (an open wardrobe): placed exactly like that file. */
@@ -1214,6 +1215,8 @@ export function ModelViewer({
     lit?: string | null;
     onLit?: (key: string | null) => void;
   } | null;
+  /** Open or close every movable part. Unset: each part stays as the file shows it, including a door modelled open. */
+  pose?: "open" | "closed" | null;
 }) {
   const t = useT();
   const [downloading, setDownloading] = useState(false);
@@ -1263,7 +1266,7 @@ export function ModelViewer({
     live.current = {
       slots,
       added: new Set(partsEditor.added.map((a) => a.id)),
-      open: new Set((anim?.animations ?? []).filter((a) => (openTarget[a.id] ?? 0) > 0).flatMap((a) => [a.component, ...a.follow])),
+      open: new Set((anim?.animations ?? []).filter((a) => shownOpen(a, openTarget[a.id] ?? 0)).flatMap((a) => [a.component, ...a.follow])),
     };
   }, [slots, partsEditor.added, anim, openTarget]);
   const liveSlots = () => live.current.slots;
@@ -1323,7 +1326,16 @@ export function ModelViewer({
     return rest.multiply(mesh.matrixWorld.clone().invert());
   }, []);
   const idOfMesh = useCallback((mesh: Mesh) => slots.find((s) => s.mesh === mesh)?.id ?? null, [slots]);
-  const toggleOpen = useCallback((id: string) => setOpenTarget((now) => ({ ...now, [id]: (now[id] ?? 0) > 0 ? 0 : 1 })), []);
+  const toggleOpen = useCallback((id: string) => setOpenTarget((now) => {
+    const a = anim?.animations.find((item) => item.id === id);
+    const open = a ? shownOpen(a, now[id] ?? 0) : (now[id] ?? 0) > 0;
+    return { ...now, [id]: a ? targetFor(a, !open) : open ? 0 : 1 };
+  }), [anim]);
+  // The catalogue's Open / Closed choice. A door the file already shows open stays there until this is set.
+  useEffect(() => {
+    if (!pose || !anim) return;
+    setOpenTarget(Object.fromEntries(enabledAnimations(anim).map((a) => [a.id, targetFor(a, pose === "open")])));
+  }, [pose, anim]);
   // Each movable part's hand icon, on its handle (or the part when it has none), always shown; the page elements are
   // placed by IconTracker every frame.
   const iconEls = useRef(new Map<string, HTMLButtonElement>());
@@ -1988,10 +2000,10 @@ export function ModelViewer({
           <DoorOpen className="size-4 text-[#b8731d]" aria-hidden />
           <span className="font-semibold text-brand-navy">{t("Movable parts")}</span>
           <span className="rounded-full bg-slate-900/5 px-1.5 font-semibold tabular-nums text-slate-600">{enabledAnimations(anim).length}</span>
-          <button type="button" onClick={() => setOpenTarget(Object.fromEntries(enabledAnimations(anim).map((a) => [a.id, 1])))} className="ms-1 rounded-xl bg-brand-amber px-3 py-1.5 font-semibold text-brand-navy transition hover:bg-[#e8952a]">
+          <button type="button" onClick={() => setOpenTarget(Object.fromEntries(enabledAnimations(anim).map((a) => [a.id, targetFor(a, true)])))} className="ms-1 rounded-xl bg-brand-amber px-3 py-1.5 font-semibold text-brand-navy transition hover:bg-[#e8952a]">
             {t("Open all")}
           </button>
-          <button type="button" onClick={() => setOpenTarget({})} className="rounded-xl px-3 py-1.5 font-semibold text-slate-600 transition hover:bg-white">
+          <button type="button" onClick={() => setOpenTarget(Object.fromEntries(enabledAnimations(anim).map((a) => [a.id, targetFor(a, false)])))} className="rounded-xl px-3 py-1.5 font-semibold text-slate-600 transition hover:bg-white">
             {t("Close all")}
           </button>
         </div>
@@ -2005,7 +2017,8 @@ export function ModelViewer({
       )}
       <div className="pointer-events-none absolute inset-0 z-10 overflow-hidden" hidden={!hands}>
         {icons.map((icon) => {
-          const open = (openTarget[icon.id] ?? 0) > 0;
+          const part = anim?.animations.find((a) => a.id === icon.id);
+          const open = part ? shownOpen(part, openTarget[icon.id] ?? 0) : (openTarget[icon.id] ?? 0) > 0;
           return (
             <button
               key={icon.id}

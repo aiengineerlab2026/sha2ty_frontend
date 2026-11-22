@@ -1,5 +1,5 @@
 import { BackSide, Box3, BoxGeometry, BufferAttribute, BufferGeometry, Color, DoubleSide, Matrix4, Mesh, MeshStandardMaterial, Vector3, type Material, type Object3D } from "three";
-import { boxInModel, HINGES, localFrame, type AnimationConfig, type PartAnimation } from "./animation";
+import { authoredSwing, boxInModel, HINGES, localFrame, MAX_SWING, type AnimationConfig, type PartAnimation } from "./animation";
 
 /** Geometry reconstruction for movable parts (after `refine`, on the editor's / viewer's own copy of the model; the
  * stored original file is never touched):
@@ -76,7 +76,44 @@ export function frontFill(tri: Triangles | Triangles[], box: Box3): number {
   return Math.min(sum / Math.max(area(box), 1e-9), 1);
 }
 
+/** Model → the part's own sheet (+z along the thin axis, flipped so the surface faces +z). A door posed open is still thin. */
+function sheetBasis(mesh: Mesh, modelRoot: Object3D, tri: Triangles): Matrix4 {
+  if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
+  const s = mesh.geometry.boundingBox!.getSize(new Vector3());
+  const thin = s.x <= s.y && s.x <= s.z ? new Vector3(1, 0, 0) : s.y <= s.z ? new Vector3(0, 1, 0) : new Vector3(0, 0, 1);
+  const toModel = modelRoot.matrixWorld.clone().invert().multiply(mesh.matrixWorld);
+  const normal = thin.transformDirection(toModel).normalize();
+  let up = new Vector3(0, 1, 0);
+  if (Math.abs(up.dot(normal)) > 0.85) up = new Vector3(1, 0, 0);
+  const x = new Vector3().crossVectors(up, normal).normalize();
+  const y = new Vector3().crossVectors(normal, x).normalize();
+  let frame = new Matrix4().makeBasis(x, y, normal).transpose();
+  const turned = local(tri, frame);
+  let signed = 0;
+  for (let t = 0; t < turned.count; t++) signed += turned.nz[t] * turned.area[t];
+  if (signed < 0) frame = new Matrix4().makeBasis(x.negate(), y, normal.negate()).transpose();
+  return frame;
+}
+
+/** A mesh in front of a part icon. Glass and the part's own assembly do not hide the control. */
+export function blocksPartIcon(mesh: Mesh, own: Set<Mesh>): boolean {
+  if (!mesh.isMesh || !mesh.visible || own.has(mesh)) return false;
+  const list = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+  const clear = list.length > 0 && list.every((m) => {
+    const mat = m as MeshStandardMaterial & { transmission?: number };
+    return Boolean((mat.transparent && (mat.opacity ?? 1) <= 0.45) || (mat.transmission ?? 0) > 0.2);
+  });
+  return !clear;
+}
+
 const corners = (b: Box3) => [0, 1].flatMap((x) => [0, 1].flatMap((y) => [0, 1].map((z) => new Vector3(x ? b.max.x : b.min.x, y ? b.max.y : b.min.y, z ? b.max.z : b.min.z))));
+
+/** The mesh's own box in `frame`, so a swung door stays a thin sheet instead of the box around its swing. */
+function orientedBox(mesh: Mesh, modelRoot: Object3D, frame: Matrix4): Box3 {
+  if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
+  const toModel = modelRoot.matrixWorld.clone().invert().multiply(mesh.matrixWorld);
+  return new Box3().setFromPoints(corners(mesh.geometry.boundingBox!).map((p) => p.applyMatrix4(toModel).applyMatrix4(frame)));
+}
 const inFrame = (b: Box3, m: Matrix4) => new Box3().setFromPoints(corners(b).map((p) => p.applyMatrix4(m)));
 
 /** The part's box at the end of its movement (model coordinates). */
@@ -108,19 +145,31 @@ export function checkMovers(config: AnimationConfig | null, slots: SlotLike[], m
   const auto = config.animations.filter((a) => a.source !== "manual" && boxes.has(a.component));
   const issues = new Map<string, string[]>(config.animations.map((a) => [a.id, [...a.issues]]));
   const flip = new Set<string>();
+  const motionOf = new Map<string, PartAnimation>();
   // Overlapping moving parts cannot both be physical doors: the vision-matched, tighter fragment wins. Parts of one
   // assembly (glass in its frame, a handle on its door) are not a collision.
   const rank = (a: PartAnimation) => (a.source === "vision" ? 0 : 1) * 1e6 + area(boxes.get(a.component)!);
   const together = (a: PartAnimation, o: PartAnimation) => a.follow.includes(o.component) || o.follow.includes(a.component);
   for (const a of auto) {
     const box = boxes.get(a.component)!;
-    const m = localFrame(a);
-    const own = inFrame(box, m);
+    let motion = a;
+    let m = localFrame(a);
+    if (a.type === "rotation") {
+      const leaf = meshOf.get(a.component)!;
+      const swung = authoredSwing(leaf, modelRoot, a);
+      // The file shows this door open. Openness 0 keeps that pose; 1 turns it back onto the cabinet.
+      if (Math.abs(swung) > 12) motion = { ...a, rest: "open", from: 0, to: Math.max(-MAX_SWING, Math.min(MAX_SWING, -swung)) };
+      m = sheetBasis(leaf, modelRoot, triOf(a.component));
+    }
+    motionOf.set(a.id, motion);
+    const own = a.type === "rotation" ? orientedBox(meshOf.get(a.component)!, modelRoot, m) : inFrame(box, m);
     for (const o of config.animations) {
       const other = boxes.get(o.component);
       if (o === a || !other || !o.enabled || together(a, o)) continue;
-      const theirs = inFrame(other, m);
-      if (outlineOverlap(own, theirs) > 0.3 * Math.min(area(own), area(theirs)) && Math.abs(own.max.z - theirs.max.z) < 0.5 * Math.max(size(own).z, size(theirs).z, 0.02) + 0.05 * Math.max(size(own).x, size(own).y) && rank(a) > rank(o))
+      const theirs = meshOf.has(o.component) ? orientedBox(meshOf.get(o.component)!, modelRoot, m) : inFrame(other, m);
+      const ts = size(theirs);
+      const coplanar = ts.z < 0.35 * Math.min(ts.x, ts.y) && Math.abs(own.getCenter(new Vector3()).z - theirs.getCenter(new Vector3()).z) < Math.max(size(own).z, ts.z, 0.02) + 0.03;
+      if (coplanar && outlineOverlap(own, theirs) > 0.3 * Math.min(area(own), area(theirs)) && rank(a) > rank(o))
         issues.get(a.id)!.push(`Overlaps ${o.label}: the generated parts are cut wrongly here, so it is not moved.`);
     }
     const s = size(own);
@@ -129,8 +178,8 @@ export function checkMovers(config: AnimationConfig | null, slots: SlotLike[], m
     const fill = frontFill(assembly.map((id) => local(triOf(id), m)), own);
     if (s.z > 0.35 * Math.min(s.x, s.y) && a.type === "rotation") issues.get(a.id)!.push("Not a flat panel: it would swing a piece of the body.");
     if (fill < 0.6) issues.get(a.id)!.push(`An irregular piece (it covers ${Math.round(fill * 100)}% of its outline): rebuild it as a panel or leave it fixed.`);
-    if (intoBody(a, box)) {
-      const reversed: PartAnimation = a.type === "rotation" ? { ...a, to: -(a.to ?? 0) } : { ...a, distance: -(a.distance ?? 0) };
+    if (motion.rest !== "open" && intoBody(motion, box)) {
+      const reversed: PartAnimation = motion.type === "rotation" ? { ...motion, to: -(motion.to ?? 0) } : { ...motion, distance: -(motion.distance ?? 0) };
       if (intoBody(reversed, box)) issues.get(a.id)!.push("Its movement runs into the body either way.");
       else flip.add(a.id);
     }
@@ -138,7 +187,8 @@ export function checkMovers(config: AnimationConfig | null, slots: SlotLike[], m
   return {
     ...config,
     animations: config.animations.map((a) => {
-      const next = flip.has(a.id) ? (a.type === "rotation" ? { ...a, to: -(a.to ?? 0), reason: `${a.reason ?? ""} (turned outwards)`.trim() } : { ...a, distance: -(a.distance ?? 0) }) : a;
+      const base = motionOf.get(a.id) ?? a;
+      const next = flip.has(a.id) ? (base.type === "rotation" ? { ...base, to: -(base.to ?? 0), reason: `${base.reason ?? ""} (turned outwards)`.trim() } : { ...base, distance: -(base.distance ?? 0) }) : base;
       const list = [...new Set(issues.get(a.id) ?? [])];
       return a.source === "manual" ? { ...next, issues: list } : { ...next, issues: list, enabled: next.enabled && !list.length };
     }),

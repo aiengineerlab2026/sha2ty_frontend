@@ -1091,6 +1091,7 @@ export const AR: Record<string, string> = {
   "No designs yet.": "لا توجد تصميمات بعد.",
   "Open": "فتح",
   "Show hand icons": "إظهار أيقونات الفتح",
+  "This open view is a fixed preview, so these doors cannot be opened or closed.": "هذا العرض المفتوح صورة ثابتة، لذا لا يمكن فتح هذه الأبواب أو إغلاقها.",
   "Open a model in the catalogue and choose “Customise”, or save a plan from the plan builder to My designs.": "افتح موديلًا في الكتالوج واختر «خصّص»، أو احفظ مخططًا من مُنشئ المخططات في تصميماتي.",
   "Open in the plan builder": "افتح في مُنشئ المخططات",
   "Restore": "استعادة",
