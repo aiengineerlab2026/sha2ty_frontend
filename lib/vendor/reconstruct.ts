@@ -159,6 +159,11 @@ export type Obstacle = { label: string; box: Box3; local: Matrix4; mover?: PartA
  * fixed ones, and every other moving part shut, fully open and opening at the same time ("Open all"). `null` when
  * it opens fully. A part it already sits in when shut (the body around a door) is no obstacle. */
 export function safeAngle(anim: PartAnimation, own: Vector3[], others: Obstacle[]): { angle: number; by: string } | null {
+  return sweep(anim, own, others).stop;
+}
+
+/** safeAngle, and the moving parts behind this one (`after` it: they wait for it to open, so it meets them shut). */
+function sweep(anim: PartAnimation, own: Vector3[], others: Obstacle[]): { stop: { angle: number; by: string } | null; behind: PartAnimation[] } {
   const pivot = new Vector3(...(anim.pivot ?? [0, 0, 0]));
   const axis = new Vector3(anim.axis === "x" ? 1 : 0, anim.axis === "y" ? 1 : 0, anim.axis === "z" ? 1 : 0);
   const closed = own.map((p) => p.clone().applyMatrix4(turnAt(anim, 0)));
@@ -179,17 +184,27 @@ export function safeAngle(anim: PartAnimation, own: Vector3[], others: Obstacle[
   const obstacles = others.filter((o) => !inside(o, 0, free) && !o.box.clone().expandByScalar(0.01).containsPoint(centre.clone().applyMatrix4(into(o, 0))));
   const wanted = openAngle(anim), sign = Math.sign((anim.to ?? 0) - (anim.from ?? 0)) || 1;
   const shut = turnAt(anim, 0).invert();
+  // A part that, open, would be where this one is shut (a drawer behind a door) waits for this one to open (`after`,
+  // step) and is shut again before it closes: it is only ever met shut.
+  // In the part's own frame (+z out of its face): what sits wholly behind its shut face and, open, comes through it.
+  const face = localFrame(anim);
+  const shutBox = new Box3().setFromPoints(closed.map((p) => p.clone().applyMatrix4(face))).expandByScalar(-CLEAR);
+  const boxAt = (o: Obstacle, f: number) => new Box3().setFromPoints(corners(o.box).map((p) => p.applyMatrix4(into(o, f).invert()).applyMatrix4(face)));
+  // Its whole travel, shut to open (a drawer front alone jumps clean over a door's thin slab between the two poses).
+  const travel = (o: Obstacle) => [0, 0.25, 0.5, 0.75, 1].reduce((all, f) => all.union(boxAt(o, f)), new Box3());
+  const behind = new Set(obstacles.filter((o) => o.mover && boxAt(o, 0).max.z <= shutBox.min.z + CLEAR && travel(o).intersectsBox(shutBox)));
   for (let a = STEP; a < wanted + STEP; a += STEP) {
     const at = Math.min(a, wanted);
     const pts = free.map((p) => p.clone().applyMatrix4(turnAt(anim, 0, (anim.from ?? 0) + sign * at).multiply(shut)));
     for (const o of obstacles) {
-      const poses: [number, string][] = o.mover ? [[0, ""], [1, " (open)"], [at / wanted, " (opening with it)"]] : [[0, ""]];
+      const poses: [number, string][] = !o.mover || behind.has(o) ? [[0, ""]] : [[0, ""], [1, " (open)"], [at / wanted, " (opening with it)"]];
       const hit = poses.find(([f]) => inside(o, f, pts));
-      if (hit) return { angle: Math.max(0, at - STEP), by: o.label + hit[1] };
+      if (hit) return { stop: { angle: Math.max(0, at - STEP), by: o.label + hit[1] }, behind: movers(behind) };
     }
   }
-  return null;
+  return { stop: null, behind: movers(behind) };
 }
+const movers = (list: Set<Obstacle>) => [...new Set([...list].map((o) => o.mover!))];
 
 /** Does the movement go into the body (behind the part's own back face, in its own frame, by more than a sliver)? */
 export function intoBody(anim: PartAnimation, box: Box3): boolean {
@@ -273,6 +288,7 @@ export function checkMovers(config: AnimationConfig | null, slots: SlotLike[], m
   const meshBox = (mesh: Mesh) => { if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox(); return mesh.geometry.boundingBox!.clone(); };
   const toLocal = (mesh: Mesh) => mesh.matrixWorld.clone().invert().multiply(modelRoot.matrixWorld);
   const label = (id: string) => slots.find((s) => s.id === id)?.name ?? id;
+  const waits = new Map<string, string[]>(); // a part → the doors in front of it
   out.forEach((a, i) => {
     if (a.type !== "rotation" || !a.enabled || !meshOf.has(a.component)) return;
     const mine = new Set([a.component, ...a.follow]);
@@ -281,13 +297,14 @@ export function checkMovers(config: AnimationConfig | null, slots: SlotLike[], m
       return { label: label(id), box: meshBox(mesh), local: toLocal(mesh), ...(owner ? { mover: owner } : {}) };
     });
     const own = [...mine].filter((id) => meshOf.has(id)).flatMap((id) => meshCorners(meshOf.get(id)!, modelRoot));
-    const stop = safeAngle(a, own, others);
+    const { stop, behind } = sweep(a, own, others);
+    for (const b of behind) waits.set(b.id, [...(waits.get(b.id) ?? []), a.id]);
     if (!stop) { out[i] = { ...a, limit: undefined }; return; }
     const sign = Math.sign((a.to ?? 0) - (a.from ?? 0)) || 1;
     // The vendor's own angle is kept (the warning still shows); a detected one opens only as far as is clear.
     out[i] = { ...a, limit: { angle: stop.angle, wanted: openAngle(a), by: stop.by }, ...(a.source === "manual" ? {} : { to: (a.from ?? 0) + sign * stop.angle }) };
   });
-  return { ...config, animations: out };
+  return { ...config, animations: out.map((a) => ({ ...a, after: waits.get(a.id) })) };
 }
 
 /** Keeps only the triangles `keep` says, group ranges (one material each) rebuilt to match. In place: the mesh's own

@@ -4,7 +4,7 @@ import { useState } from "react";
 import { ChevronDown, DoorOpen, Pause, Play, Plus, RotateCcw, Trash2, TriangleAlert } from "lucide-react";
 import { useT } from "@/lib/i18n";
 import {
-  enabledAnimations, manualAnimation, openAngle, problems, withAngle, withDirection, withHinge, type AnimationFlag,
+  enabledAnimations, manualAnimation, openAngle, openPart, problems, withAngle, withDirection, withHinge, type AnimationFlag,
   type AnimationConfig, type Direction, type Hinge, type Openness, type PartAnimation,
 } from "@/lib/vendor/animation";
 import type { Box3, Mesh } from "three";
@@ -117,7 +117,7 @@ export function AnimationPanel({
                   <div className="flex items-center gap-2">
                     {edit && <input type="checkbox" checked={a.enabled} onChange={(e) => set(a.id, { ...a, enabled: e.target.checked })} aria-label={t("Animate {name}", { name: label(a) })} className="size-3.5 accent-[#f2a33a]" />}
                     <span className="min-w-0 flex-1 truncate text-xs font-medium text-slate-700">{label(a)}</span>
-                    <button type="button" disabled={!a.enabled} onClick={() => onTarget({ ...target, [a.id]: isOpen ? 0 : 1 })} className="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-semibold text-brand-navy ring-1 ring-slate-200 disabled:opacity-40">
+                    <button type="button" disabled={!a.enabled} onClick={() => onTarget(openPart(config, target, a.id, isOpen ? 0 : 1))} className="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-semibold text-brand-navy ring-1 ring-slate-200 disabled:opacity-40">
                       {isOpen ? <Pause className="size-3" aria-hidden /> : <Play className="size-3" aria-hidden />}{t(isOpen ? "Close" : "Open")}
                     </button>
                     {edit && (

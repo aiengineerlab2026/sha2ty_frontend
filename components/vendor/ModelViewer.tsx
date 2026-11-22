@@ -11,7 +11,7 @@ import { Box3, BufferGeometry, Color, DirectionalLight, Euler, Group, LinearSRGB
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 import { FILL_POSITION, KEY_POSITION, STUDIO_LIGHT } from "@/lib/vendor/studioLight";
 import { GLTFExporter } from "three/examples/jsm/exporters/GLTFExporter.js";
-import { alignLike, fitScale, measure, normalizeModel, type CatalogSize, type Dimensions, type NormalizationReport } from "@/lib/plan/modelNormalization";
+import { alignLike, fitScale, measure, normalizeModel, refitShut, type CatalogSize, type Dimensions, type NormalizationReport } from "@/lib/plan/modelNormalization";
 import type { AddablePart, MaterialEdit, PartDocument, PartEditorApi, PartInfo, PartVariant } from "@/lib/vendor/parts";
 import { fitInto, loadVariant } from "@/lib/vendor/partVariant";
 import { sameShape, variantProblems } from "@/lib/vendor/variantCheck";
@@ -29,7 +29,7 @@ import { AnimationPanel } from "./AnimationPanel";
 import { AddComponentsPanel, PickerBridge, PlacementOverlay, ResizeHandles, useComponentEditor } from "./AddComponents";
 import { choosePart, offsetAxis, specBox, type Side, type Surroundings } from "@/lib/vendor/parts3d";
 import { blocksPartIcon, checkMovers, movedBox, openCavities, paneBacks, rebuildPanel, type Added } from "@/lib/vendor/reconstruct";
-import { animationClips, animationOf, applyAnimations, attachmentsFrom, boxInModel, carried, enabledAnimations, fromClosed, handleOf, meshesOf, refine, shownOpen, step, targetFor, type AnimationConfig, type Openness } from "@/lib/vendor/animation";
+import { animationClips, animationOf, applyAnimations, attachmentsFrom, boxInModel, carried, enabledAnimations, fromClosed, handleOf, meshesOf, openPart, refine, shownOpen, step, targetFor, type AnimationConfig, type Openness } from "@/lib/vendor/animation";
 import { MIN_SIZE, resized, sizeCm } from "@/lib/designs/resize";
 import { restoreMaterial } from "@/lib/designs/materialRestore";
 import { TurnIcon } from "./TurnIcon";
@@ -456,6 +456,9 @@ function clearStaleGlow(mat: Material): boolean {
   return true;
 }
 
+/** Ids of the parts the viewer adds (reconstruct.ts openCavities / paneBacks), as earlier saves wrote them. */
+const ADDED_PART = /^(Drawer box|Drawer space|Interior|Backing) \(|^(cavity|drawer_box|backing)_/;
+
 export function prepare(root: Object3D, server?: PartDocument | null): { slots: Slot[]; cleaned: boolean } {
   const meshes: Mesh[] = [];
   root.traverse((node) => {
@@ -468,7 +471,12 @@ export function prepare(root: Object3D, server?: PartDocument | null): { slots: 
   // The saved part list is matched by mesh name when the file's meshes carry the parts' ids (the procedural wardrobe,
   // split models); by order only when none do, so one missing or extra mesh never shifts every name after it.
   const byId = new Map((server?.components ?? []).map((c) => [c.id, c]));
-  const named = meshes.some((mesh) => byId.has(mesh.name));
+  // Parts the viewer added itself (interiors, drawer boxes, backings) carry their id as their name: matched by it, and
+  // never counted here, so preparing the same (cached) scene again never switches the file's own meshes to names.
+  const added = (mesh: Mesh) => Boolean(mesh.userData?.estimated);
+  const named = meshes.some((mesh) => !added(mesh) && byId.has(mesh.name));
+  let k = 0; // the next saved part, for a file matched by order (added parts take none)
+  const inFile = (server?.components ?? []).filter((c) => c.naming !== "estimated" && !ADDED_PART.test(c.id));
   for (const mesh of meshes) {
     const list = materials(mesh).map((mat) => mat.clone()); // own copies: edits never reach another mesh
     for (const mat of list) cleaned = clearStaleGlow(mat) || cleaned;
@@ -482,7 +490,8 @@ export function prepare(root: Object3D, server?: PartDocument | null): { slots: 
       if (mat.name === CORE) return; // the sheet's cut edge belongs to the face part
       // The part id written into the file at export (glTF extras → userData) first: stable whatever the mesh order.
       const saved = (mesh.userData.partIds as string[] | undefined)?.[materialIndex] ?? (list.length === 1 ? (mesh.userData.partId as string | undefined) : undefined);
-      const linked: PartInfo | undefined = (saved ? byId.get(saved) ?? { id: saved, name: mesh.name, editable: true } : undefined) ?? (named ? (list.length === 1 ? byId.get(mesh.name) : undefined) : server?.components[n]);
+      const linked: PartInfo | undefined = (saved ? byId.get(saved) ?? { id: saved, name: mesh.name, editable: true } : undefined)
+        ?? (added(mesh) ? byId.get(mesh.name) ?? { id: mesh.name, name: mesh.name, naming: "estimated", editable: true } : named ? (list.length === 1 ? byId.get(mesh.name) : undefined) : inFile[k++]);
       // A photo name for another layer of the panel (the backing behind a mirror called "mirror"): the file's own wins.
       const from = linked && ownLayerName(linked, { materialName: mat.name, look: mat as unknown as Look });
       let id = from?.id || mesh.name || `part_${n}`;
@@ -556,6 +565,8 @@ export function movableParts(saved: AnimationConfig | null | undefined, slots: S
   const model = authored(root);
   const checked = checkMovers(refine(saved, slots, model, attachmentsFrom(doc)), slots, model);
   if (!checked) return null;
+  // A file that shows a door open is fitted to its catalogue size with the door shut (it measured too deep open).
+  if (checked.animations.some((a) => a.enabled && a.from)) refitShut(root, () => applyAnimations(slots, model, checked, {}), () => applyPoses(slots, undefined));
   const added = [...paneBacks(checked, slots, model), ...openCavities(checked, slots, model)];
   for (const part of added) {
     adopt(slots, part);
@@ -1330,10 +1341,12 @@ export function ModelViewer({
     return rest.multiply(mesh.matrixWorld.clone().invert());
   }, []);
   const idOfMesh = useCallback((mesh: Mesh) => slots.find((s) => s.mesh === mesh)?.id ?? null, [slots]);
+  // The moving parts' bar is docked at the bottom of the canvas (viewing, once the model is in).
+  const docked = !edit && enabledAnimations(anim).length > 0 && loadedUrl === url;
   const toggleOpen = useCallback((id: string) => setOpenTarget((now) => {
     const a = anim?.animations.find((item) => item.id === id);
     const open = a ? shownOpen(a, now[id] ?? 0) : (now[id] ?? 0) > 0;
-    return { ...now, [id]: a ? targetFor(a, !open) : open ? 0 : 1 };
+    return openPart(anim, now, id, a ? targetFor(a, !open) : open ? 0 : 1); // a drawer behind a door opens it too
   }), [anim]);
   // The catalogue's Open / Closed choice, applied when it (or the movable parts) change: set while rendering, not in
   // an effect, so the parts never draw one frame in the old state.
@@ -1616,6 +1629,9 @@ export function ModelViewer({
     // At rest: every door and drawer found and checked on the real meshes (pivots, hinges, handles moving along).
     applyPoses(next, undefined);
     const found = movableParts(serverRef.current?.animation, next, object, serverRef.current); // may add interiors to `next`
+    // Fitted again with its doors shut (refitShut): the size and its notes are the furniture's, not the file's pose.
+    const fitted = object.userData?.normalization as NormalizationReport | undefined;
+    if (fitted) setReport(fitted);
     setDetected(found);
     setAnim(found);
     setOpenTarget(found?.state ?? {}); // as the user left it
@@ -2007,7 +2023,7 @@ export function ModelViewer({
       </Canvas>
       {/* The hand icons, one per movable part, on its handle (moved there every frame by IconTracker): above the canvas,
           so a click never turns the camera or selects a part. */}
-      {!edit && enabledAnimations(anim).length > 0 && loadedUrl === url && (
+      {docked && (
         // The moving parts, docked on glass at the bottom of the canvas: how many, open all, close all.
         <div className="absolute bottom-3 end-3 z-20 flex items-center gap-1 rounded-2xl border border-white/70 bg-white/65 p-1 ps-3 text-xs shadow-lg shadow-slate-900/10 backdrop-blur-md">
           <DoorOpen className="size-4 text-[#b8731d]" aria-hidden />
@@ -2136,7 +2152,8 @@ export function ModelViewer({
           </div>
         </div>
       )}
-      <div className={`pointer-events-none absolute inset-x-3 flex flex-col items-center gap-1 text-[11px] ${overlay ? "top-12" : "bottom-3"} ${fill ? "max-lg:bottom-auto max-lg:top-16" : ""}`}>
+      {/* Above the moving parts' bar when it is docked at the bottom, never under it. */}
+      <div className={`pointer-events-none absolute inset-x-3 flex flex-col items-center gap-1 text-[11px] ${overlay ? "top-12" : docked ? "bottom-16" : "bottom-3"} ${fill ? "max-lg:bottom-auto max-lg:top-16" : ""}`}>
         {/* With the page's own overlay (studio) its size pill replaces this one; on phones the size pill on top does. */}
         <p className={`${overlay ? "hidden" : ""} ${fill ? "max-lg:hidden" : ""} rounded-full border border-white/70 bg-white/85 px-3 py-1 font-medium tabular-nums text-slate-700 shadow-sm backdrop-blur`}>
           {size

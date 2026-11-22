@@ -41,6 +41,9 @@ export type PartAnimation = {
   /** A collision stops the part before its configured angle (checkMovers): it opens to `angle`° instead of `wanted`°,
    * where it would hit `by`. */
   limit?: { angle: number; wanted: number; by: string };
+  /** The parts in front of this one (a door before the drawer behind it, checkMovers): it starts opening once they are
+   * open, and they close only once it is shut (step). Opening it opens them; closing one of them closes it (openPart). */
+  after?: string[];
   /** The hinge side was not proven by hinges, a handle, the file's own open pose, a pair or the photo: the vendor
    * should confirm it (AnimationPanel). The door still opens, on the likelier side. */
   hingeUnsure?: boolean;
@@ -261,13 +264,44 @@ export function targetFor(anim: Pick<PartAnimation, "rest">, open: boolean): num
   return anim.rest === "open" ? (open ? 0 : 1) : (open ? 1 : 0);
 }
 
-/** Steps each open fraction towards its target (at the animation's own speed): true while anything still moves. */
+/** The target with what a part's opening needs: the parts in front of an opening part open too (a drawer behind a
+ * door opens its door), so nothing passes through a shut door. */
+export function withFront(config: AnimationConfig | null | undefined, target: Openness): Openness {
+  const out = { ...target };
+  const byId = new Map((config?.animations ?? []).map((a) => [a.id, a]));
+  const open = (id: string, seen: Set<string>) => {
+    for (const f of byId.get(id)?.after ?? []) if (!seen.has(f)) { seen.add(f); out[f] = Math.max(out[f] ?? 0, 1); open(f, seen); }
+  };
+  for (const [id, t] of Object.entries(target)) if (t > 0) open(id, new Set([id]));
+  return out;
+}
+
+/** Opens or shuts one part: opening also opens the parts in front of it; shutting also shuts the parts behind it. */
+export function openPart(config: AnimationConfig | null | undefined, target: Openness, id: string, value: number): Openness {
+  const out = { ...target, [id]: value };
+  if (value > 0) return withFront(config, out);
+  const close = (front: string) => {
+    for (const a of config?.animations ?? []) if (a.after?.includes(front) && (out[a.id] ?? 0) > 0) { out[a.id] = 0; close(a.id); }
+  };
+  close(id);
+  return out;
+}
+
+const SETTLED = 0.999;
+/** Steps each open fraction towards its target (at the animation's own speed): true while anything still moves. A part
+ * behind another (`after`) starts opening once the parts in front are open, and those close once it is shut. */
 export function step(current: Openness, target: Openness, config: AnimationConfig | null | undefined, dt: number): boolean {
   let moving = false;
-  for (const anim of config?.animations ?? []) {
+  const goals = withFront(config, target);
+  const animations = config?.animations ?? [];
+  for (const anim of animations) {
     const now = current[anim.id] ?? 0;
-    const goal = anim.enabled && config?.answer !== "no" ? target[anim.id] ?? 0 : 0;
+    const goal = anim.enabled && config?.answer !== "no" ? goals[anim.id] ?? 0 : 0;
     if (now === goal) continue;
+    const waiting = goal > now
+      ? (anim.after ?? []).some((f) => (current[f] ?? 0) < SETTLED * Math.max(goals[f] ?? 0, 1e-9) || (goals[f] ?? 0) <= 0)
+      : animations.some((b) => b.after?.includes(anim.id) && (current[b.id] ?? 0) > 1 - SETTLED);
+    if (waiting) { moving = true; continue; }
     const delta = dt / Math.max(anim.duration, 0.05);
     current[anim.id] = goal > now ? Math.min(goal, now + delta) : Math.max(goal, now - delta);
     moving = true;

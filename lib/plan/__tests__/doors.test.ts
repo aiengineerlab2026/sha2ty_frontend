@@ -575,3 +575,65 @@ test("a mirror door that is one mesh in one material: the mirror stays on the fr
   glass.slots.find((s) => s.id === "far_left")!.mesh.material = new MeshPhysicalMaterial({ transmission: 0.9, transparent: true, opacity: 0.4 });
   assert.equal(paneBacks(ready(glass.slots, glass.model), glass.slots, glass.model).length, 0);
 });
+
+// ---- What the catalogue page showed: drawers behind doors, the order things move in, the fit with doors shut.
+import { openPart, step } from "../../vendor/animation";
+import { normalizeModel, refitShut } from "../modelNormalization";
+
+/** The mirrored wardrobe with three drawers in the middle bay, behind the two glazed doors. */
+function withDrawers() {
+  const w = mirroredWardrobe();
+  for (const k of [1, 2, 3]) {
+    const m = new Mesh(new BoxGeometry(0.7, 0.18, 0.02).translate(0, 0.15 + k * 0.2, 0.265), new MeshStandardMaterial());
+    m.name = `Drawer ${k} front`;
+    w.model.add(m);
+    w.slots.push({ id: `drawer_${k}`, name: `Drawer ${k} front`, mesh: m });
+  }
+  w.model.updateMatrixWorld(true);
+  return w;
+}
+
+test("drawers behind doors wait for them: open all moves the doors first, close all the drawers first; no door is stopped by them", () => {
+  const { model, slots } = withDrawers();
+  const c = ready(slots, model);
+  const left = byComponent(c, "Left_frame"), right = byComponent(c, "Right_frame");
+  for (const k of [1, 2, 3]) assert.deepEqual([...(byComponent(c, `drawer_${k}`).after ?? [])].sort(), [left.id, right.id].sort(), `drawer ${k}`);
+  assert.equal(openAngle(left), 95, JSON.stringify(left.limit));
+  assert.equal(openAngle(right), 95, JSON.stringify(right.limit));
+  // Open all: the doors swing, the drawers stay in until both doors are open; then they slide.
+  const now: Record<string, number> = {};
+  const all = (v: number) => Object.fromEntries(c.animations.map((a) => [a.id, v]));
+  step(now, all(1), c, 0.3);
+  assert.ok(now[left.id] > 0 && !(now[byComponent(c, "drawer_1").id] > 0), JSON.stringify(now));
+  for (let i = 0; i < 20; i++) step(now, all(1), c, 0.1);
+  assert.ok(c.animations.every((a) => !a.enabled || now[a.id] === 1), JSON.stringify(now));
+  // Close all: the drawers go in first, the doors wait.
+  step(now, all(0), c, 0.3);
+  assert.ok(now[left.id] === 1 && now[byComponent(c, "drawer_1").id] < 1);
+  for (let i = 0; i < 30; i++) step(now, all(0), c, 0.1);
+  assert.ok(c.animations.every((a) => !now[a.id]), JSON.stringify(now));
+  // One drawer opened with its doors shut opens them; one door shut closes the drawers behind it.
+  const opened = openPart(c, {}, byComponent(c, "drawer_2").id, 1);
+  assert.equal(opened[left.id], 1);
+  assert.equal(opened[right.id], 1);
+  const shut = openPart(c, all(1), left.id, 0);
+  assert.ok([1, 2, 3].every((k) => shut[byComponent(c, `drawer_${k}`).id] === 0) && shut[right.id] === 1);
+  // A neighbouring door never waits for another (no two parts wait for each other).
+  assert.ok(c.animations.filter((a) => a.type === "rotation").every((a) => !a.after?.length));
+});
+
+test("a file showing doors open is fitted to its catalogue size with them shut, not shrunk by their swing", () => {
+  const { model, slots: original } = mirroredWardrobe();
+  const { object, report } = normalizeModel(model, { width: 2.4, height: 2.3, depth: 0.6 });
+  assert.ok(report.warnings.length > 0, "open, the file measures too deep for its catalogue size");
+  const inner = object.getObjectByName("orient")!.children[0] as Group;
+  // normalizeModel works on a copy: its own meshes, found by name.
+  const slots: Slot[] = original.map((s) => ({ ...s, mesh: inner.getObjectByName(s.mesh.name) as Mesh }));
+  const c = ready(slots, inner);
+  const rest = new Map(slots.map((s) => [s.mesh, [s.mesh.position.clone(), s.mesh.quaternion.clone()] as const]));
+  const fitted = refitShut(object, () => applyAnimations(slots, inner, c, {}), () => { for (const [m, [p, q]] of rest) { m.position.copy(p); m.quaternion.copy(q); } })!;
+  assert.deepEqual(fitted.warnings, []);
+  // Within 3 % (this fixture's own body is 62 cm deep).
+  assert.ok(Math.abs(fitted.finalSize.width / 2.4 - 1) < 0.03 && Math.abs(fitted.finalSize.height / 2.3 - 1) < 0.03, JSON.stringify(fitted.finalSize));
+  assert.ok(slots.every((s) => rest.get(s.mesh)![0].equals(s.mesh.position)), "the parts are back in their own pose");
+});
