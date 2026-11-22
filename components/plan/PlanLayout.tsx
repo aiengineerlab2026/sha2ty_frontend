@@ -1,5 +1,6 @@
 "use client";
 
+import { openPart } from "@/lib/vendor/animation";
 import { kindEnabled } from "@/lib/features";
 import { authSession } from "@/lib/auth/client";
 import { useT } from "@/lib/i18n";
@@ -977,7 +978,7 @@ export function PlanLayout() {
                       if (item.instanceId !== id) return item;
                       if (change.config) return { ...item, partDocument: { ...(item.partDocument ?? { components: [] }), animation: change.config } };
                       const open = item.animationOpen ?? {};
-                      return { ...item, animationOpen: { ...open, [change.toggle!]: (open[change.toggle!] ?? 0) > 0 ? 0 : 1 } };
+                      return { ...item, animationOpen: openPart(item.partDocument?.animation, open, change.toggle!, (open[change.toggle!] ?? 0) > 0 ? 0 : 1) };
                     }),
                   );
                 }}

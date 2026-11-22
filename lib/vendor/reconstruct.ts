@@ -1,5 +1,6 @@
-import { BackSide, Box3, BoxGeometry, BufferAttribute, BufferGeometry, Color, DoubleSide, Matrix4, Mesh, MeshStandardMaterial, Vector3, type Material, type Object3D } from "three";
-import { authoredSwing, boxInModel, HINGES, localFrame, MAX_SWING, type AnimationConfig, type PartAnimation } from "./animation";
+import { BackSide, Box3, BoxGeometry, BufferAttribute, BufferGeometry, Color, DoubleSide, FrontSide, Matrix4, Mesh, MeshStandardMaterial, Vector3, type Material, type Object3D } from "three";
+import { layerOfLook } from "./layers";
+import { authoredSwing, boxInModel, HINGES, localFrame, openAngle, sheetArea, type AnimationConfig, type PartAnimation } from "./animation";
 
 /** Geometry reconstruction for movable parts (after `refine`, on the editor's / viewer's own copy of the model; the
  * stored original file is never touched):
@@ -117,16 +118,93 @@ function orientedBox(mesh: Mesh, modelRoot: Object3D, frame: Matrix4): Box3 {
 const inFrame = (b: Box3, m: Matrix4) => new Box3().setFromPoints(corners(b).map((p) => p.applyMatrix4(m)));
 
 /** The part's box at the end of its movement (model coordinates). */
-export function movedBox(anim: PartAnimation, box: Box3): Box3 {
+export function movedBox(anim: PartAnimation, box: Box3, t = 1): Box3 {
   if (anim.type === "translation") {
-    const d = new Vector3(anim.axis === "x" ? 1 : 0, anim.axis === "y" ? 1 : 0, anim.axis === "z" ? 1 : 0).multiplyScalar(anim.distance ?? 0);
+    const d = new Vector3(anim.axis === "x" ? 1 : 0, anim.axis === "y" ? 1 : 0, anim.axis === "z" ? 1 : 0).multiplyScalar((anim.distance ?? 0) * t);
     return box.clone().translate(d);
   }
+  return new Box3().setFromPoints(corners(box).map((p) => p.applyMatrix4(turnAt(anim, t))));
+}
+
+/** The rigid turn (model coordinates) from the file's pose to `anim` at `t`, as poseAt plays it. */
+export function turnAt(anim: PartAnimation, t: number, degrees = (anim.from ?? 0) + ((anim.to ?? 0) - (anim.from ?? 0)) * t): Matrix4 {
   const pivot = new Vector3(...(anim.pivot ?? [0, 0, 0]));
   const axis = new Vector3(anim.axis === "x" ? 1 : 0, anim.axis === "y" ? 1 : 0, anim.axis === "z" ? 1 : 0);
-  const m = new Matrix4().makeTranslation(pivot.x, pivot.y, pivot.z).multiply(new Matrix4().makeRotationAxis(axis, (((anim.to ?? 0) - (anim.from ?? 0)) * Math.PI) / 180)).multiply(new Matrix4().makeTranslation(-pivot.x, -pivot.y, -pivot.z));
-  return new Box3().setFromPoints(corners(box).map((p) => p.applyMatrix4(m)));
+  return new Matrix4().makeTranslation(pivot.x, pivot.y, pivot.z).multiply(new Matrix4().makeRotationAxis(axis, (degrees * Math.PI) / 180)).multiply(new Matrix4().makeTranslation(-pivot.x, -pivot.y, -pivot.z));
 }
+
+/** A mesh's own box corners in model coordinates (they turn rigidly with it). */
+function meshCorners(mesh: Mesh, modelRoot: Object3D): Vector3[] {
+  if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
+  const toModel = modelRoot.matrixWorld.clone().invert().multiply(mesh.matrixWorld);
+  return corners(mesh.geometry.boundingBox!).map((p) => p.applyMatrix4(toModel));
+}
+
+const STEP = 2; // degrees between collision samples
+const CLEAR = 0.003; // m: touching within this is not a collision
+
+/** A part's pose at openness `f` relative to the file (model coordinates): what applyAnimations does to it. */
+export function poseMatrix(anim: PartAnimation, f: number): Matrix4 {
+  if (anim.type === "rotation") return turnAt(anim, f);
+  const d = (anim.distance ?? 0) * f;
+  return new Matrix4().makeTranslation(anim.axis === "x" ? d : 0, anim.axis === "y" ? d : 0, anim.axis === "z" ? d : 0);
+}
+
+/** Something a turning part may hit: a part's own box (`box`, in the frame `local` maps model coordinates to at the
+ * file's pose: a mesh's own geometry box, so a swung door is its true slab, not a loose world box), moving with
+ * `mover` when it is on another moving part. */
+export type Obstacle = { label: string; box: Box3; local: Matrix4; mover?: PartAnimation };
+
+/** The widest a turning part opens (≤ its configured angle) before the swinging half of it enters another part: the
+ * fixed ones, and every other moving part shut, fully open and opening at the same time ("Open all"). `null` when
+ * it opens fully. A part it already sits in when shut (the body around a door) is no obstacle. */
+export function safeAngle(anim: PartAnimation, own: Vector3[], others: Obstacle[]): { angle: number; by: string } | null {
+  return sweep(anim, own, others).stop;
+}
+
+/** safeAngle, and the moving parts behind this one (`after` it: they wait for it to open, so it meets them shut). */
+function sweep(anim: PartAnimation, own: Vector3[], others: Obstacle[]): { stop: { angle: number; by: string } | null; behind: PartAnimation[] } {
+  const pivot = new Vector3(...(anim.pivot ?? [0, 0, 0]));
+  const axis = new Vector3(anim.axis === "x" ? 1 : 0, anim.axis === "y" ? 1 : 0, anim.axis === "z" ? 1 : 0);
+  const closed = own.map((p) => p.clone().applyMatrix4(turnAt(anim, 0)));
+  const reach = (p: Vector3) => { const d = p.clone().sub(pivot); return d.addScaledVector(axis, -d.dot(axis)).length(); };
+  const far = Math.max(...closed.map(reach));
+  // Points over the swinging half of the part: from mid-width to the free edge, across its height and thickness.
+  const hingeSide = closed.filter((p) => reach(p) <= 0.5 * far);
+  const edge = closed.filter((p) => reach(p) > 0.5 * far);
+  const free: Vector3[] = [];
+  for (const s of [0.5, 0.625, 0.75, 0.875, 1]) {
+    const row = edge.map((f) => hingeSide.reduce((a, b) => (b.distanceToSquared(f) < a.distanceToSquared(f) ? b : a), hingeSide[0] ?? f).clone().lerp(f, s));
+    for (let i = 0; i < row.length; i++) for (let j = i; j < row.length; j++) for (const k of [0, 0.25, 0.5, 0.75, 1]) free.push(row[i].clone().lerp(row[j], k));
+  }
+  const shrunk = new Map(others.map((o) => [o, o.box.clone().expandByScalar(-CLEAR)]));
+  const into = (o: Obstacle, f: number) => (o.mover ? poseMatrix(o.mover, f).invert().premultiply(o.local) : o.local);
+  const inside = (o: Obstacle, f: number, pts: Vector3[]) => { const m = into(o, f), b = shrunk.get(o)!; return pts.some((p) => b.containsPoint(p.clone().applyMatrix4(m))); };
+  const centre = new Box3().setFromPoints(closed).getCenter(new Vector3());
+  const obstacles = others.filter((o) => !inside(o, 0, free) && !o.box.clone().expandByScalar(0.01).containsPoint(centre.clone().applyMatrix4(into(o, 0))));
+  const wanted = openAngle(anim), sign = Math.sign((anim.to ?? 0) - (anim.from ?? 0)) || 1;
+  const shut = turnAt(anim, 0).invert();
+  // A part that, open, would be where this one is shut (a drawer behind a door) waits for this one to open (`after`,
+  // step) and is shut again before it closes: it is only ever met shut.
+  // In the part's own frame (+z out of its face): what sits wholly behind its shut face and, open, comes through it.
+  const face = localFrame(anim);
+  const shutBox = new Box3().setFromPoints(closed.map((p) => p.clone().applyMatrix4(face))).expandByScalar(-CLEAR);
+  const boxAt = (o: Obstacle, f: number) => new Box3().setFromPoints(corners(o.box).map((p) => p.applyMatrix4(into(o, f).invert()).applyMatrix4(face)));
+  // Its whole travel, shut to open (a drawer front alone jumps clean over a door's thin slab between the two poses).
+  const travel = (o: Obstacle) => [0, 0.25, 0.5, 0.75, 1].reduce((all, f) => all.union(boxAt(o, f)), new Box3());
+  const behind = new Set(obstacles.filter((o) => o.mover && boxAt(o, 0).max.z <= shutBox.min.z + CLEAR && travel(o).intersectsBox(shutBox)));
+  for (let a = STEP; a < wanted + STEP; a += STEP) {
+    const at = Math.min(a, wanted);
+    const pts = free.map((p) => p.clone().applyMatrix4(turnAt(anim, 0, (anim.from ?? 0) + sign * at).multiply(shut)));
+    for (const o of obstacles) {
+      const poses: [number, string][] = !o.mover || behind.has(o) ? [[0, ""]] : [[0, ""], [1, " (open)"], [at / wanted, " (opening with it)"]];
+      const hit = poses.find(([f]) => inside(o, f, pts));
+      if (hit) return { stop: { angle: Math.max(0, at - STEP), by: o.label + hit[1] }, behind: movers(behind) };
+    }
+  }
+  return { stop: null, behind: movers(behind) };
+}
+const movers = (list: Set<Obstacle>) => [...new Set([...list].map((o) => o.mover!))];
 
 /** Does the movement go into the body (behind the part's own back face, in its own frame, by more than a sliver)? */
 export function intoBody(anim: PartAnimation, box: Box3): boolean {
@@ -157,8 +235,10 @@ export function checkMovers(config: AnimationConfig | null, slots: SlotLike[], m
     if (a.type === "rotation") {
       const leaf = meshOf.get(a.component)!;
       const swung = authoredSwing(leaf, modelRoot, a);
-      // The file shows this door open. Openness 0 keeps that pose; 1 turns it back onto the cabinet.
-      if (Math.abs(swung) > 12) motion = { ...a, rest: "open", from: 0, to: Math.max(-MAX_SWING, Math.min(MAX_SWING, -swung)) };
+      // The file shows this door open: openness 0 turns it back onto the cabinet (closed), 1 opens it its full angle
+      // from there, the way the file shows it open. Its openings are measured from closed, never from the file's pose.
+      const angle = openAngle(a);
+      motion = Math.abs(swung) > 12 ? { ...a, rest: undefined, from: -swung, to: -swung + Math.sign(swung) * angle } : { ...a, rest: undefined, from: 0, to: Math.sign((a.to ?? 0) - (a.from ?? 0)) * angle };
       m = sheetBasis(leaf, modelRoot, triOf(a.component));
     }
     motionOf.set(a.id, motion);
@@ -168,7 +248,10 @@ export function checkMovers(config: AnimationConfig | null, slots: SlotLike[], m
       if (o === a || !other || !o.enabled || together(a, o)) continue;
       const theirs = meshOf.has(o.component) ? orientedBox(meshOf.get(o.component)!, modelRoot, m) : inFrame(other, m);
       const ts = size(theirs);
-      const coplanar = ts.z < 0.35 * Math.min(ts.x, ts.y) && Math.abs(own.getCenter(new Vector3()).z - theirs.getCenter(new Vector3()).z) < Math.max(size(own).z, ts.z, 0.02) + 0.03;
+      // Cut wrongly: two slabs in one plane, through or flush against each other. A door shut in front of a drawer (a
+      // real gap between their depths) is how furniture is built, not a cut.
+      const coplanar = ts.z < 0.35 * Math.min(ts.x, ts.y) && Math.abs(own.getCenter(new Vector3()).z - theirs.getCenter(new Vector3()).z) < Math.max(size(own).z, ts.z, 0.02) + 0.03
+        && Math.max(own.min.z - theirs.max.z, theirs.min.z - own.max.z) < 0.005;
       if (coplanar && outlineOverlap(own, theirs) > 0.3 * Math.min(area(own), area(theirs)) && rank(a) > rank(o))
         issues.get(a.id)!.push(`Overlaps ${o.label}: the generated parts are cut wrongly here, so it is not moved.`);
     }
@@ -178,21 +261,50 @@ export function checkMovers(config: AnimationConfig | null, slots: SlotLike[], m
     const fill = frontFill(assembly.map((id) => local(triOf(id), m)), own);
     if (s.z > 0.35 * Math.min(s.x, s.y) && a.type === "rotation") issues.get(a.id)!.push("Not a flat panel: it would swing a piece of the body.");
     if (fill < 0.6) issues.get(a.id)!.push(`An irregular piece (it covers ${Math.round(fill * 100)}% of its outline): rebuild it as a panel or leave it fixed.`);
-    if (motion.rest !== "open" && intoBody(motion, box)) {
+    if (!motion.from && intoBody(motion, box)) {
       const reversed: PartAnimation = motion.type === "rotation" ? { ...motion, to: -(motion.to ?? 0) } : { ...motion, distance: -(motion.distance ?? 0) };
       if (intoBody(reversed, box)) issues.get(a.id)!.push("Its movement runs into the body either way.");
       else flip.add(a.id);
     }
   }
-  return {
-    ...config,
-    animations: config.animations.map((a) => {
-      const base = motionOf.get(a.id) ?? a;
-      const next = flip.has(a.id) ? (base.type === "rotation" ? { ...base, to: -(base.to ?? 0), reason: `${base.reason ?? ""} (turned outwards)`.trim() } : { ...base, distance: -(base.distance ?? 0) }) : base;
-      const list = [...new Set(issues.get(a.id) ?? [])];
-      return a.source === "manual" ? { ...next, issues: list } : { ...next, issues: list, enabled: next.enabled && !list.length };
-    }),
-  };
+  // The vendor's own doors keep their hinge, angle and direction; only where "shut" is comes from the file itself (a
+  // file saved closed, or one still showing the door open), so the same settings play right on either.
+  for (const a of config.animations) {
+    if (a.source !== "manual" || a.type !== "rotation" || a.rest === "open" || !meshOf.has(a.component)) continue;
+    const swung = authoredSwing(meshOf.get(a.component)!, modelRoot, a);
+    const from = Math.abs(swung) > 12 ? -swung : 0;
+    motionOf.set(a.id, { ...a, from, to: from + (Math.sign((a.to ?? 0) - (a.from ?? 0)) || 1) * openAngle(a) });
+  }
+  const moved = config.animations.map((a) => {
+    const base = motionOf.get(a.id) ?? a;
+    const next = flip.has(a.id) ? (base.type === "rotation" ? { ...base, to: -(base.to ?? 0), reason: `${base.reason ?? ""} (turned outwards)`.trim() } : { ...base, distance: -(base.distance ?? 0) }) : base;
+    const list = [...new Set(issues.get(a.id) ?? [])];
+    return a.source === "manual" ? { ...next, issues: list } : { ...next, issues: list, enabled: next.enabled && !list.length };
+  });
+  // Each turning part swept open against the rest (fixed parts, and the other moving parts shut, open and opening with
+  // it): where it would hit something it stops short and says so (`limit`) instead of passing through. In order, so a
+  // door checked after its neighbour meets it at the angle the neighbour really opens to.
+  const out = [...moved];
+  const meshBox = (mesh: Mesh) => { if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox(); return mesh.geometry.boundingBox!.clone(); };
+  const toLocal = (mesh: Mesh) => mesh.matrixWorld.clone().invert().multiply(modelRoot.matrixWorld);
+  const label = (id: string) => slots.find((s) => s.id === id)?.name ?? id;
+  const waits = new Map<string, string[]>(); // a part → the doors in front of it
+  out.forEach((a, i) => {
+    if (a.type !== "rotation" || !a.enabled || !meshOf.has(a.component)) return;
+    const mine = new Set([a.component, ...a.follow]);
+    const others: Obstacle[] = [...meshOf].filter(([id]) => !mine.has(id)).map(([id, mesh]) => {
+      const owner = out.find((o) => o.enabled && (o.component === id || o.follow.includes(id)));
+      return { label: label(id), box: meshBox(mesh), local: toLocal(mesh), ...(owner ? { mover: owner } : {}) };
+    });
+    const own = [...mine].filter((id) => meshOf.has(id)).flatMap((id) => meshCorners(meshOf.get(id)!, modelRoot));
+    const { stop, behind } = sweep(a, own, others);
+    for (const b of behind) waits.set(b.id, [...(waits.get(b.id) ?? []), a.id]);
+    if (!stop) { out[i] = { ...a, limit: undefined }; return; }
+    const sign = Math.sign((a.to ?? 0) - (a.from ?? 0)) || 1;
+    // The vendor's own angle is kept (the warning still shows); a detected one opens only as far as is clear.
+    out[i] = { ...a, limit: { angle: stop.angle, wanted: openAngle(a), by: stop.by }, ...(a.source === "manual" ? {} : { to: (a.from ?? 0) + sign * stop.angle }) };
+  });
+  return { ...config, animations: out.map((a) => ({ ...a, after: waits.get(a.id) })) };
 }
 
 /** Keeps only the triangles `keep` says, group ranges (one material each) rebuilt to match. In place: the mesh's own
@@ -354,6 +466,61 @@ export function openCavities(config: AnimationConfig | null, slots: SlotLike[], 
   for (const [id, set] of remove) keepTriangles(slots.find((s) => s.id === id)!.mesh.geometry, (t) => !set.has(t));
   return added;
 }
+
+/** A door that is ONE mesh in ONE reflective material (a mirror door fused by the generator) shows the mirror on every
+ * face, the inside and the edges too. Its back and edge faces are moved (not copied: nothing overlaps, so nothing
+ * z-fights) into their own part, a wooden backing in the body's colour that moves with the door; the front keeps the
+ * mirror. Judged in the door's shut pose, so a door the file shows open is split the same way. Glass is left whole
+ * (a glass pane is glass all round), as is any door that already has a backing or frame of its own. Run again on its
+ * own output, it finds nothing left to move. */
+export function paneBacks(config: AnimationConfig | null, slots: SlotLike[], modelRoot: Object3D): Added[] {
+  const added: Added[] = [];
+  const meshOf = new Map(slots.map((s) => [s.id, s.mesh]));
+  const moving = new Set((config?.animations ?? []).flatMap((a) => [a.component, ...a.follow]));
+  const body = slots.filter((s) => !moving.has(s.id)).sort((a, b) => volume(boxInModel(b.mesh, modelRoot)) - volume(boxInModel(a.mesh, modelRoot)))[0];
+  for (const a of config?.animations ?? []) {
+    const door = meshOf.get(a.component);
+    if (!a.enabled || a.type !== "rotation" || !door || Array.isArray(door.material)) continue;
+    if (layerOfLook(door.material as MeshStandardMaterial) !== "mirror") continue;
+    // Its own frame or backing (a solid part on it as big as a third of it) already covers the inside.
+    const area = sheetArea(door);
+    if (a.follow.some((id) => { const m = meshOf.get(id); return m && !Array.isArray(m.material) && layerOfLook(m.material as MeshStandardMaterial) === "solid" && sheetArea(m) >= 0.33 * area; })) continue;
+    // The sheet's outward normal in its own geometry: its thinnest axis, pointing the way the shut door faces.
+    const g = door.geometry;
+    if (!g.boundingBox) g.computeBoundingBox();
+    const sz = g.boundingBox!.getSize(new Vector3());
+    const thin = sz.x <= sz.y && sz.x <= sz.z ? new Vector3(1, 0, 0) : sz.y <= sz.z ? new Vector3(0, 1, 0) : new Vector3(0, 0, 1);
+    modelRoot.updateMatrixWorld(true);
+    const toModel = modelRoot.matrixWorld.clone().invert().multiply(door.matrixWorld);
+    const shutNormal = thin.clone().transformDirection(toModel).transformDirection(turnAt(a, 0));
+    const face = new Vector3(0, 0, 1).applyMatrix4(localFrame(a).clone().transpose());
+    if (shutNormal.dot(face) < 0) thin.negate();
+    const pos = g.getAttribute("position"), index = g.getIndex();
+    const count = (index ? index.count : pos.count) / 3;
+    const at = (k: number) => new Vector3().fromBufferAttribute(pos, index ? index.getX(k) : k);
+    const front: boolean[] = [];
+    for (let t = 0; t < count; t++) {
+      const p0 = at(t * 3), n = at(t * 3 + 1).sub(p0).cross(at(t * 3 + 2).sub(p0));
+      front.push(n.lengthSq() > 0 && n.normalize().dot(thin) > 0.7);
+    }
+    if (front.every(Boolean) || !front.some(Boolean)) continue;
+    const backGeometry = g.clone();
+    keepTriangles(backGeometry, (t) => !front[t]);
+    keepTriangles(g, (t) => front[t]);
+    const mesh = new Mesh(backGeometry, interiorMaterial(body?.mesh.material ?? new MeshStandardMaterial({ color: "#8a6a4a" }), 0.9));
+    (mesh.material as MeshStandardMaterial).side = FrontSide;
+    mesh.name = `Backing (${a.label})`;
+    mesh.userData.estimated = true;
+    mesh.position.copy(door.position);
+    mesh.quaternion.copy(door.quaternion);
+    mesh.scale.copy(door.scale);
+    (door.parent ?? modelRoot).add(mesh);
+    mesh.updateMatrixWorld(true);
+    added.push({ id: `backing_${a.component}`, name: mesh.name, nameAr: `ظهر (${a.labelAr ?? a.label})`, mesh, follows: a.id });
+  }
+  return added;
+}
+const volume = (b: Box3) => { const s = size(b); return s.x * s.y * s.z; };
 
 /** Replaces a malformed part with a clean flat panel of the same outline, in its own frame and material (one material
  * per mesh only). The part keeps its id, edits and the parts attached to it. */

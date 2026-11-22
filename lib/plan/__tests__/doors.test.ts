@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { BoxGeometry, Group, Mesh, MeshStandardMaterial, Vector3 } from "three";
-import { boxInModel, poseAt, refine, shownOpen, targetFor, toParentOf, type AnimationConfig, type PartAnimation } from "../../vendor/animation";
+import { boxInModel, openAngle, poseAt, refine, shownOpen, targetFor, toParentOf, type AnimationConfig, type PartAnimation } from "../../vendor/animation";
 import { blocksPartIcon, checkMovers } from "../../vendor/reconstruct";
 import { catalogModelView } from "../catalogView";
 
@@ -67,25 +67,26 @@ test("a closed wardrobe with four doors gives each door its own control", () => 
   assert.ok(doors.every((a) => a.rest !== "open"));
 });
 
-test("two doors modelled open can close back onto the cabinet and open again", () => {
+test("two doors modelled open: openness 0 shuts them on the cabinet, 1 opens them their full angle from shut", () => {
   const { model, slots } = wardrobe([], ["inner_left", "inner_right"]);
   const config = ready(slots, model);
   for (const id of ["inner_left", "inner_right"]) {
     const anim = config.animations.find((a) => a.component === id)!;
     const slot = slots.find((s) => s.id === id)!;
     assert.equal(anim.enabled, true, JSON.stringify(anim.issues));
-    assert.equal(anim.rest, "open");
-    const open = depthAt(slot, model, anim, 0);
-    const shut = depthAt(slot, model, anim, 1);
-    assert.ok(open.depth > 0.12, `open depth ${open.depth}`);
-    assert.ok(shut.depth < 0.08, `shut depth ${shut.depth} to=${anim.to}`);
-    assert.ok(shut.hingeMoved < 0.02, `hinge moved ${shut.hingeMoved}`);
-    assert.equal(shownOpen(anim, 0), true);
-    assert.equal(shownOpen(anim, targetFor(anim, false)), false);
-    assert.equal(targetFor(anim, true), 0);
+    assert.equal(anim.rest, undefined);
+    assert.ok(Math.abs(Math.abs(anim.from!) - 25) < 0.5, `closed is 25° back from the file's pose: ${anim.from}`);
+    assert.equal(openAngle(anim), 95);
+    const shut = depthAt(slot, model, anim, 0);
+    const open = depthAt(slot, model, anim, 1);
+    assert.ok(shut.depth < 0.08, `shut depth ${shut.depth}`);
+    assert.ok(open.depth > 0.4, `open depth ${open.depth}`);
+    assert.ok(shut.hingeMoved < 0.02 && open.hingeMoved < 0.02, `hinge moved ${shut.hingeMoved} / ${open.hingeMoved}`);
+    assert.equal(shownOpen(anim, 0), false);
+    assert.equal(targetFor(anim, true), 1);
   }
   const closed = config.animations.filter((a) => a.component === "far_left" || a.component === "far_right");
-  assert.ok(closed.every((a) => a.enabled && a.rest !== "open"));
+  assert.ok(closed.every((a) => a.enabled && !a.from));
 });
 
 test("an open mirrored door with no handle still has one control and keeps its mirror", () => {
@@ -137,7 +138,7 @@ test("reloading the model while a door is open keeps it closable on the same fil
   const again = ready(slots, model, { ...first, state: { [door.id]: targetFor(door, false) } });
   const reloaded = again.animations.find((a) => a.component === "inner_left")!;
   assert.equal(reloaded.enabled, true);
-  assert.equal(reloaded.rest, "open");
+  assert.deepEqual([reloaded.from, reloaded.to, reloaded.pivot], [door.from, door.to, door.pivot]); // the same swing
   const slot = slots.find((s) => s.id === "inner_left")!;
   assert.ok(depthAt(slot, model, reloaded, targetFor(reloaded, false)).depth < 0.08);
 });
@@ -259,7 +260,7 @@ test("a door modelled open turns about its real hinge (the hardware's edge), not
   const c = ready(slots, model);
   for (const [id, x, hinge] of [["Left_frame", -0.399, "left"], ["Right_frame", 0.399, "right"]] as const) {
     const a = byComponent(c, id);
-    assert.ok(a.enabled && a.rest === "open", JSON.stringify(a.issues));
+    assert.ok(a.enabled && Math.abs(a.from ?? 0) > 60, JSON.stringify([a.issues, a.from]));
     assert.equal(a.hinge, hinge);
     assert.ok(Math.hypot(a.pivot![0] - x, a.pivot![2] - 0.311) < 0.02, `pivot ${a.pivot} is on the hinge line`);
     assert.ok(a.follow.includes(id.replace("frame", "glass")) && a.follow.includes(id.replace("frame", "hinge_1")));
@@ -267,7 +268,7 @@ test("a door modelled open turns about its real hinge (the hardware's edge), not
   }
 });
 
-test("closing a modelled-open door lays it flat on the cabinet front, the hinge never moving, never inside", () => {
+test("a modelled-open door shut (openness 0) lies flat on the cabinet front, the hinge never moving, never inside", () => {
   const { model, slots } = mirroredWardrobe();
   const c = ready(slots, model);
   for (const id of ["Left_frame", "Right_frame"]) {
@@ -278,7 +279,7 @@ test("closing a modelled-open door lays it flat on the cabinet front, the hinge 
       assert.ok(hingeMoved < 1e-6, `${id} hinge stays at ${t}`);
     }
     const rest = slot.mesh.parent!.quaternion.clone();
-    applyAnimations(slots, model, c, { [a.id]: 1 });
+    applyAnimations(slots, model, c, { [a.id]: 0 });
     model.updateMatrixWorld(true);
     const [e1, e2] = sheetEdges(slot.mesh, model, new Vector3(0, 1, 0));
     assert.ok(Math.abs(e1.z - e2.z) < 0.01 && Math.min(e1.z, e2.z) > 0.29, `${id} closed flush on the front: z ${e1.z.toFixed(3)} / ${e2.z.toFixed(3)}`);
@@ -374,4 +375,265 @@ test("a model whose file faces +x: doors are hinged and swing out along +x, judg
   applyAnimations(slots, model, c, { [a.id]: 1 });
   model.updateMatrixWorld(true);
   assert.ok(boxInModel(door, model).min.x > 0.28, "it swings out of its own front (+x), not into the body");
+});
+
+// ---- Opening angles measured from the real closed pose; collisions; repeated and simultaneous opening.
+import { DEFAULT_SWING, withAngle } from "../../vendor/animation";
+import { safeAngle } from "../../vendor/reconstruct";
+
+/** How far (degrees) a door's sheet has turned from its shut direction at openness `t` (the others at `others`), whether
+ * its free edge is out in front of the cabinet, and how far its hinge edge strayed from the pivot. */
+function standsAt(slots: Slot[], model: Group, c: AnimationConfig, id: string, t: number, others = 0) {
+  const a = byComponent(c, id);
+  const slot = slots.find((s) => s.id === id)!;
+  const rest = new Map(slots.map((s) => [s.mesh, [s.mesh.position.clone(), s.mesh.quaternion.clone()] as const]));
+  const pivot = new Vector3(...a.pivot!);
+  const sheet = (at: number) => {
+    applyAnimations(slots, model, c, Object.fromEntries(c.animations.map((x) => [x.id, x === a ? at : others])));
+    model.updateMatrixWorld(true);
+    const [e1, e2] = sheetEdges(slot.mesh, model, new Vector3(0, 1, 0));
+    for (const [m, [p, q]] of rest) { m.position.copy(p); m.quaternion.copy(q); }
+    model.updateMatrixWorld(true);
+    const near = (e: Vector3) => Math.hypot(e.x - pivot.x, e.z - pivot.z);
+    return near(e1) < near(e2) ? { hinge: e1, free: e2 } : { hinge: e2, free: e1 };
+  };
+  const shut = sheet(0), now = sheet(t);
+  const flat = (v: Vector3) => new Vector3(v.x, 0, v.z).normalize();
+  const deg = Math.acos(Math.min(1, flat(shut.free.clone().sub(shut.hinge)).dot(flat(now.free.clone().sub(now.hinge))))) * 180 / Math.PI;
+  return { deg, outward: now.free.z >= shut.free.z - 1e-3, hingeDrift: Math.hypot(now.hinge.x - pivot.x, now.hinge.z - pivot.z) };
+}
+
+test("every door, closed or modelled open, reaches its configured angle from closed (95° by default)", () => {
+  const { model, slots } = mirroredWardrobe();
+  const c = ready(slots, model);
+  for (const id of ["far_left", "left_inner", "right_inner", "right_outer", "Left_frame", "Right_frame"]) {
+    const a = byComponent(c, id);
+    // The inner mirrored doors share a post with the glazed doors: open together they meet, so they stop short (below).
+    assert.equal(a.limit?.wanted ?? openAngle(a), DEFAULT_SWING, id);
+    const open = standsAt(slots, model, c, id, 1);
+    assert.ok(Math.abs(open.deg - openAngle(a)) < 1.5 && open.outward, `${id} opens to ${open.deg}°, not the file's 68–72°`);
+  }
+  for (const id of ["far_left", "right_outer", "Left_frame", "Right_frame"]) assert.equal(openAngle(byComponent(c, id)), 95, id);
+});
+
+test("a different angle: the vendor's 110° and 60° are measured from closed, for doors modelled open too", () => {
+  const { model, slots } = mirroredWardrobe();
+  const c = ready(slots, model);
+  for (const [id, angle] of [["Left_frame", 110], ["Right_frame", 60], ["far_left", 60]] as const) {
+    const a = byComponent(c, id);
+    const set: AnimationConfig = { ...c, animations: c.animations.map((x) => (x === a ? { ...withAngle(x, angle), source: "manual" as const } : x)) };
+    const again = checkMovers(refine(JSON.parse(JSON.stringify(set)), slots, model), slots, model)!; // saved and reloaded
+    assert.equal(openAngle(byComponent(again, id)), angle);
+    assert.ok(Math.abs(standsAt(slots, model, again, id, 1).deg - angle) < 1.5, `${id} at ${angle}`);
+  }
+});
+
+test("older saves (rest: open, to = the closing angle) reload as a full 95° opening, not the file's 72°", () => {
+  const { model, slots } = mirroredWardrobe();
+  const c = ready(slots, model);
+  const legacy: AnimationConfig = { ...c, animations: c.animations.map((a) => (a.from ? { ...a, rest: "open" as const, from: 0, to: -(a.from ?? 0) } : a)) };
+  const again = checkMovers(refine(JSON.parse(JSON.stringify(legacy)), slots, model), slots, model)!;
+  for (const id of ["Left_frame", "Right_frame"]) {
+    const a = byComponent(again, id);
+    assert.equal(a.rest, undefined);
+    assert.equal(openAngle(a), 95);
+    assert.deepEqual([a.from, a.to], [byComponent(c, id).from, byComponent(c, id).to]);
+  }
+});
+
+test("opened and closed repeatedly, alone or all together, a door ends where it should and its hinge stays put", () => {
+  const { model, slots } = mirroredWardrobe();
+  const c = ready(slots, model);
+  for (const id of ["right_inner", "Left_frame"]) {
+    for (const [t, together] of [[1, 0], [0, 0], [1, 1], [0.5, 1], [1, 1], [0, 1]] as const) {
+      const { deg, hingeDrift, outward } = standsAt(slots, model, c, id, t, together ? 1 : 0);
+      assert.ok(Math.abs(deg - openAngle(byComponent(c, id)) * t) < 1.5 && outward, `${id} at t=${t}: ${deg}`);
+      assert.ok(hingeDrift < 0.015, `${id} hinge drift ${hingeDrift}`);
+    }
+  }
+});
+
+test("a door that would hit something stops short and says how far it opens, instead of passing through", () => {
+  const { model, slots } = wardrobe();
+  // A tall post in front of the cabinet, beside the far-left door's free edge when it is past square.
+  const post = new Mesh(new BoxGeometry(0.06, 2, 0.06).translate(-0.6, 1.1, 0.5), new MeshStandardMaterial());
+  post.name = "Post";
+  model.add(post);
+  model.updateMatrixWorld(true);
+  const all = [...slots, { id: "post", name: "Post", mesh: post }];
+  const c = ready(all, model);
+  const a = byComponent(c, "far_left");
+  assert.ok(a.limit, JSON.stringify(a));
+  assert.equal(a.limit!.wanted, 95);
+  assert.equal(a.limit!.by, "Post");
+  assert.ok(a.limit!.angle > 10 && a.limit!.angle < 95 && Math.abs(openAngle(a) - a.limit!.angle) < 1e-6, `${a.limit!.angle}`);
+  // Nothing in the way: no limit; the cabinet a door sits in is never an obstacle.
+  assert.equal(byComponent(c, "far_right").limit, undefined);
+  assert.equal(safeAngle({ ...a, to: (a.from ?? 0) + Math.sign((a.to ?? 0) - (a.from ?? 0)) * 95 }, [], []), null);
+});
+
+test("the same wardrobe turned 90° and mirrored in its parent (a planner placement) swings the same", () => {
+  const { model, slots } = mirroredWardrobe();
+  const host = new Group();
+  host.add(model);
+  host.rotation.y = Math.PI / 2;
+  host.scale.set(-1, 1, 1);
+  host.updateMatrixWorld(true);
+  const c = ready(slots, model);
+  for (const id of ["far_left", "right_inner", "Left_frame", "Right_frame"]) {
+    const { deg, hingeDrift, outward } = standsAt(slots, model, c, id, 1);
+    assert.ok(Math.abs(deg - openAngle(byComponent(c, id))) < 1.5 && outward && hingeDrift < 0.015, `${id}: ${deg}° drift ${hingeDrift}`);
+  }
+});
+
+test("two doors on one post: open together they would cross, so the first stops where it meets the other one open", () => {
+  const { model, slots } = mirroredWardrobe();
+  const c = ready(slots, model);
+  for (const [id, by] of [["left_inner", "Left central door wood frame"], ["right_inner", "Right central door wood frame"]]) {
+    const a = byComponent(c, id);
+    assert.ok(a.limit && a.limit.wanted === 95 && a.limit.angle < 95 && a.limit.angle > 45, `${id} ${JSON.stringify(a.limit)}`);
+    assert.ok(a.limit.by.startsWith(by) && /\((open|opening with it)\)$/.test(a.limit.by), a.limit.by);
+  }
+  // At their angles, with every door open at once and opening together, no two doors' slabs overlap.
+  const doors = c.animations.filter((a) => a.enabled && a.type === "rotation");
+  for (const t of [0.25, 0.5, 0.75, 1]) {
+    applyAnimations(slots, model, c, Object.fromEntries(doors.map((a) => [a.id, t])));
+    model.updateMatrixWorld(true);
+    const slab = (id: string) => { const m = slots.find((s) => s.id === id)!.mesh; m.geometry.computeBoundingBox(); return { m, b: m.geometry.boundingBox!.clone().expandByScalar(-0.003) }; };
+    // The swinging half of the door (beyond mid-width from its hinge): the hinge side turns in place, where the hinge
+    // hardware's own clearance decides (not modelled).
+    const corners = (id: string) => {
+      const { m, b } = slab(id);
+      const p = new Vector3(...byComponent(c, id).pivot!);
+      const all = [0, 1].flatMap((x) => [0, 1].flatMap((y) => [0, 1].map((z) => new Vector3(x ? b.max.x : b.min.x, y ? b.max.y : b.min.y, z ? b.max.z : b.min.z).applyMatrix4(m.matrixWorld))));
+      const reach = (v: Vector3) => Math.hypot(v.x - p.x, v.z - p.z), far = Math.max(...all.map(reach));
+      return all.filter((v) => reach(v) > 0.5 * far).flatMap((v) => [0.5, 0.75, 1].map((k) => all.reduce((x, y) => (reach(y) <= 0.5 * far && y.distanceTo(v) < x.distanceTo(v) ? y : x), all.find((y) => reach(y) <= 0.5 * far)!).clone().lerp(v, k)));
+    };
+    for (const [a, b] of [["left_inner", "Left_frame"], ["right_inner", "Right_frame"]]) {
+      const { m, b: box } = slab(b);
+      const toB = m.matrixWorld.clone().invert();
+      assert.ok(!corners(a).some((p) => box.containsPoint(p.clone().applyMatrix4(toB))), `${a} enters ${b} at t=${t}`);
+    }
+    model.traverse((o) => { if ((o as Mesh).isMesh) { o.position.set(0, 0, 0); o.quaternion.copy(new Quaternion()); } });
+    model.children.forEach((g) => { if (!(g as Mesh).isMesh) g.updateMatrixWorld(true); });
+    // the open groups keep their own pose; only the meshes inside were moved
+    const fresh = mirroredWardrobe();
+    slots.forEach((s, i) => { s.mesh.position.copy(fresh.slots[i].mesh.position); s.mesh.quaternion.copy(fresh.slots[i].mesh.quaternion); });
+    model.updateMatrixWorld(true);
+  }
+});
+
+import { fromClosed, animationClips } from "../../vendor/animation";
+
+test("saved as a GLB: written shut, clips opening from shut, and the reloaded file plays the same doors", () => {
+  const { model, slots } = mirroredWardrobe();
+  const c = ready(slots, model);
+  // A vendor's own angle on the door the file shows open: kept through the save.
+  const set: AnimationConfig = { ...c, animations: c.animations.map((a) => (a.component === "Left_frame" ? { ...withAngle(a, 100), source: "manual" as const } : a)) };
+  const live = ready(slots, model, set);
+  applyAnimations(slots, model, live, {}); // what exportGlb writes: every part shut, with its hinge line
+  model.updateMatrixWorld(true);
+  for (const a of live.animations) if (a.type === "rotation" && a.pivot) slots.find((s) => s.id === a.component)!.mesh.userData.hingeLine = a.pivot;
+  const clips = animationClips(slots, model, fromClosed(live));
+  assert.ok(clips.length >= 6 && clips.every((clip) => clip.tracks.length > 0));
+  // Reopened from the saved file: nothing is open in it any more, the hinges and angles are the same.
+  const again = ready(slots, model, JSON.parse(JSON.stringify(live)));
+  for (const id of ["far_left", "Left_frame", "Right_frame"]) {
+    const before = byComponent(live, id), after = byComponent(again, id);
+    assert.equal(after.from ?? 0, 0, `${id} is shut in the saved file`);
+    assert.equal(after.hinge, before.hinge);
+    assert.ok(after.pivot!.every((v, i) => Math.abs(v - before.pivot![i]) < 1e-3), `${id} pivot ${after.pivot} vs ${before.pivot}`);
+    assert.ok(Math.abs(openAngle(after) - openAngle(before)) < 1e-6 && Math.sign((after.to ?? 0) - (after.from ?? 0)) === Math.sign((before.to ?? 0) - (before.from ?? 0)), id);
+  }
+  assert.equal(openAngle(byComponent(again, "Left_frame")), 100);
+});
+
+import { paneBacks } from "../../vendor/reconstruct";
+import { MeshPhysicalMaterial } from "three";
+
+test("a mirror door that is one mesh in one material: the mirror stays on the front, its back and edges become wood", () => {
+  const { model, slots } = wardrobe();
+  const door = slots.find((s) => s.id === "far_left")!;
+  door.mesh.material = new MeshPhysicalMaterial({ name: "mirror", metalness: 1, roughness: 0.04 });
+  const c = ready(slots, model);
+  const added = paneBacks(c, slots, model);
+  assert.equal(added.length, 1);
+  const back = added[0];
+  assert.equal(back.follows, byComponent(c, "far_left").id);
+  const tris = (m: Mesh) => (m.geometry.getIndex()?.count ?? m.geometry.getAttribute("position").count) / 3;
+  assert.equal(tris(door.mesh), 2, "the front face only keeps the mirror");
+  assert.equal(tris(back.mesh), 10, "back and four edges: moved, not copied (no overlapping faces)");
+  assert.equal((back.mesh.material as MeshStandardMaterial).metalness, 0);
+  assert.ok(back.mesh.position.equals(door.mesh.position) && back.mesh.quaternion.equals(door.mesh.quaternion));
+  // Every front triangle faces out (+z, the cabinet's front); none of the backing's do.
+  const normals = (m: Mesh) => { const g = m.geometry.toNonIndexed(); g.computeVertexNormals(); const n = g.getAttribute("normal"); return Array.from({ length: n.count / 3 }, (_, t) => new Vector3().fromBufferAttribute(n, t * 3).transformDirection(m.matrixWorld)); };
+  assert.ok(normals(door.mesh).every((n) => n.z > 0.9));
+  assert.ok(normals(back.mesh).every((n) => n.z < 0.1));
+  // Run again on its own output: nothing left to move. A glass door is left whole (glass all round is right).
+  assert.equal(paneBacks(c, slots, model).length, 0);
+  const glass = wardrobe();
+  glass.slots.find((s) => s.id === "far_left")!.mesh.material = new MeshPhysicalMaterial({ transmission: 0.9, transparent: true, opacity: 0.4 });
+  assert.equal(paneBacks(ready(glass.slots, glass.model), glass.slots, glass.model).length, 0);
+});
+
+// ---- What the catalogue page showed: drawers behind doors, the order things move in, the fit with doors shut.
+import { openPart, step } from "../../vendor/animation";
+import { normalizeModel, refitShut } from "../modelNormalization";
+
+/** The mirrored wardrobe with three drawers in the middle bay, behind the two glazed doors. */
+function withDrawers() {
+  const w = mirroredWardrobe();
+  for (const k of [1, 2, 3]) {
+    const m = new Mesh(new BoxGeometry(0.7, 0.18, 0.02).translate(0, 0.15 + k * 0.2, 0.265), new MeshStandardMaterial());
+    m.name = `Drawer ${k} front`;
+    w.model.add(m);
+    w.slots.push({ id: `drawer_${k}`, name: `Drawer ${k} front`, mesh: m });
+  }
+  w.model.updateMatrixWorld(true);
+  return w;
+}
+
+test("drawers behind doors wait for them: open all moves the doors first, close all the drawers first; no door is stopped by them", () => {
+  const { model, slots } = withDrawers();
+  const c = ready(slots, model);
+  const left = byComponent(c, "Left_frame"), right = byComponent(c, "Right_frame");
+  for (const k of [1, 2, 3]) assert.deepEqual([...(byComponent(c, `drawer_${k}`).after ?? [])].sort(), [left.id, right.id].sort(), `drawer ${k}`);
+  assert.equal(openAngle(left), 95, JSON.stringify(left.limit));
+  assert.equal(openAngle(right), 95, JSON.stringify(right.limit));
+  // Open all: the doors swing, the drawers stay in until both doors are open; then they slide.
+  const now: Record<string, number> = {};
+  const all = (v: number) => Object.fromEntries(c.animations.map((a) => [a.id, v]));
+  step(now, all(1), c, 0.3);
+  assert.ok(now[left.id] > 0 && !(now[byComponent(c, "drawer_1").id] > 0), JSON.stringify(now));
+  for (let i = 0; i < 20; i++) step(now, all(1), c, 0.1);
+  assert.ok(c.animations.every((a) => !a.enabled || now[a.id] === 1), JSON.stringify(now));
+  // Close all: the drawers go in first, the doors wait.
+  step(now, all(0), c, 0.3);
+  assert.ok(now[left.id] === 1 && now[byComponent(c, "drawer_1").id] < 1);
+  for (let i = 0; i < 30; i++) step(now, all(0), c, 0.1);
+  assert.ok(c.animations.every((a) => !now[a.id]), JSON.stringify(now));
+  // One drawer opened with its doors shut opens them; one door shut closes the drawers behind it.
+  const opened = openPart(c, {}, byComponent(c, "drawer_2").id, 1);
+  assert.equal(opened[left.id], 1);
+  assert.equal(opened[right.id], 1);
+  const shut = openPart(c, all(1), left.id, 0);
+  assert.ok([1, 2, 3].every((k) => shut[byComponent(c, `drawer_${k}`).id] === 0) && shut[right.id] === 1);
+  // A neighbouring door never waits for another (no two parts wait for each other).
+  assert.ok(c.animations.filter((a) => a.type === "rotation").every((a) => !a.after?.length));
+});
+
+test("a file showing doors open is fitted to its catalogue size with them shut, not shrunk by their swing", () => {
+  const { model, slots: original } = mirroredWardrobe();
+  const { object, report } = normalizeModel(model, { width: 2.4, height: 2.3, depth: 0.6 });
+  assert.ok(report.warnings.length > 0, "open, the file measures too deep for its catalogue size");
+  const inner = object.getObjectByName("orient")!.children[0] as Group;
+  // normalizeModel works on a copy: its own meshes, found by name.
+  const slots: Slot[] = original.map((s) => ({ ...s, mesh: inner.getObjectByName(s.mesh.name) as Mesh }));
+  const c = ready(slots, inner);
+  const rest = new Map(slots.map((s) => [s.mesh, [s.mesh.position.clone(), s.mesh.quaternion.clone()] as const]));
+  const fitted = refitShut(object, () => applyAnimations(slots, inner, c, {}), () => { for (const [m, [p, q]] of rest) { m.position.copy(p); m.quaternion.copy(q); } })!;
+  assert.deepEqual(fitted.warnings, []);
+  // Within 3 % (this fixture's own body is 62 cm deep).
+  assert.ok(Math.abs(fitted.finalSize.width / 2.4 - 1) < 0.03 && Math.abs(fitted.finalSize.height / 2.3 - 1) < 0.03, JSON.stringify(fitted.finalSize));
+  assert.ok(slots.every((s) => rest.get(s.mesh)![0].equals(s.mesh.position)), "the parts are back in their own pose");
 });

@@ -94,28 +94,7 @@ export function normalizeModel(source: Object3D, target: CatalogSize | null, mod
   const orientedSize = measure(wrapper);
   assertFinite(orientedSize);
 
-  const perAxis = target
-    ? [target.width / orientedSize.width, target.height / orientedSize.height, ...(target.depth ? [target.depth / orientedSize.depth] : [])]
-    : [1, 1, 1];
-  // One factor on every axis. A catalogue size with different proportions is flagged, not stretched into.
-  const k = uniformFactor(perAxis);
-  const scale: [number, number, number] = [k, k, k];
-  fit.scale.set(k, k, k);
-
-  // Centre on X/Z, bottom on the floor.
-  const box = worldBox(wrapper);
-  const center = box.getCenter(new Vector3());
-  fit.position.set(-center.x, -box.min.y, -center.z);
-  const finalSize = measure(wrapper);
-
-  const warnings: string[] = [];
-  const distortion = Math.max(...perAxis) / Math.min(...perAxis);
-  const heightError = target ? Math.abs(finalSize.height - target.height) / target.height : 0;
-  const depthError = target?.depth ? Math.abs(finalSize.depth - target.depth) / target.depth : 0;
-  if (target && distortion > 1 + STRETCH_TOLERANCE) {
-    const listed = [target.width, target.height, target.depth].filter((v): v is number => Boolean(v)).map((v) => Number(v).toFixed(2)).join(" × ");
-    warnings.push(`The model's proportions differ from the catalogue size ${listed} m by ${((distortion - 1) * 100).toFixed(0)}%. It was scaled uniformly; review the dimensions.`);
-  }
+  const { scale, finalSize, distortion, heightError, depthError, warnings } = place(wrapper, fit, orientedSize, target);
 
   let nestedTransforms = 0;
   source.traverse((node) => {
@@ -144,6 +123,51 @@ export function normalizeModel(source: Object3D, target: CatalogSize | null, mod
   };
   wrapper.userData.normalization = report;
   return { object: wrapper, report };
+}
+
+/** Scales `fit` to the catalogue size (one factor on every axis: a catalogue size with different proportions is
+ * flagged, not stretched into) and stands the model centred on the floor. */
+function place(wrapper: Group, fit: Object3D, orientedSize: Dimensions, target: CatalogSize | null) {
+  const perAxis = target
+    ? [target.width / orientedSize.width, target.height / orientedSize.height, ...(target.depth ? [target.depth / orientedSize.depth] : [])]
+    : [1, 1, 1];
+  const k = uniformFactor(perAxis);
+  const scale: [number, number, number] = [k, k, k];
+  fit.scale.set(k, k, k);
+  fit.position.set(0, 0, 0);
+  // Centre on X/Z, bottom on the floor.
+  const box = worldBox(wrapper);
+  const center = box.getCenter(new Vector3());
+  fit.position.set(-center.x, -box.min.y, -center.z);
+  const finalSize = measure(wrapper);
+  const warnings: string[] = [];
+  const distortion = Math.max(...perAxis) / Math.min(...perAxis);
+  const heightError = target ? Math.abs(finalSize.height - target.height) / target.height : 0;
+  const depthError = target?.depth ? Math.abs(finalSize.depth - target.depth) / target.depth : 0;
+  if (target && distortion > 1 + STRETCH_TOLERANCE) {
+    const listed = [target.width, target.height, target.depth].filter((v): v is number => Boolean(v)).map((v) => Number(v).toFixed(2)).join(" × ");
+    warnings.push(`The model's proportions differ from the catalogue size ${listed} m by ${((distortion - 1) * 100).toFixed(0)}%. It was scaled uniformly; review the dimensions.`);
+  }
+  return { scale, finalSize, distortion, heightError, depthError, warnings };
+}
+
+/** Fits a normalized model again as the furniture really is, its movable parts shut (`shut` poses them, `rest` puts
+ * them back): a file that shows a door open measures deeper than the furniture, which shrank it to the catalogue
+ * depth. The new report, or null when `wrapper` is no normalized model. */
+export function refitShut(wrapper: Object3D, shut: () => void, rest: () => void): NormalizationReport | null {
+  const report = wrapper.userData.normalization as NormalizationReport | undefined;
+  const fit = wrapper.getObjectByName("fit");
+  if (!report || !fit || wrapper.name !== "normalized-model") return null;
+  shut();
+  fit.scale.set(1, 1, 1);
+  fit.position.set(0, 0, 0);
+  const orientedSize = measure(wrapper);
+  const placed = place(wrapper as Group, fit, orientedSize, report.target);
+  rest();
+  wrapper.updateMatrixWorld(true);
+  const next: NormalizationReport = { ...report, orientedSize, ...placed };
+  wrapper.userData.normalization = next;
+  return next;
 }
 
 /** Another state of the same product (an open wardrobe) placed with exactly the transform `reference` got from
