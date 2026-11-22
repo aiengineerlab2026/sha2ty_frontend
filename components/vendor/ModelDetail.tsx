@@ -25,7 +25,7 @@ import { catalogDimensions } from "@/lib/plan/modelNormalization";
 import { customizedModelFields, updateModel, type PartEditorApi } from "@/lib/vendor/parts";
 import { uploadPublicFile } from "@/lib/vendor/storage";
 import { ReplaceGlb } from "./ReplaceGlb";
-import { fidelityProblem, linkedVisual, structuralEdits, structuralParts } from "@/lib/designs/structural";
+import { fidelityProblem, linkedVisual, structuralEdits, structuralParts, visualModularity } from "@/lib/designs/structural";
 
 const ModelViewer = dynamic(() => import("./ModelViewer").then((mod) => mod.ModelViewer), {
   ssr: false,
@@ -33,7 +33,7 @@ const ModelViewer = dynamic(() => import("./ModelViewer").then((mod) => mod.Mode
 });
 
 /** The pipeline step a fidelity check failed at, in words (backend services/fidelity.py stage ids). */
-const STAGES: Record<string, string> = { cleaning: "photo cleaning", provider: "3D generation", processing: "model processing", materials: "materials" };
+const STAGES: Record<string, string> = { cleaning: "photo cleaning", provider: "3D generation", processing: "model processing", materials: "materials", split: "Auto Split" };
 
 function LoadingViewer() {
   const t = useT();
@@ -80,6 +80,8 @@ export function ModelDetail({ id }: { id: string }) {
   const links = carpenter ? linkedVisual(carpenter, model?.components) : {};
   const problem = fidelityProblem(model?.components);
   const structuralStatus = model?.components?.structural;
+  const modularity = visualModularity(model?.components);
+  const cleaningRefused = model?.components?.cleaning?.rejected ? model.components.cleaning.check?.issues?.[0] ?? "" : null;
 
   /** The open state's edits exported into its own file (no thumbnail: the product's picture is its closed state). */
   const openFields = async (): Promise<ModelStates | null> => {
@@ -332,6 +334,11 @@ export function ModelDetail({ id }: { id: string }) {
           {problem.issues.length > 0 && <ul className="ms-6 mt-1 list-disc text-xs text-amber-800">{problem.issues.slice(0, 4).map((issue) => <li key={issue} dir="ltr" className="text-start">{issue}</li>)}</ul>}
         </div>
       )}
+      {cleaningRefused !== null && !replaced && (
+        <p role="status" className="shrink-0 border-b border-slate-200 bg-slate-50 px-4 py-2 text-xs text-slate-600">
+          {t("The cleaned photo changed the furniture, so the original photo was used.")} {cleaningRefused && <span dir="ltr">({cleaningRefused})</span>}
+        </p>
+      )}
       {structuralStatus && !structuralStatus.built && !replaced && (
         <p role="status" className="shrink-0 border-b border-slate-200 bg-slate-50 px-4 py-2 text-xs text-slate-600">
           {t("No structural model: the photo did not show enough of the structure.")} {structuralStatus.uncertain?.[0] && <span dir="ltr">({structuralStatus.uncertain[0]})</span>}
@@ -355,8 +362,8 @@ export function ModelDetail({ id }: { id: string }) {
           fill
           details={form}
           parts={reviewing && carpenter ? structuralParts(carpenter) : showingOpen ? openState!.components ?? null : replaced ? null : model.components}
-          edits={reviewing && carpenter ? structuralEdits(carpenter, model.components?.materials?.parts) : showingOpen ? null : replaced ? {} : model.material_edits}
-          // Structural mode: its saved edits (and the spec's woods) are laid on the boards each time it opens.
+          edits={reviewing && carpenter ? structuralEdits(carpenter) : showingOpen ? null : replaced ? {} : model.material_edits}
+          // Structural mode: only its saved edits are laid on the boards; otherwise the file's own materials show.
           replay={reviewing || (!showingOpen && (Boolean(replaced) || !model.source_glb_url || model.source_glb_url === model.glb_url))}
           onApi={(api) => {
             if (reviewing) structuralEditor.current = api;
@@ -398,6 +405,20 @@ export function ModelDetail({ id }: { id: string }) {
                       </li>
                     ))}
                   </ul>
+                </div>
+              )}
+              {!replaced && !showingOpen && (
+                // Which representation this is, and whether the visual one really has separate parts.
+                <div className="pointer-events-none absolute end-3 top-3 z-10 max-w-[14rem] rounded-xl border border-white/70 bg-white/90 px-2.5 py-1.5 text-[11px] leading-snug text-slate-600 shadow-sm backdrop-blur">
+                  <p className="font-medium text-brand-navy">{t(reviewing ? "Structural model" : "Visual model")}</p>
+                  <p>
+                    {reviewing
+                      ? t("{n} editable components, estimated", { n: carpenter?.components.length ?? 0 })
+                      : modularity.modular
+                        ? t("{n} separate meshes", { n: modularity.meshes })
+                        : t("One fused mesh: not modular. Edit components in the structural model.")}
+                  </p>
+                  {!reviewing && modularity.splitRefused && <p className="mt-0.5 text-slate-500">{t("Auto Split not used:")} <span dir="ltr">{modularity.splitRefused}</span></p>}
                 </div>
               )}
               {size.every((x) => x != null && x > 0) && (

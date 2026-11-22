@@ -45,7 +45,7 @@ export type CarpenterModel = {
   hierarchy?: { name: string; children: { name: string; components: string[] }[] };
 };
 /** Where the visual model lost fidelity (backend services/fidelity.py): each stage against the one before it. */
-export type FidelityStage = { stage: "cleaning" | "provider" | "processing" | "materials" | "structural"; ok: boolean | null; issues: string[]; notes?: string[] };
+export type FidelityStage = { stage: "cleaning" | "provider" | "processing" | "materials" | "structural" | "split"; ok: boolean | null; issues: string[]; notes?: string[]; rejected?: boolean };
 export type FidelityReport = { ok: boolean; quality: "ok" | "low"; lostAt: string | null; structuralOk?: boolean | null; stages: FidelityStage[] };
 export type PartDocument = {
   modelType?: string; separated?: boolean; components: PartInfo[]; limits?: string | null; method?: string; validation?: ModelValidation;
@@ -54,6 +54,12 @@ export type PartDocument = {
   raw_glb_url?: string;
   /** The structural model's status (built or not, and what it could not tell). */
   structural?: { built: boolean; uncertain?: string[]; source?: string };
+  /** Meshy Auto Split's actual result (backend services/fidelity.split_check): used only when `accepted`. */
+  split?: { accepted: boolean; status?: string | null; issues?: string[]; meshesBefore?: number | null; meshesAfter?: number | null; partCount?: number | null; promptIgnored?: boolean | null; error?: string | null };
+  /** Exactly what Meshy meshed: the original photo or a cleaned one that passed validation, and its texture guide. */
+  meshyInput?: { source: "original" | "cleaned"; url?: string | null; sha256?: string | null; texture?: string };
+  /** The cleaning step: its check against the original, and whether the cleaned photo was refused. */
+  cleaning?: { cleaned?: boolean; rejected?: boolean; image_url?: string; check?: { issues?: string[] } };
   /** The shared material spec, per photo-reading component id. */
   materials?: { parts: Record<string, MaterialSpec>; estimated?: boolean; note?: string };
   quality?: GeometryQuality;

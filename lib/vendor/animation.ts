@@ -78,6 +78,20 @@ export function hingePivot(box: Box3, hinge: Hinge): [number, number, number] {
 }
 
 const VEC: Record<Direction, Vector3> = { front: new Vector3(0, 0, 1), back: new Vector3(0, 0, -1), right: new Vector3(1, 0, 0), left: new Vector3(-1, 0, 0), up: new Vector3(0, 1, 0), down: new Vector3(0, -1, 0) };
+/** Model → a moving part's own frame: +z where it faces out, +y the model's up, +x its right. A model lying on its
+ * side or facing sideways is then judged exactly like a front-facing one (reconstruct.ts, drawer boxes below). */
+export function localFrame(anim: Pick<PartAnimation, "face" | "up" | "front">): Matrix4 {
+  const O = VEC[anim.face ?? anim.front ?? "front"].clone();
+  let U = VEC[anim.up ?? "up"].clone();
+  if (Math.abs(U.dot(O)) > 0.5) U = VEC[anim.front ?? "front"].clone(); // a lid faces up: its "up" is the model's front
+  const R = new Vector3().crossVectors(U, O);
+  return new Matrix4().makeBasis(R, U, O).transpose(); // orthonormal: the inverse is the transpose
+}
+const cornersOf = (b: Box3) => [0, 1].flatMap((x) => [0, 1].flatMap((y) => [0, 1].map((z) => new Vector3(x ? b.max.x : b.min.x, y ? b.max.y : b.min.y, z ? b.max.z : b.min.z))));
+const inFrame = (b: Box3, m: Matrix4) => new Box3().setFromPoints(cornersOf(b).map((p) => p.applyMatrix4(m)));
+/** A drawer's own box, as a generated file or an earlier save names its pieces. */
+const DRAWER_BOX = /\bdrawers?\b[\w\s]{0,24}?\b(box|side|sides|bottom|base|back|panel)\b|\b(box|side|bottom|base|back)\s+(of\s+)?(the\s+)?drawer\b|(?:^|[\s\d_])(?:صندوق|جانب|قاع|ظهر)\s*(?:ال)?درج(?=$|[\s\d_])/i;
+
 /** The model direction nearest `v`. */
 export const directionOf = (v: Vector3): Direction => (Object.keys(VEC) as Direction[]).reduce((best, d) => (VEC[d].dot(v) > VEC[best].dot(v) ? d : best), "front");
 const axisOfVec = (v: Vector3): Axis => (Math.abs(v.x) >= Math.abs(v.y) && Math.abs(v.x) >= Math.abs(v.z) ? "x" : Math.abs(v.y) >= Math.abs(v.z) ? "y" : "z");
@@ -250,6 +264,7 @@ const KINDS: [RegExp, Kind][] = [
 const words = (s: string) => s.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/[_\-.]+/g, " ");
 export function moverKind(...names: (string | null | undefined)[]): Kind | null {
   const text = words(names.filter(Boolean).join(" "));
+  if (DRAWER_BOX.test(text)) return null; // a drawer's side, bottom or back slides with its front, not on its own
   // On a door, not a door ("door lock key ring", "mirror door backing", "drawer box", "interior (door 1)").
   if (/\b(handles?|knobs?|pulls?|hinges?|frame|body|carcass|lock|locks|key|keys|keyhole|ring|blade|tooth|teeth|backing|surround|trim|strip|mou?lding|decor|decoration|ornament|escutcheon|plate|interior|cavity|space|box)\b|(?:^|[\s\d_])(?:ال)?(?:مقبض|مقابض|مفصلة|هيكل|إطار|قفل|مفتاح|حلقة|زخرفة|حلية|فراغ|صندوق|داخلي)(?=$|[\s\d_])/i.test(text)) return null;
   return KINDS.find(([re]) => re.test(text))?.[1] ?? null;
@@ -258,7 +273,15 @@ export function moverKind(...names: (string | null | undefined)[]): Kind | null 
 const namedMover = (...names: (string | null | undefined)[]) => KINDS.find(([re]) => re.test(words(names.filter(Boolean).join(" "))))?.[1] ?? null;
 
 const size = (b: Box3) => b.getSize(new Vector3());
+const area = (b: Box3) => size(b).x * size(b).y;
 const overlap = (a0: number, a1: number, b0: number, b1: number) => Math.max(0, Math.min(a1, b1) - Math.max(a0, b0));
+const outlineShare = (a: Box3, b: Box3) => overlap(a.min.x, a.max.x, b.min.x, b.max.x) * overlap(a.min.y, a.max.y, b.min.y, b.max.y);
+/** Big enough to be a door or a drawer front: 12 % of the model's front, or a tall thin front panel (a narrow door of a
+ * wide wardrobe is far less than 12 % of it). */
+const frontPanel = (box: Box3, whole: Box3) => {
+  const s = size(box), w = size(whole);
+  return s.x * s.y >= 0.12 * w.x * w.y || (s.y >= 0.35 * w.y && s.x >= 0.04 * w.x && s.z <= 0.15 * w.z);
+};
 
 /** Structural parts never ride on a door or drawer, wherever they are (they hold the object together). */
 const STRUCTURAL = /\b(shelf|shelves|rail|rod|body|carcass|cabinet|back|plinth|base|divider|partition|side|frame|leg|top)\b|(?:^|[\s\d_])(?:ال)?(?:رف|رفوف|قضيب|هيكل|ظهر|قاعدة|فاصل|جانب|رجل|أرجل|إطار|لوح خلفي)(?=$|[\s\d_])/i; // Arabic as whole words (\b is ASCII only: "رف" is in "زخرفة")
@@ -404,26 +427,33 @@ export function refine(
   const depth = size(whole).z;
   // A saved name guess that is an accessory ("door lock key ring") is no moving part: it rides on its door instead.
   const partOf = new Map(parts.map((p) => [p.id, p]));
+  // A frame around a separate door leaf (a doorway's frame) stays put; a frame holding glass or a mirror is the door.
+  const surroundsLeaf = (id: string, box: Box3) => parts.some((o) => {
+    if (o.id === id || !moverKind(o.id, o.name, o.nameAr) || ACCESSORY_WORDS.test(words(names.get(o.id) ?? ""))) return false;
+    const b = boxes.get(o.id)!;
+    return outlineShare(b, box) >= 0.5 * area(box);
+  });
   let anims = (config?.animations ?? [])
     .filter((a) => a.source !== "names" || moverKind(a.component, partOf.get(a.component)?.name, partOf.get(a.component)?.nameAr))
     .map((a) => ({ ...a, follow: [...a.follow] }));
   for (const p of parts) {
     if (anims.some((a) => a.component === p.id || a.follow.includes(p.id))) continue;
     const box = boxes.get(p.id)!;
-    // A front-sized panel named as a door is the door even with an accessory word ("Mirror door backing"); a small
-    // one ("door lock key ring") is not. Parts on a bigger moving part are sorted out below.
-    const kind = moverKind(p.id, p.name, p.nameAr) ?? (size(box).x * size(box).y >= 0.12 * size(whole).x * size(whole).y ? namedMover(p.id, p.name, p.nameAr) : null);
+    // A front-sized panel named as a door is the door even with an accessory word ("Mirror door backing", "Glazed door
+    // frame"); a small one ("door lock key ring") is not. Parts on a bigger moving part are sorted out below.
+    const kind = moverKind(p.id, p.name, p.nameAr) ?? (frontPanel(box, whole) && !surroundsLeaf(p.id, box) ? namedMover(p.id, p.name, p.nameAr) : null);
     if (!kind) continue;
     const base: PartAnimation = { id: `anim_${p.id}`, component: p.id, follow: [], label: p.name ?? p.id, labelAr: p.nameAr ?? null, motion: kind.motion, type: "rotation", axis: "y", unit: "degrees", duration: kind.motion === "slide" ? 0.6 : 0.8, enabled: true, confidence: 0.7, source: "names", issues: [], reason: "named a movable part" };
     anims.push(kind.build(base, box, whole));
   }
   // An accessory taken for a movable part (a handle or a moulding named "door…", a vision "door" that is the panel
-  // on a door): it rides on a bigger moving part's front, so it joins that part's assembly instead of moving alone.
-  const area = (b: Box3) => size(b).x * size(b).y;
+  // on a door, the glass or mirror held by a door's frame): it rides on a bigger moving part's front, so it joins that
+  // part's assembly instead of moving alone.
   for (const a of [...anims]) {
     const box = boxes.get(a.component);
     if (!box || a.source === "manual") continue;
-    const host = anims.find((o) => o !== a && boxes.get(o.component) && area(box) < 0.4 * area(boxes.get(o.component)!) && attachedTo(boxes.get(o.component)!, box, depth));
+    const insert = ACCESSORY_WORDS.test(words(names.get(a.component) ?? ""));
+    const host = anims.find((o) => o !== a && boxes.get(o.component) && area(box) < (insert ? 1 : 0.4) * area(boxes.get(o.component)!) && attachedTo(boxes.get(o.component)!, box, depth));
     if (host) {
       host.follow.push(a.component, ...a.follow);
       anims = anims.filter((x) => x !== a);
@@ -436,7 +466,9 @@ export function refine(
   }
   const movers = new Set(anims.map((a) => a.component));
   const taken = new Set<string>([...movers, ...anims.flatMap((a) => a.follow)]);
-  const body = [...boxes].sort(([, a], [, b]) => size(b).x * size(b).y * size(b).z - size(a).x * size(a).y * size(a).z)[0]?.[0];
+  // The body: the biggest part that is not a drawer's own box or a part added here (a reloaded drawer box can be big).
+  const body = [...boxes].filter(([id]) => !DRAWER_BOX.test(words(names.get(id) ?? "")) && !partOf.get(id)?.mesh.userData?.estimated)
+    .sort(([, a], [, b]) => size(b).x * size(b).y * size(b).z - size(a).x * size(a).y * size(a).z)[0]?.[0];
   if (body) taken.add(body);
   // The fixed structure (no moving part, nothing on one, no small fittings): what a part faces out of.
   const carriedIds = new Set([...movers, ...anims.flatMap((a) => a.follow)]);
@@ -458,6 +490,17 @@ export function refine(
     on.forEach((id) => taken.add(id));
     // The part's own frame: where it faces out, and the model's up and front (saved with it).
     let next: PartAnimation = { ...a, follow: [...new Set([...a.follow, ...on])].filter((id) => id !== a.component), face: faceOf(box, structure, frame), up: frame.up, front: frame.front };
+    if (next.type === "translation") {
+      // The drawer's own box (bottom, sides, back), when the file has one: behind the front, within its outline. It
+      // slides with it; no second box is made (reconstruct.openCavities).
+      const m = localFrame(next), f = inFrame(box, m);
+      const own = [...boxes].filter(([id]) => !taken.has(id) && id !== a.component && (DRAWER_BOX.test(words(names.get(id) ?? "")) || partOf.get(id)?.mesh.userData?.drawerBoxFor === a.component)).filter(([, b]) => {
+        const l = inFrame(b, m), s3 = size(l);
+        return overlap(l.min.x, l.max.x, f.min.x, f.max.x) >= 0.8 * s3.x && overlap(l.min.y, l.max.y, f.min.y, f.max.y) >= 0.8 * s3.y && l.max.z <= f.max.z + 1e-6 && l.min.z < f.min.z;
+      }).map(([id]) => id);
+      own.forEach((id) => taken.add(id));
+      next = { ...next, follow: [...new Set([...next.follow, ...own])] };
+    }
     if (next.type === "rotation") {
       const side = !next.hinge || next.hinge === "left" || next.hinge === "right";
       if (side) {

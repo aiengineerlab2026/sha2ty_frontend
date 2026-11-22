@@ -311,3 +311,31 @@ test("a handle on mounting feet and a key hanging from its lock ride with their 
   assert.deepEqual(follow("left_door"), ["left_door_handle_mounting_foot", "left_door_handle_mounting_foot_2", "left_door_handle_pull", "left_door_lock_escutcheon", "left_door_lock_inserted_key", "left_door_lock_key_ring"]);
   assert.deepEqual(follow("right_door"), ["right_door_handle_mounting_foot", "right_door_handle_pull"]);
 });
+
+test("a narrow glazed door of a wide wardrobe opens with its glass; a doorway's frame around a leaf stays put", () => {
+  const model = new Group();
+  const add = (id: string, name: string, g: BoxGeometry) => {
+    const mesh = new Mesh(g, new MeshStandardMaterial());
+    mesh.name = id;
+    model.add(mesh);
+    return { id, name, mesh };
+  };
+  const slots = [
+    add("body", "Main carcass", new BoxGeometry(2.9, 2.7, 0.6).translate(0, 1.35, 0)),
+    // 0.38 m of a 2.9 m front: ~6 % of the front, a door by its shape
+    add("glazed_frame", "Left glazed door frame", new BoxGeometry(0.38, 1.8, 0.03).translate(0.2, 1.1, 0.315)),
+    add("glass", "Left door glass panel", new BoxGeometry(0.3, 1.7, 0.01).translate(0.2, 1.1, 0.32)),
+  ];
+  model.updateMatrixWorld(true);
+  const config = refine(null, slots, model)!;
+  assert.deepEqual(config.animations.map((a) => a.component), ["glazed_frame"]);
+  assert.ok(config.animations[0].follow.includes("glass") && config.animations[0].enabled);
+
+  const doorway = new Group();
+  const frame = new Mesh(new BoxGeometry(1, 2.2, 0.1).translate(0, 1.1, 0), new MeshStandardMaterial());
+  const leaf = new Mesh(new BoxGeometry(0.9, 2.1, 0.04).translate(0, 1.05, 0.02), new MeshStandardMaterial());
+  doorway.add(frame, leaf);
+  doorway.updateMatrixWorld(true);
+  const d = refine(null, [{ id: "frame", name: "Door frame", mesh: frame }, { id: "leaf", name: "Door leaf", mesh: leaf }], doorway)!;
+  assert.deepEqual(d.animations.map((a) => a.component), ["leaf"]);
+});

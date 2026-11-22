@@ -168,3 +168,10 @@ html:lang(ar) {
 html:lang(ar) * {
   letter-spacing: normal;
 }
+
+/* components/vendor/TurnIcon.tsx: the movable-part icon turning about its vertical (y) axis. */
+@keyframes sha2ty-turn-y {
+  to {
+    transform: rotateY(360deg);
+  }
+}

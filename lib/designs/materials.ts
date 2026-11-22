@@ -54,7 +54,24 @@ export interface PartMaterialOption {
   coverage_m2?: number | null;
 }
 
-/** What is saved on a part (MaterialEdit.material): the choice, and its estimate at the size it was saved at. */
+/** An opaque paint: alone on a part (PartMaterial kind "paint") or as the coat over its board (PartMaterial.paint). */
+export interface PaintLayer {
+  id: string;
+  name: string;
+  price?: number | null;
+  unit: MaterialUnit;
+  color?: string;
+  color_name?: string;
+  coverage_m2?: number;
+  coats?: number;
+  quantity?: number;
+  total?: number | null;
+}
+
+/** What is saved on a part (MaterialEdit.material): the choice, and its estimate at the size it was saved at.
+ * A wooden part is three things: its board (the structural material: MDF, plywood, oak…; `kind` "wood"), its
+ * decorative `finish` (veneer, melamine, laminate, clear lacquer) and its `paint`. What the customer sees is the
+ * outermost of them (visibleSurface): changing the board never changes a painted or covered part's look. */
 export interface PartMaterial {
   id: string;
   kind: MaterialKind;
@@ -69,11 +86,49 @@ export interface PartMaterial {
   quantity?: number;
   finish_quantity?: number;
   total?: number | null;
+  /** An opaque paint over the board: it is what is seen; the board and any finish under it are still made and priced. */
+  paint?: PaintLayer;
   /** Paint: the palette colour, how far one unit goes per coat, and the coats. */
   color?: string;
   color_name?: string;
   coverage_m2?: number;
   coats?: number;
+}
+
+/** The paint a part shows: its own (a painted-only part) or the coat over its board. */
+export function paintOf(m: PartMaterial | null | undefined): PaintLayer | null {
+  if (!m) return null;
+  if (m.kind === "paint") {
+    const { id, name, price, unit, color, color_name, coverage_m2, coats } = m;
+    return { id, name, price, unit, color, color_name, coverage_m2, coats };
+  }
+  return m.paint ?? null;
+}
+
+export type Surface = "paint" | "finish" | "lacquer" | "board" | "fabric" | "none";
+
+/** What a customer sees on the part, outermost first: an opaque paint; else an opaque finish (veneer, melamine,
+ * laminate) shows its own pattern; else clear lacquer shows the board's wood, glossier; else the bare board. */
+export function visibleSurface(m: PartMaterial | null | undefined): Surface {
+  if (!m) return "none";
+  if (m.kind === "fabric") return "fabric";
+  if (paintOf(m)) return "paint";
+  if (m.finish) return m.finish.wood_type === "lacquer" ? "lacquer" : "finish";
+  return "board";
+}
+
+/** A new board for a part, its paint kept: only the structural material (and its price) changes. A painted-only part
+ * becomes that board, painted the same. The board's own finish (chosen with it) replaces the old one. */
+export function withBoard(previous: PartMaterial | null | undefined, board: PartMaterial): PartMaterial {
+  const paint = paintOf(previous);
+  const { paint: _old, ...bare } = board; // eslint-disable-line @typescript-eslint/no-unused-vars
+  return { ...bare, ...(paint ? { paint } : {}) };
+}
+
+/** A paint over a part: over its board when it has one (the board stays what is made and bought), else on its own. */
+export function withPaint(previous: PartMaterial | null | undefined, paint: PaintLayer): PartMaterial {
+  if (previous?.kind === "wood") return { ...previous, paint };
+  return { ...paint, kind: "paint" };
 }
 
 export const round = (x: number, step: number) => Math.ceil(x / step - 1e-9) * step;
@@ -98,8 +153,18 @@ export function quote(material: Omit<PartMaterial, "quantity" | "finish_quantity
     : material.unit === "m" ? round(board, 0.1)
     : round(board, 0.01);
   const finish_quantity = material.finish ? round(area_m2 * WOOD_WASTE, 0.01) : undefined;
-  const parts = [material.price == null ? null : quantity * material.price, material.finish ? (material.finish.price == null ? null : finish_quantity! * material.finish.price) : 0];
-  return { ...material, quantity, finish_quantity, total: parts.some((p) => p == null) ? null : money((parts[0] ?? 0) + (parts[1] ?? 0)) };
+  // The paint over the board is bought on top of it, for the whole surface (as a painted-only part).
+  const paint = material.paint ? quote({ ...material.paint, kind: "paint" }, area_m2) : null;
+  const parts = [
+    material.price == null ? null : quantity * material.price,
+    material.finish ? (material.finish.price == null ? null : finish_quantity! * material.finish.price) : 0,
+    paint ? paint.total ?? null : 0,
+  ];
+  return {
+    ...material, quantity, finish_quantity,
+    ...(paint && material.paint ? { paint: { ...material.paint, coats: paint.coats, quantity: paint.quantity, total: paint.total ?? null } } : {}),
+    total: parts.some((p) => p == null) ? null : money(parts.reduce<number>((sum, p) => sum + (p ?? 0), 0)),
+  };
 }
 
 export const UNIT_LABEL: Record<MaterialUnit, string> = { m: "m", m2: "m²", m3: "m³", sheet: "sheet", kg: "kg", l: "L" };
