@@ -2076,6 +2076,8 @@ export const AR: Record<string, string> = {
   "The painted parts keep their paint: the wood you choose is what they are made of (and priced as).": "تحتفظ الأجزاء المدهونة بدهانها: الخشب الذي تختاره هو ما تُصنع منه (ويُحسب سعرها عليه).",
   "The hinge side is a guess: check it and choose Left or Right.": "جهة المفصلة تقديرية: تحقق منها واختر يسار أو يمين.",
   "Opens": "يفتح",
+  "Opens {angle}° of {wanted}°: further it would hit {part}.": "يفتح {angle}° من {wanted}°: بعد ذلك يصطدم بـ {part}.",
+  "The file shows this door open on its hinges: its hinge side is set by the file.": "الملف يُظهر هذا الباب مفتوحًا على مفصلاته: جهة المفصلة محددة من الملف.",
   "Outward": "للخارج",
   "Inward": "للداخل",
 };

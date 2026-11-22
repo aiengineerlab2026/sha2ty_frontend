@@ -28,12 +28,13 @@ import { ResizeGizmo } from "@/components/designs/ResizeGizmo";
 import { AnimationPanel } from "./AnimationPanel";
 import { AddComponentsPanel, PickerBridge, PlacementOverlay, ResizeHandles, useComponentEditor } from "./AddComponents";
 import { choosePart, offsetAxis, specBox, type Side, type Surroundings } from "@/lib/vendor/parts3d";
-import { blocksPartIcon, checkMovers, movedBox, openCavities, rebuildPanel, type Added } from "@/lib/vendor/reconstruct";
-import { animationClips, animationOf, applyAnimations, attachmentsFrom, boxInModel, carried, enabledAnimations, handleOf, meshesOf, refine, shownOpen, step, targetFor, type AnimationConfig, type Openness } from "@/lib/vendor/animation";
+import { blocksPartIcon, checkMovers, movedBox, openCavities, paneBacks, rebuildPanel, type Added } from "@/lib/vendor/reconstruct";
+import { animationClips, animationOf, applyAnimations, attachmentsFrom, boxInModel, carried, enabledAnimations, fromClosed, handleOf, meshesOf, refine, shownOpen, step, targetFor, type AnimationConfig, type Openness } from "@/lib/vendor/animation";
 import { MIN_SIZE, resized, sizeCm } from "@/lib/designs/resize";
 import { restoreMaterial } from "@/lib/designs/materialRestore";
 import { TurnIcon } from "./TurnIcon";
 import { boardOnly, specClasses, woodBlocked } from "@/lib/designs/woodTargets";
+import { ownLayerName, type Look } from "@/lib/vendor/layers";
 
 export type Slot = { id: string; name: string; nameAr?: string | null; analysisId?: string; naming?: PartInfo["naming"]; variants?: PartVariant[]; mesh: Mesh; materialIndex: number };
 
@@ -481,7 +482,9 @@ export function prepare(root: Object3D, server?: PartDocument | null): { slots: 
       if (mat.name === CORE) return; // the sheet's cut edge belongs to the face part
       // The part id written into the file at export (glTF extras → userData) first: stable whatever the mesh order.
       const saved = (mesh.userData.partIds as string[] | undefined)?.[materialIndex] ?? (list.length === 1 ? (mesh.userData.partId as string | undefined) : undefined);
-      const from: PartInfo | undefined = (saved ? byId.get(saved) ?? { id: saved, name: mesh.name, editable: true } : undefined) ?? (named ? (list.length === 1 ? byId.get(mesh.name) : undefined) : server?.components[n]);
+      const linked: PartInfo | undefined = (saved ? byId.get(saved) ?? { id: saved, name: mesh.name, editable: true } : undefined) ?? (named ? (list.length === 1 ? byId.get(mesh.name) : undefined) : server?.components[n]);
+      // A photo name for another layer of the panel (the backing behind a mirror called "mirror"): the file's own wins.
+      const from = linked && ownLayerName(linked, { materialName: mat.name, look: mat as unknown as Look });
       let id = from?.id || mesh.name || `part_${n}`;
       while (used.has(id)) id = `${id}_${n}`;
       used.add(id);
@@ -553,7 +556,7 @@ export function movableParts(saved: AnimationConfig | null | undefined, slots: S
   const model = authored(root);
   const checked = checkMovers(refine(saved, slots, model, attachmentsFrom(doc)), slots, model);
   if (!checked) return null;
-  const added = openCavities(checked, slots, model);
+  const added = [...paneBacks(checked, slots, model), ...openCavities(checked, slots, model)];
   for (const part of added) {
     adopt(slots, part);
     if (part.follows) checked.animations.find((a) => a.id === part.follows)?.follow.push(part.id);
@@ -621,7 +624,8 @@ export function Animator({ slots, root, config, target, poses }: { slots: Slot[]
   useFrame((_, dt) => {
     if (!root || !slots.length || !config) return;
     const moving = step(now.current, target, config, Math.min(dt, 0.1));
-    if (!moving && !Object.values(now.current).some((v) => v > 0)) return;
+    // A door the file shows open is turned shut at openness 0 (`from`), so it is posed even when nothing is open.
+    if (!moving && !Object.values(now.current).some((v) => v > 0) && !enabledAnimations(config).some((a) => a.from)) return;
     applyPoses(slots, poses, assembliesOf(config));
     // Eased (slow out of rest, slow into place): a door swings like a door, no jolt at either end.
     const eased = Object.fromEntries(Object.entries(now.current).map(([id, t]) => [id, t * t * (3 - 2 * t)]));
@@ -1312,7 +1316,7 @@ export function ModelViewer({
         const meshes = [a.component, ...a.follow].map(meshOf).filter((m): m is Mesh => Boolean(m));
         if (!meshes.length) return [];
         const box = meshes.map(rest).reduce((all, b) => all.union(b), new Box3());
-        return [{ label: a.label, component: a.component, boxes: [0, 0.25, 0.5, 0.75, 1].map((t) => movedBox(a.type === "rotation" ? { ...a, to: (a.to ?? 0) * t } : { ...a, distance: (a.distance ?? 0) * t }, box)) }];
+        return [{ label: a.label, component: a.component, boxes: [0, 0.25, 0.5, 0.75, 1].map((t) => movedBox(a, box, t)) }];
       }),
     };
   }, [modelRoot, slots, anim, structureMeshes]);
@@ -1331,11 +1335,13 @@ export function ModelViewer({
     const open = a ? shownOpen(a, now[id] ?? 0) : (now[id] ?? 0) > 0;
     return { ...now, [id]: a ? targetFor(a, !open) : open ? 0 : 1 };
   }), [anim]);
-  // The catalogue's Open / Closed choice. A door the file already shows open stays there until this is set.
-  useEffect(() => {
-    if (!pose || !anim) return;
+  // The catalogue's Open / Closed choice, applied when it (or the movable parts) change: set while rendering, not in
+  // an effect, so the parts never draw one frame in the old state.
+  const [posed, setPosed] = useState<[typeof pose, typeof anim]>([null, null]);
+  if (pose && anim && (posed[0] !== pose || posed[1] !== anim)) {
+    setPosed([pose, anim]);
     setOpenTarget(Object.fromEntries(enabledAnimations(anim).map((a) => [a.id, targetFor(a, pose === "open")])));
-  }, [pose, anim]);
+  }
   // Each movable part's hand icon, on its handle (or the part when it has none), always shown; the page elements are
   // placed by IconTracker every frame.
   const iconEls = useRef(new Map<string, HTMLButtonElement>());
@@ -1793,9 +1799,16 @@ export function ModelViewer({
   const exportGlb = () => new Promise<Blob | null>((resolve, reject) => {
     if (!root.current) return resolve(null);
     const restoreView = showAll(slots); // the file has every part, whatever is hidden on screen
-    // Saved at rest (closed), with the movable parts as glTF animation clips; the next frame opens them again.
+    // Saved shut, with the movable parts as glTF animation clips from shut; the next frame poses them again. A door the
+    // file showed open is saved shut on its hinge (checkMovers finds every door shut in the new file).
     applyPoses(slots, undefined);
-    const clips = animationClips(slots, authored(root.current), anim);
+    applyAnimations(slots, authored(root.current), anim, {});
+    const clips = animationClips(slots, authored(root.current), fromClosed(anim));
+    // Each door's hinge line goes into the file (glTF extras), so reopening turns it on exactly the same line.
+    for (const a of enabledAnimations(anim)) {
+      const door = slots.find((item) => item.id === a.component)?.mesh;
+      if (door && a.type === "rotation" && a.pivot && (a.hinge === "left" || a.hinge === "right")) door.userData.hingeLine = a.pivot;
+    }
     // Names go into the file: one mesh, one material → the mesh carries the part's name.
     for (const item of slots) if (materials(item.mesh).length === 1) item.mesh.name = item.name;
     // Each mesh carries its part id(s) in the file (glTF extras): reopening finds every part, added ones included, by

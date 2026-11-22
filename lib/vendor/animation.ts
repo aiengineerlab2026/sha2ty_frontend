@@ -35,8 +35,12 @@ export type PartAnimation = {
   face?: Direction;
   up?: Direction;
   front?: Direction;
-  /** The file already shows this part open. Openness 0 is that pose; 1 swings it shut. Absent: 0 is closed, 1 is open. */
+  /** Older saves only: the file shows this part open, openness 0 was that pose and 1 shut it. Now such a part keeps
+   * openness 0 = closed: `from` is the turn from the file's pose back to closed, `to` the turn to fully open. */
   rest?: "open";
+  /** A collision stops the part before its configured angle (checkMovers): it opens to `angle`° instead of `wanted`°,
+   * where it would hit `by`. */
+  limit?: { angle: number; wanted: number; by: string };
   /** The hinge side was not proven by hinges, a handle, the file's own open pose, a pair or the photo: the vendor
    * should confirm it (AnimationPanel). The door still opens, on the likelier side. */
   hingeUnsure?: boolean;
@@ -114,6 +118,12 @@ function partFrame(anim: Pick<PartAnimation, "face" | "up" | "front">, hinge: Hi
 
 /** The widest a hinged part opens (degrees): a real door stops around here. */
 export const MAX_SWING = 110;
+/** A conventional hinged door's opening angle (degrees). */
+export const DEFAULT_SWING = 95;
+/** How far a turning part opens from closed (degrees). */
+export const openAngle = (a: Pick<PartAnimation, "from" | "to">) => Math.abs((a.to ?? 0) - (a.from ?? 0));
+/** The same opening direction, `angle`° from closed. */
+export const withAngle = <A extends Pick<PartAnimation, "from" | "to">>(a: A, angle: number): A => ({ ...a, to: (a.from ?? 0) + (Math.sign((a.to ?? 0) - (a.from ?? 0)) || 1) * angle });
 
 /** A rotation's settings for `hinge` on a part whose box (model coordinates) is `box`: the pivot on the hinge edge at
  * the outer face, the axis along that edge, and the sign that swings the free edge out (towards `face`), never
@@ -128,10 +138,12 @@ export function withHinge(anim: PartAnimation, hinge: Hinge, box: Box3): PartAni
   const axis = axisOfVec(new Vector3().crossVectors(O, E));
   // The free edge (opposite the hinge) turned a quarter about +axis: out (along O) is the positive way, else negative.
   const sign = E.clone().negate().applyAxisAngle(UNIT[axis], Math.PI / 2).dot(O) > 0 ? 1 : -1;
-  const angle = Math.min(Math.abs(anim.to ?? 95) || 95, MAX_SWING);
+  // The opening angle is measured from the closed pose (`from`): a door the file shows open keeps its offset.
+  const from = anim.rest === "open" ? 0 : anim.from ?? 0;
+  const angle = Math.min(anim.rest === "open" ? DEFAULT_SWING : anim.limit?.wanted ?? (openAngle(anim) || DEFAULT_SWING), MAX_SWING);
   return {
     ...anim, type: "rotation", hinge, axis, pivot: pivot.toArray().map((v) => Math.round(v * 1e4) / 1e4) as [number, number, number],
-    from: 0, to: sign * angle, unit: "degrees", direction: undefined, distance: undefined,
+    from, to: from + sign * angle, rest: undefined, limit: undefined, unit: "degrees", direction: undefined, distance: undefined,
   };
 }
 
@@ -202,13 +214,19 @@ export function problems(anim: PartAnimation, slots: SlotLike[]): string[] {
 export function applyAnimations(slots: SlotLike[], modelRoot: Object3D, config: AnimationConfig | null | undefined, open: Openness) {
   for (const anim of enabledAnimations(config)) {
     const t = Math.min(Math.max(open[anim.id] ?? 0, 0), 1);
-    if (!t || problems(anim, slots).length) continue;
+    if ((!t && !anim.from) || problems(anim, slots).length) continue; // closed is the file's pose unless `from` says not
     for (const mesh of meshesOf(slots, anim)) {
       const pose = poseAt({ position: mesh.position.clone(), quaternion: mesh.quaternion.clone() }, anim, t, toParentOf(mesh, modelRoot));
       mesh.position.copy(pose.position);
       mesh.quaternion.copy(pose.quaternion);
     }
   }
+}
+
+/** The same movements for a file saved with every part shut: `from` (the turn from the file's pose to shut) is 0. */
+export function fromClosed(config: AnimationConfig | null | undefined): AnimationConfig | null | undefined {
+  if (!config) return config;
+  return { ...config, animations: config.animations.map((a) => (a.type === "rotation" && a.from ? { ...a, from: 0, to: (a.to ?? 0) - a.from } : a)) };
 }
 
 const STEPS = 8;
@@ -305,7 +323,7 @@ function sheetSize(mesh: Mesh): Vector3 {
   mesh.getWorldScale(scale);
   return new Vector3(Math.abs(s.x * scale.x), Math.abs(s.y * scale.y), Math.abs(s.z * scale.z));
 }
-const sheetArea = (mesh: Mesh) => {
+export const sheetArea = (mesh: Mesh) => {
   const [long, mid] = [sheetSize(mesh).x, sheetSize(mesh).y, sheetSize(mesh).z].sort((a, b) => b - a);
   return long * mid;
 };
@@ -555,10 +573,20 @@ function hingeOfOpen(leaf: Mesh, modelRoot: Object3D, anim: PartAnimation, carri
   }
   const free = edge === a ? b : a;
   // Closed, the free edge lies beside the hinge across the front: its side of the hinge is where the door is.
-  const closedFree = free.clone().sub(edge).applyAxisAngle(up.clone().normalize(), -swung * Math.PI / 180);
+  const axisUp = up.clone().normalize();
+  const closedFree = free.clone().sub(edge).applyAxisAngle(axisUp, -swung * Math.PI / 180);
   const hinge: Hinge = closedFree.dot(R) > 0 ? "left" : "right";
   const pivot = edge.toArray().map((v) => Math.round(v * 1e4) / 1e4) as [number, number, number];
   return { hinge, why, pivot };
+}
+
+/** The hinge line a saved file records on its door (exportGlb writes `hingeLine`, model coordinates): the door turns
+ * on exactly the line it turned on before it was saved; its side is where that line is across the door. */
+function recordedHinge(leaf: Mesh, box: Box3, R: Vector3): { hinge: Hinge; why: string; pivot: [number, number, number] } | null {
+  const line = leaf.userData?.hingeLine as [number, number, number] | undefined;
+  if (!Array.isArray(line) || line.length !== 3 || !line.every(Number.isFinite)) return null;
+  const hinge: Hinge = new Vector3(...line).sub(box.getCenter(new Vector3())).dot(R) < 0 ? "left" : "right";
+  return { hinge, why: "the hinge recorded in the file", pivot: line };
 }
 
 /** The animations checked against the real meshes, at rest: pivots on each part's real box, side hinges from the
@@ -590,7 +618,9 @@ export function refine(
     .filter((a) => {
       const part = partOf.get(a.component);
       if (a.source !== "manual" && RUNNER.test(words(names.get(a.component) ?? ""))) return false;
-      return a.source !== "names" || moverKind(a.component, part?.name, part?.nameAr);
+      // Kept while it is still a mover: by name, or the front-sized panel it was found as (refound shut, a door's hinges
+      // would no longer be seen on it).
+      return a.source !== "names" || moverKind(a.component, part?.name, part?.nameAr) || (part && frontPanel(part.mesh, whole) && !DRAWER_FITTING.test(words(names.get(a.component) ?? "")));
     })
     .map((a) => ({ ...a, follow: [...a.follow] }));
   // A saved assembly can pin an open door to the closed door beside it. Keep a follower only while it still sits on
@@ -598,7 +628,9 @@ export function refine(
   for (const a of anims) {
     if (a.source === "manual") continue;
     const box = boxes.get(a.component);
-    a.follow = box ? a.follow.filter((id) => id !== a.component && boxes.has(id) && attachedTo(box, boxes.get(id)!, depth)) : [];
+    // Its hinge hardware stays on it too: a hinge sits on the door's edge, partly past it.
+    const onEdge = (id: string) => HINGE_PART.test(words(names.get(id) ?? "")) && box!.clone().expandByScalar(0.03).intersectsBox(boxes.get(id)!);
+    a.follow = box ? a.follow.filter((id) => id !== a.component && boxes.has(id) && (attachedTo(box, boxes.get(id)!, depth) || onEdge(id))) : [];
   }
   for (const p of parts) {
     if (anims.some((a) => a.component === p.id || a.follow.includes(p.id))) continue;
@@ -699,7 +731,7 @@ export function refine(
         const carried = [...next.follow].filter((id) => boxes.has(id)).map((id) => ({ box: boxes.get(id)!, name: names.get(id) ?? "" }));
         const across = R.lengthSq() > 0.5 ? R : new Vector3(1, 0, 0);
         const leaf = partOf.get(next.component)?.mesh;
-        const open = leaf ? hingeOfOpen(leaf, modelRoot, next, carried, VEC[frame.up], across) : null;
+        const open = leaf ? recordedHinge(leaf, box, across) ?? hingeOfOpen(leaf, modelRoot, next, carried, VEC[frame.up], across) : null;
         // A door the file shows open says where its hinge is: the edge on its hinge hardware, else the edge that stayed
         // at the cabinet. Otherwise: hardware, handle, the photo, a pair, and only then a flagged guess.
         const [hinge, why, sure] = open ? [open.hinge, open.why, true] as const
