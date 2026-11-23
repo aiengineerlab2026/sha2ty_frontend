@@ -252,9 +252,18 @@ export function HomePage({ only }: { only?: CatalogKind } = {}) {
                     </Link>
                   </>
                 ) : (
-                  <Link href="/tasks" className="inline-flex h-10 items-center gap-2 rounded-xl bg-white/10 px-4 text-sm font-medium hover:bg-white/15">
-                    {t("My requests")}
-                  </Link>
+                  <>
+                    {/* Customers add their own furniture too: a private model (supabase/user_models.sql), never listed. */}
+                    <Link
+                      href="/vendor/new"
+                      className="inline-flex h-10 items-center gap-2 rounded-xl bg-white/10 px-4 text-sm font-medium hover:bg-white/15"
+                    >
+                      <Plus className="size-4" aria-hidden /> {t("Add my model")}
+                    </Link>
+                    <Link href="/tasks" className="inline-flex h-10 items-center gap-2 rounded-xl bg-white/10 px-4 text-sm font-medium hover:bg-white/15">
+                      {t("My requests")}
+                    </Link>
+                  </>
                 )}
               </div>
             </div>
