@@ -2,7 +2,7 @@
 
 import { authSession } from "@/lib/auth/client";
 import { useLocale, useT } from "@/lib/i18n";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Header } from "@/components/shatably/Header";
 import { Button } from "@/components/ui/button";
@@ -11,7 +11,8 @@ import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
 import { supabase, supabaseConfigured } from "@/lib/supabase/client";
 import { on } from "@/lib/events";
-import { fetchGenerationQuota, generateFromPhoto, splitStates, type GenerateStep, type PhotoReading } from "@/lib/vendor/generate";
+import { fetchGenerationQuota, generateFromPhoto, splitStates, type GenerateProgress, type GenerateStep, type PhotoReading } from "@/lib/vendor/generate";
+import { phaseStates } from "@/lib/vendor/meshyPhases";
 import { glbSize } from "@/lib/vendor/glbSize";
 import { uploadPublicFile } from "@/lib/vendor/storage";
 import type { ModelProvider, ModelSource, VendorProfile } from "@/lib/vendor/types";
@@ -87,6 +88,8 @@ function ModelFormBody() {
   const [progressLabel, setProgressLabel] = useState<string | null>(null);
   const [progressPercent, setProgressPercent] = useState(0);
   const [progressSteps, setProgressSteps] = useState<GenerateStep[] | null>(null);
+  /** Meshy: the task phase, its warnings and the cleaned image (null for other generators). */
+  const [meshyProgress, setMeshyProgress] = useState<Pick<GenerateProgress, "phase" | "warnings" | "cleanImageUrl"> | null>(null);
   const [quota, setQuota] = useState<Record<ModelProvider, number> | null>(null);
   /** The generated model awaiting the vendor's check (saved as a draft): its id and 3D file. */
   const [review, setReview] = useState<{ id: string; glbUrl: string; sourceGlbUrl: string | null; components: PartDocument | null; states: ModelStates | null } | null>(null);
@@ -207,6 +210,7 @@ function ModelFormBody() {
     setProgressLabel(null);
     setProgressPercent(0);
     setProgressSteps(null);
+    setMeshyProgress(null);
     let createdId: string | null = null;
     try {
       const row = await supabase()
@@ -269,10 +273,11 @@ function ModelFormBody() {
           photo,
           provider,
           id,
-          ({ percent, status, steps }) => {
+          ({ percent, status, steps, phase, warnings, cleanImageUrl }) => {
             setProgressPercent(percent);
             setProgressLabel(status);
             setProgressSteps(steps ?? null);
+            setMeshyProgress(phase ? { phase, warnings, cleanImageUrl } : null);
           },
           sourceImageUrl ?? undefined,
           { category, title, kind: category === "furniture" ? kind.trim() : undefined, lang: locale === "ar" ? "ar" : "en" },
@@ -349,7 +354,9 @@ function ModelFormBody() {
         setError(t("Saved, but the model image could not be updated ({error}). The previous image is kept; save again to retry.", { error: materials.thumbnailError }));
         return;
       }
-      router.push(mine ? "/plan" : "/vendor"); // a private model is placed from the planner's "My models"
+      // A private model opens in its design editor (sizes, parts, materials, "Have it made"); it is also on the home
+      // page's "My uploaded models" row. The planner does not list private models.
+      router.push(mine ? `/designs/mine/${review.id}` : "/vendor");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
@@ -512,7 +519,9 @@ function ModelFormBody() {
                 <p className="tabular-nums text-slate-500">{progressPercent}%</p>
               </div>
               <Progress value={progressPercent} className="h-2 bg-slate-200" />
-              {progressSteps && progressSteps.length > 0 && (
+              {meshyProgress ? (
+                <MeshyProgress phase={meshyProgress.phase} warnings={meshyProgress.warnings} cleanImageUrl={meshyProgress.cleanImageUrl} photo={photo} />
+              ) : progressSteps && progressSteps.length > 0 && (
                 <ol className="space-y-1 text-xs text-slate-600">
                   {progressSteps.map((step) => (
                     <li key={step.id} className="flex items-center justify-between gap-3">
@@ -548,7 +557,47 @@ function TriesLeft({ n }: { n: number | undefined }) {
 
 const escapeHtml = (text: string) => text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
+/** Meshy's phases as a checklist (done, current, waiting), its warnings, and the photo beside the cleaned image the
+ * model is made from. Percentages stay on the bar above: the phases are only what the backend reported. */
+function MeshyProgress({ phase, warnings, cleanImageUrl, photo }: { phase?: string; warnings?: string[]; cleanImageUrl?: string; photo: File | null }) {
+  const t = useT();
+  const photoUrl = useMemo(() => (photo && cleanImageUrl ? URL.createObjectURL(photo) : null), [photo, cleanImageUrl]);
+  useEffect(() => () => { if (photoUrl) URL.revokeObjectURL(photoUrl); }, [photoUrl]);
+  return (
+    <div className="space-y-2">
+      <ol className="space-y-1 text-xs text-slate-600">
+        {phaseStates(phase).map((p) => (
+          <li key={p.id} className={`flex items-center justify-between gap-3 ${p.state === "In progress" ? "font-medium text-slate-900" : ""}`}>
+            <span>{t(p.label)}</span>
+            <span>{t(p.state)}</span>
+          </li>
+        ))}
+      </ol>
+      {warnings && warnings.length > 0 && (
+        <ul className="space-y-1 rounded-lg border border-amber-200 bg-amber-50 p-2 text-xs text-amber-900" role="status">
+          {warnings.map((w) => <li key={w}>{w}</li>)}
+        </ul>
+      )}
+      {cleanImageUrl && photoUrl && (
+        <div className="grid grid-cols-2 gap-2 text-xs text-slate-600">
+          <figure className="space-y-1">
+            {/* eslint-disable-next-line @next/next/no-img-element -- a local object URL */}
+            <img src={photoUrl} alt={t("Original photo")} className="aspect-square w-full rounded-lg border border-slate-200 bg-white object-contain" />
+            <figcaption>{t("Original photo")}</figcaption>
+          </figure>
+          <figure className="space-y-1">
+            {/* eslint-disable-next-line @next/next/no-img-element -- the CDN image Meshy meshed */}
+            <img src={cleanImageUrl} alt={t("Cleaned by Meshy")} className="aspect-square w-full rounded-lg border border-slate-200 bg-[repeating-conic-gradient(#f1f5f9_0_25%,#fff_0_50%)] bg-[length:16px_16px] object-contain" />
+            <figcaption>{t("Cleaned by Meshy (used for 3D)")}</figcaption>
+          </figure>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function stepStatus(status: string): string {
+  if (status === "SKIPPED") return "Skipped";
   if (status === "SUCCEEDED") return "Done";
   if (status === "FAILED" || status === "CANCELED" || status === "EXPIRED") return "Failed";
   if (status === "IN_PROGRESS") return "In progress";

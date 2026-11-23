@@ -4,9 +4,9 @@ import type { ModelProvider, ModelStates } from "./types";
 
 import { publish } from "@/lib/events";
 
-export type GenerateStep = { id: "image" | "mesh"; status: string; progress: number };
+import { progressFrom, type GenerateProgress } from "./meshyPhases";
 
-export type GenerateProgress = { percent: number; status: string; steps?: GenerateStep[] };
+export { MESHY_PHASES, type GenerateProgress, type GenerateStep } from "./meshyPhases";
 
 /** The vision model's reading of the photo: size estimate (metres; null when it could not tell) and a listing. */
 export type PhotoReading = {
@@ -45,7 +45,7 @@ export async function generateFromPhoto(
     if (subject.lang) body.append("lang", subject.lang);
   }
 
-  onProgress?.({ percent: 4, status: "Uploading photo…" });
+  onProgress?.(provider === "meshy" ? { percent: 4, status: "Preparing furniture image…", phase: "preparing" } : { percent: 4, status: "Uploading photo…" });
   const stopPulse = provider !== "meshy" ? pulseProgress(onProgress) : null;
 
   const created = await apiFetch(`/api/vendor/generate`, {
@@ -78,10 +78,9 @@ export async function generateFromPhoto(
     const polled = await apiFetch(`/api/vendor/tasks/${taskId}`);
     const task = await polled.json().catch(() => ({}));
     if (!polled.ok) throw new Error(detail(task) || "Could not check generation status.");
-    const reported = Number(task.progress);
-    last = Number.isFinite(reported) ? Math.max(last, Math.min(99, reported)) : last;
-    const steps = Array.isArray(task.steps) ? (task.steps as GenerateStep[]) : undefined;
-    onProgress?.({ percent: last, status: conversionLabel(String(task.status || ""), last, steps), steps });
+    const progress = progressFrom(task, last);
+    last = progress.percent;
+    onProgress?.(progress);
     if (task.status === "SUCCEEDED" && task.glb_url) {
       onProgress?.({ percent: 100, status: "Saving model to CDN…" });
       // glb_url is the split (modular) model when the backend could separate parts; source_glb_url the untouched one.
@@ -118,17 +117,6 @@ export async function fetchGenerationQuota(): Promise<{ remaining: Record<ModelP
   if (!res?.ok) return null;
   const body = await res.json().catch(() => null);
   return body?.remaining ? { remaining: body.remaining, provider: body.provider ?? "meshy" } : null;
-}
-
-function conversionLabel(status: string, percent: number, steps?: GenerateStep[]): string {
-  const active = steps?.find((step) => step.status === "IN_PROGRESS" || step.status === "PENDING");
-  if (active?.id === "image") return "Cleaning the photo…";
-  if (active?.id === "mesh" && steps?.some((step) => step.id === "image")) return "Building the 3D model…";
-  if (status === "PENDING") return "Queued for conversion…";
-  if (percent < 35) return "Analyzing the photo…";
-  if (percent < 75) return "Building the 3D mesh…";
-  if (percent < 100) return "Texturing the model…";
-  return "Finishing conversion…";
 }
 
 function pulseProgress(onProgress?: (progress: GenerateProgress) => void) {
