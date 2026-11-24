@@ -24,6 +24,8 @@ export type ModelValidation = { ok: boolean; errors: string[]; warnings: string[
 /** The backend's vision analysis of the photo (services/mesh_analysis.py), kept with the model for later editing and
  * regeneration; `modularity`: how many of its components the generated meshes turned out to be. */
 export type MeshAnalysis = { objectType: string; summary?: string; components: Record<string, unknown>[] };
+/** The cleaned image's check (backend fidelity._compare_removal): an inconclusive check is never a pass. */
+export type CleaningCheck = { status?: "passed" | "failed" | "inconclusive"; issues?: string[]; notes?: string[]; checked?: string[]; decision?: "cleaned" | "original" };
 export type Modularity = { level: "full" | "partial" | "none"; matched: string[]; missing: string[]; unmatchedMeshes: string[]; note?: string | null };
 export type CarpenterPart = {
   id: string; name: string; source: "observed" | "inferred"; materialCategory: string; classification: string; role?: string;
@@ -55,11 +57,12 @@ export type PartDocument = {
   /** The structural model's status (built or not, and what it could not tell). */
   structural?: { built: boolean; uncertain?: string[]; source?: string };
   /** Meshy Auto Split's actual result (backend services/fidelity.split_check): used only when `accepted`. */
-  split?: { accepted: boolean; status?: string | null; issues?: string[]; meshesBefore?: number | null; meshesAfter?: number | null; partCount?: number | null; promptIgnored?: boolean | null; error?: string | null };
+  split?: { accepted: boolean; status?: string | null; issues?: string[]; meshesBefore?: number | null; meshesAfter?: number | null; partCount?: number | null; promptIgnored?: boolean | null; error?: string | null; taskId?: string | null; prompt?: string | null; triangles?: number[] | null; shape?: { silhouette?: number; colourDE?: number | null } | null };
   /** Exactly what Meshy meshed: the original photo or a cleaned one that passed validation, and its texture guide. */
   meshyInput?: { source: "original" | "cleaned"; url?: string | null; sha256?: string | null; texture?: string };
   /** The cleaning step: its check against the original, and whether the cleaned photo was refused. */
-  cleaning?: { cleaned?: boolean; rejected?: boolean; image_url?: string; check?: { issues?: string[] } };
+  cleaning?: { cleaned?: boolean; rejected?: boolean; used?: "cleaned" | "original"; image_url?: string; imageTaskId?: string | null; fallback?: { what: string; reason: string };
+    check?: CleaningCheck };
   /** The shared material spec, per photo-reading component id. */
   materials?: { parts: Record<string, MaterialSpec>; estimated?: boolean; note?: string };
   quality?: GeometryQuality;
