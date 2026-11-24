@@ -25,6 +25,7 @@ import { catalogDimensions } from "@/lib/plan/modelNormalization";
 import { customizedModelFields, updateModel, type PartEditorApi } from "@/lib/vendor/parts";
 import { uploadPublicFile } from "@/lib/vendor/storage";
 import { ReplaceGlb } from "./ReplaceGlb";
+import { GenerationDiagnostics } from "./GenerationDiagnostics";
 import { fidelityProblem, linkedVisual, structuralEdits, structuralParts, visualModularity } from "@/lib/designs/structural";
 
 const ModelViewer = dynamic(() => import("./ModelViewer").then((mod) => mod.ModelViewer), {
@@ -338,6 +339,11 @@ export function ModelDetail({ id }: { id: string }) {
         <p role="status" className="shrink-0 border-b border-slate-200 bg-slate-50 px-4 py-2 text-xs text-slate-600">
           {t("The cleaned photo changed the furniture, so the original photo was used.")} {cleaningRefused && <span dir="ltr">({cleaningRefused})</span>}
         </p>
+      )}
+      {model?.glb_url && !replaced && !showingOpen && (model.components?.cleaning || model.components?.split) && (
+        <div className="max-h-[40vh] shrink-0 overflow-auto border-b border-slate-200 px-4 py-2">
+          <GenerationDiagnostics doc={model.components} glbUrl={model.glb_url} sourceGlbUrl={model.source_glb_url} originalUrl={model.source_image_url} />
+        </div>
       )}
       {structuralStatus && !structuralStatus.built && !replaced && (
         <p role="status" className="shrink-0 border-b border-slate-200 bg-slate-50 px-4 py-2 text-xs text-slate-600">

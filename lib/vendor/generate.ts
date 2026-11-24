@@ -6,7 +6,10 @@ import { publish } from "@/lib/events";
 
 import { progressFrom, type GenerateProgress } from "./meshyPhases";
 
-export { MESHY_PHASES, type GenerateProgress, type GenerateStep } from "./meshyPhases";
+export { AWAITING_APPROVAL, MESHY_PHASES, type GenerateProgress, type GenerateStep } from "./meshyPhases";
+
+/** A finished conversion. taskId: the backend task (Meshy), for "Retry Auto Split" while it is kept (about an hour). */
+type Generated = { glbUrl: string; reading: PhotoReading | null; components: PartDocument | null; sourceGlbUrl: string | null; states: ModelStates | null; taskId?: string };
 
 /** The vision model's reading of the photo: size estimate (metres; null when it could not tell) and a listing. */
 export type PhotoReading = {
@@ -29,7 +32,7 @@ export async function generateFromPhoto(
   subject?: { category: string; title: string; kind?: string; lang?: "ar" | "en" },
   /** A wardrobe with open and closed states: the photo of it open (`file` is the closed one). */
   openFile?: File,
-): Promise<{ glbUrl: string; reading: PhotoReading | null; components: PartDocument | null; sourceGlbUrl: string | null; states: ModelStates | null }> {
+): Promise<Generated> {
   const body = new FormData();
   body.append("image", file);
   body.append("provider", provider);
@@ -71,10 +74,13 @@ export async function generateFromPhoto(
   }
 
   const taskId = json.task_id as string;
-  let last = 8;
-  onProgress?.({ percent: last, status: "Queued for conversion…" });
+  onProgress?.({ percent: 8, status: "Queued for conversion…" });
+  return { ...(await pollTask(taskId, 8, onProgress)), reading };
+}
 
-  for (let i = 0; i < 180; i++) {
+/** Poll a conversion task until it finishes (or fails). */
+async function pollTask(taskId: string, last: number, onProgress?: (progress: GenerateProgress) => void): Promise<Omit<Generated, "reading">> {
+  for (let i = 0; i < 360; i++) {
     const polled = await apiFetch(`/api/vendor/tasks/${taskId}`);
     const task = await polled.json().catch(() => ({}));
     if (!polled.ok) throw new Error(detail(task) || "Could not check generation status.");
@@ -84,7 +90,7 @@ export async function generateFromPhoto(
     if (task.status === "SUCCEEDED" && task.glb_url) {
       onProgress?.({ percent: 100, status: "Saving model to CDN…" });
       // glb_url is the split (modular) model when the backend could separate parts; source_glb_url the untouched one.
-      return { glbUrl: task.glb_url as string, reading, components: (task.components as PartDocument) ?? null, sourceGlbUrl: (task.source_glb_url as string) ?? null, states: null };
+      return { glbUrl: task.glb_url as string, components: (task.components as PartDocument) ?? null, sourceGlbUrl: (task.source_glb_url as string) ?? null, states: null, taskId };
     }
     if (task.status === "FAILED" || task.status === "CANCELED") {
       throw new Error(task.error || "Generation failed.");
@@ -92,6 +98,22 @@ export async function generateFromPhoto(
     await wait(task.retry_after_seconds ? Number(task.retry_after_seconds) * 1000 : 4000);
   }
   throw new Error("Generation timed out. Try again.");
+}
+
+/** The answer to an unchecked cleaned image (phase awaiting_approval): mesh it, or mesh the original photo. The
+ * conversion's own poll loop then carries on. */
+export async function decideCleaning(taskId: string, use: "cleaned" | "original"): Promise<void> {
+  const res = await apiFetch(`/api/vendor/tasks/${taskId}/cleaning`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ use }) });
+  if (!res.ok) throw new Error(detail(await res.json().catch(() => ({}))) || `Could not send your choice (${res.status}).`);
+}
+
+/** Meshy Auto Split again on the same finished 3D model (no new generation, no try used), then the new model. */
+export async function retrySplit(taskId: string, onProgress?: (progress: GenerateProgress) => void): Promise<Omit<Generated, "reading">> {
+  const res = await apiFetch(`/api/vendor/tasks/${taskId}/retry-split`, { method: "POST" });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(detail(json) || `Could not retry Auto Split (${res.status}).`);
+  onProgress?.(progressFrom(json, 90));
+  return pollTask(taskId, 90, onProgress);
 }
 
 function statesFrom(raw: unknown): ModelStates | null {

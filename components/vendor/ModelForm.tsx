@@ -11,8 +11,9 @@ import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
 import { supabase, supabaseConfigured } from "@/lib/supabase/client";
 import { on } from "@/lib/events";
-import { fetchGenerationQuota, generateFromPhoto, splitStates, type GenerateProgress, type GenerateStep, type PhotoReading } from "@/lib/vendor/generate";
-import { phaseStates } from "@/lib/vendor/meshyPhases";
+import { decideCleaning, fetchGenerationQuota, generateFromPhoto, retrySplit, splitStates, type GenerateProgress, type GenerateStep, type PhotoReading } from "@/lib/vendor/generate";
+import { AWAITING_APPROVAL, phaseStates, type TaskCleaningCheck } from "@/lib/vendor/meshyPhases";
+import { GenerationDiagnostics } from "./GenerationDiagnostics";
 import { glbSize } from "@/lib/vendor/glbSize";
 import { uploadPublicFile } from "@/lib/vendor/storage";
 import type { ModelProvider, ModelSource, VendorProfile } from "@/lib/vendor/types";
@@ -89,10 +90,15 @@ function ModelFormBody() {
   const [progressPercent, setProgressPercent] = useState(0);
   const [progressSteps, setProgressSteps] = useState<GenerateStep[] | null>(null);
   /** Meshy: the task phase, its warnings and the cleaned image (null for other generators). */
-  const [meshyProgress, setMeshyProgress] = useState<Pick<GenerateProgress, "phase" | "warnings" | "cleanImageUrl"> | null>(null);
+  const [meshyProgress, setMeshyProgress] = useState<Pick<GenerateProgress, "phase" | "warnings" | "cleanImageUrl" | "reviewImageUrl" | "cleaningCheck" | "taskId"> | null>(null);
+  const [retrying, setRetrying] = useState(false);
+  // The original photo beside the cleaned one in the review's diagnostics.
+  const photoPreview = useMemo(() => (photo ? URL.createObjectURL(photo) : null), [photo]);
+  useEffect(() => () => { if (photoPreview) URL.revokeObjectURL(photoPreview); }, [photoPreview]);
   const [quota, setQuota] = useState<Record<ModelProvider, number> | null>(null);
   /** The generated model awaiting the vendor's check (saved as a draft): its id and 3D file. */
-  const [review, setReview] = useState<{ id: string; glbUrl: string; sourceGlbUrl: string | null; components: PartDocument | null; states: ModelStates | null } | null>(null);
+  // taskId: the backend conversion (Meshy), kept about an hour: "Retry Auto Split" works on it without regenerating.
+  const [review, setReview] = useState<{ id: string; glbUrl: string; sourceGlbUrl: string | null; components: PartDocument | null; states: ModelStates | null; taskId?: string } | null>(null);
   const editor = useRef<PartEditorApi | null>(null);
   // A wardrobe with an open and a closed state (supabase/model_states.sql): null until the vendor answers.
   const [twoStates, setTwoStates] = useState<boolean | null>(null);
@@ -253,6 +259,7 @@ function ModelFormBody() {
       let sourceGlbUrl: string | null = null;
       let estimated: PhotoReading | null = null;
       let states: ModelStates | null = null;
+      let taskId: string | undefined;
       if (photo) {
         setProgressLabel(t("Uploading photo…"));
         setProgressPercent(6);
@@ -269,15 +276,15 @@ function ModelFormBody() {
         if (!photo) throw new Error(t(withStates ? "Add the photo of the wardrobe closed." : "Choose a photo to generate from."));
         if (withStates && !openPhoto) throw new Error(t("Add the photo of the wardrobe open, or answer No."));
         if (quota && quota[provider] <= 0) throw new Error(t("No 3D generations left on this account."));
-        ({ glbUrl, reading: estimated, components, sourceGlbUrl, states } = await generateFromPhoto(
+        ({ glbUrl, reading: estimated, components, sourceGlbUrl, states, taskId } = await generateFromPhoto(
           photo,
           provider,
           id,
-          ({ percent, status, steps, phase, warnings, cleanImageUrl }) => {
+          ({ percent, status, steps, phase, warnings, cleanImageUrl, reviewImageUrl, cleaningCheck, taskId: running }) => {
             setProgressPercent(percent);
             setProgressLabel(status);
             setProgressSteps(steps ?? null);
-            setMeshyProgress(phase ? { phase, warnings, cleanImageUrl } : null);
+            setMeshyProgress(phase ? { phase, warnings, cleanImageUrl, reviewImageUrl, cleaningCheck, taskId: running } : null);
           },
           sourceImageUrl ?? undefined,
           { category, title, kind: category === "furniture" ? kind.trim() : undefined, lang: locale === "ar" ? "ar" : "en" },
@@ -316,7 +323,7 @@ function ModelFormBody() {
       if (!numberOrNull(height)) setHeight(m(estimated?.height_m));
       if (!numberOrNull(depth)) setDepth(m(estimated?.depth_m));
       setShown("closed");
-      setReview({ id, glbUrl: glbUrl!, sourceGlbUrl, components, states });
+      setReview({ id, glbUrl: glbUrl!, sourceGlbUrl, components, states, taskId });
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : String(caught);
       if (createdId) {
@@ -364,6 +371,23 @@ function ModelFormBody() {
     }
   };
 
+  /** Auto Split again on the same Image to 3D result: the draft gets the new file and part document. */
+  const retryAutoSplit = async () => {
+    if (!review?.taskId) return;
+    setRetrying(true);
+    setError(null);
+    try {
+      const next = await retrySplit(review.taskId);
+      const draft = await supabase().from(table).update({ glb_url: next.glbUrl, components: next.components, source_glb_url: next.sourceGlbUrl }).eq("id", review.id);
+      if (draft.error) throw new Error(draft.error.message);
+      setReview({ ...review, glbUrl: next.glbUrl, components: next.components, sourceGlbUrl: next.sourceGlbUrl });
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setRetrying(false);
+    }
+  };
+
   if (review) {
     const [w, h, d] = [numberOrNull(width), numberOrNull(height), numberOrNull(depth)];
     return (
@@ -382,6 +406,10 @@ function ModelFormBody() {
             )}
             <ValidationNotice validation={(shown === "open" ? review.states?.open?.components : review.components)?.validation} />
             <QualityNotice quality={review.components?.quality} />
+            {shown === "closed" && (
+              <GenerationDiagnostics doc={review.components} glbUrl={review.glbUrl} sourceGlbUrl={review.sourceGlbUrl} originalUrl={photoPreview}
+                onRetrySplit={review.taskId ? () => void retryAutoSplit() : undefined} retrying={retrying} />
+            )}
             {/* One viewer for both states: the camera stays where it is; the open file is placed exactly like the closed. */}
             <ModelViewer
               edit
@@ -520,7 +548,8 @@ function ModelFormBody() {
               </div>
               <Progress value={progressPercent} className="h-2 bg-slate-200" />
               {meshyProgress ? (
-                <MeshyProgress phase={meshyProgress.phase} warnings={meshyProgress.warnings} cleanImageUrl={meshyProgress.cleanImageUrl} photo={photo} />
+                <MeshyProgress phase={meshyProgress.phase} warnings={meshyProgress.warnings} cleanImageUrl={meshyProgress.cleanImageUrl} photo={photo}
+                  reviewImageUrl={meshyProgress.reviewImageUrl} check={meshyProgress.cleaningCheck} taskId={meshyProgress.taskId} />
               ) : progressSteps && progressSteps.length > 0 && (
                 <ol className="space-y-1 text-xs text-slate-600">
                   {progressSteps.map((step) => (
@@ -559,9 +588,26 @@ const escapeHtml = (text: string) => text.replace(/&/g, "&amp;").replace(/</g, "
 
 /** Meshy's phases as a checklist (done, current, waiting), its warnings, and the photo beside the cleaned image the
  * model is made from. Percentages stay on the bar above: the phases are only what the backend reported. */
-function MeshyProgress({ phase, warnings, cleanImageUrl, photo }: { phase?: string; warnings?: string[]; cleanImageUrl?: string; photo: File | null }) {
+function MeshyProgress({ phase, warnings, cleanImageUrl, photo, reviewImageUrl, check, taskId }: {
+  phase?: string; warnings?: string[]; cleanImageUrl?: string; photo: File | null; reviewImageUrl?: string; check?: TaskCleaningCheck; taskId?: string;
+}) {
   const t = useT();
-  const photoUrl = useMemo(() => (photo && cleanImageUrl ? URL.createObjectURL(photo) : null), [photo, cleanImageUrl]);
+  const shownImage = cleanImageUrl ?? reviewImageUrl;
+  const photoUrl = useMemo(() => (photo && shownImage ? URL.createObjectURL(photo) : null), [photo, shownImage]);
+  const [deciding, setDeciding] = useState<string | null>(null);
+  const [decisionError, setDecisionError] = useState<string | null>(null);
+  const awaiting = phase === AWAITING_APPROVAL && Boolean(taskId);
+  const decide = async (use: "cleaned" | "original") => {
+    if (!taskId) return;
+    setDeciding(use);
+    setDecisionError(null);
+    try {
+      await decideCleaning(taskId, use); // the conversion's poll loop picks up the next phase
+    } catch (caught) {
+      setDecisionError(caught instanceof Error ? caught.message : String(caught));
+      setDeciding(null);
+    }
+  };
   useEffect(() => () => { if (photoUrl) URL.revokeObjectURL(photoUrl); }, [photoUrl]);
   return (
     <div className="space-y-2">
@@ -578,7 +624,18 @@ function MeshyProgress({ phase, warnings, cleanImageUrl, photo }: { phase?: stri
           {warnings.map((w) => <li key={w}>{w}</li>)}
         </ul>
       )}
-      {cleanImageUrl && photoUrl && (
+      {awaiting && (
+        <div className="space-y-2 rounded-lg border border-amber-200 bg-amber-50 p-2 text-xs text-amber-900" role="alert">
+          <p className="font-medium">{t("The cleaned image could not be checked against your photo. Compare them and choose which one to make the 3D model from.")}</p>
+          {check?.notes?.[0] && <p dir="ltr" className="text-start">{check.notes[0]}</p>}
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" size="sm" disabled={Boolean(deciding)} onClick={() => void decide("cleaned")}>{deciding === "cleaned" ? t("Sending…") : t("Use the cleaned image")}</Button>
+            <Button type="button" size="sm" variant="outline" disabled={Boolean(deciding)} onClick={() => void decide("original")}>{deciding === "original" ? t("Sending…") : t("Use my original photo")}</Button>
+          </div>
+          {decisionError && <p className="text-red-700">{decisionError}</p>}
+        </div>
+      )}
+      {shownImage && photoUrl && (
         <div className="grid grid-cols-2 gap-2 text-xs text-slate-600">
           <figure className="space-y-1">
             {/* eslint-disable-next-line @next/next/no-img-element -- a local object URL */}
@@ -587,8 +644,8 @@ function MeshyProgress({ phase, warnings, cleanImageUrl, photo }: { phase?: stri
           </figure>
           <figure className="space-y-1">
             {/* eslint-disable-next-line @next/next/no-img-element -- the CDN image Meshy meshed */}
-            <img src={cleanImageUrl} alt={t("Cleaned by Meshy")} className="aspect-square w-full rounded-lg border border-slate-200 bg-[repeating-conic-gradient(#f1f5f9_0_25%,#fff_0_50%)] bg-[length:16px_16px] object-contain" />
-            <figcaption>{t("Cleaned by Meshy (used for 3D)")}</figcaption>
+            <img src={shownImage} alt={t("Cleaned by Meshy")} className="aspect-square w-full rounded-lg border border-slate-200 bg-[repeating-conic-gradient(#f1f5f9_0_25%,#fff_0_50%)] bg-[length:16px_16px] object-contain" />
+            <figcaption>{cleanImageUrl ? t("Cleaned by Meshy (used for 3D)") : t("Cleaned by Meshy (waiting for your choice)")}</figcaption>
           </figure>
         </div>
       )}
