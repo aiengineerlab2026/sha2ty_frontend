@@ -418,6 +418,17 @@ export function chainedTo(box: Box3, on: string[], boxes: Map<string, Box3>, ski
   return out.slice(on.length);
 }
 
+/** Is `child` within `host`'s face outline (at least 80% of it on both of the host's two largest axes)? Orientation
+ * free: a door facing any way is a sheet, and what is mounted on it lies over it. A part beside it (on the next door)
+ * is not, whatever a vision relation or its name says. Catalogue model 363f2fbd: the reading drew door 1's grip on the
+ * line between doors 1 and 2 and tied it to door 2, which then carried two handles while door 1 hit its own grip and
+ * opened 0°. */
+export function withinFace(host: Box3, child: Box3): boolean {
+  const hs = size(host), cs = size(child);
+  const axes = (["x", "y", "z"] as const).slice().sort((a, b) => hs[b] - hs[a]).slice(0, 2);
+  return axes.every((k) => overlap(child.min[k], child.max[k], host.min[k], host.max[k]) >= 0.8 * Math.max(cs[k], 1e-6));
+}
+
 /** Vision analysis relations (child part id → the part it is attached to), by the generated meshes' part ids. */
 export function attachmentsFrom(doc: { components?: { id: string; analysisId?: string }[]; analysis?: { components?: Record<string, unknown>[] } } | null | undefined): Record<string, string> {
   const byAnalysis = new Map((doc?.components ?? []).filter((c) => c.analysisId).map((c) => [c.analysisId!, c.id]));
@@ -704,10 +715,15 @@ export function refine(
     const host = b && anims.find((a) => a.type === "translation" && boxes.has(a.component) && outlineShare(b, boxes.get(a.component)!) >= 0.5 * area(b));
     if (host) host.follow.push(p.id);
   }
-  // The vision analysis says what is attached to what: those parts join their moving parent.
+  // The vision analysis says what is attached to what: those parts join their moving parent, when the geometry agrees.
+  // Its boxes are drawn on the photo, so a handle by the line between two doors can be given to the wrong one
+  // (withinFace). A relation the geometry contradicts is dropped; the part is then found on its real door below.
   for (const [child, parent] of Object.entries(attached)) {
     const host = anims.find((a) => a.component === parent);
-    if (host && host.source !== "manual" && !anims.some((a) => a.component === child) && !structural(words(names.get(child) ?? ""))) host.follow.push(child);
+    const [hostBox, childBox] = [boxes.get(parent), boxes.get(child)];
+    if (!host || host.source === "manual" || anims.some((a) => a.component === child) || structural(words(names.get(child) ?? ""))) continue;
+    if (!hostBox || !childBox || !withinFace(hostBox, childBox) || host.follow.includes(child)) continue;
+    host.follow.push(child);
   }
   const movers = new Set(anims.map((a) => a.component));
   const taken = new Set<string>([...movers, ...anims.flatMap((a) => a.follow)]);
