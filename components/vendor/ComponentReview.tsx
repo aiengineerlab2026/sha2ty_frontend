@@ -2,8 +2,11 @@
 
 import { useState } from "react";
 import { useT } from "@/lib/i18n";
+import type { NoteKind } from "@/lib/vendor/verdict";
 import { Button } from "@/components/ui/button";
-import { modelNotes, publishBlockers, rebuildAtSizes, regeneratePart, repairPart, type HybridDocument, type HybridPart } from "@/lib/vendor/hybrid";
+import { modelNotes, rebuildAtSizes, regeneratePart, repairPart, type HybridDocument, type HybridPart } from "@/lib/vendor/hybrid";
+
+const NOTE_LABEL: Record<NoteKind, string> = { movement: "how doors and drawers open", material: "materials", dimension: "sizes", estimate: "parts not seen in the photo" };
 
 /** The parts of a model rebuilt from its photo, for the vendor to review: what each one is, how it was made, whether
  * it is estimated, its material (change it in the editor's material panel), the model's notes, and per-part actions:
@@ -25,7 +28,6 @@ export function ComponentReview({ modelId, glbUrl, sourceImageUrl, doc, subject,
   const parts = doc.components as HybridPart[];
   const generated = doc.pendingComponents ?? [];
   const failed = generated.filter((p) => p.status === "failed");
-  const blockers = publishBlockers(doc);
   const notes = modelNotes(doc);
 
   const run = async (key: string, action: () => Promise<{ glbUrl: string; components: HybridDocument; repairs?: string[] }>) => {
@@ -35,7 +37,7 @@ export function ComponentReview({ modelId, glbUrl, sourceImageUrl, doc, subject,
     try {
       const next = await action();
       await onChange(next);
-      if (next.repairs) setNote(next.repairs.length ? next.repairs.join(" ") : t("Nothing to repair on this part."));
+      if (next.repairs) setNote(next.repairs.length ? t("Repaired.") : t("Nothing to repair on this part."));
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
@@ -61,25 +63,20 @@ export function ComponentReview({ modelId, glbUrl, sourceImageUrl, doc, subject,
           </Button>
         </div>
       )}
-      {blockers.length > 0 && (
-        <div role="alert" className="space-y-1 rounded-lg border border-red-200 bg-red-50 p-2 text-xs text-red-800">
-          <p className="font-medium">{t("This model has geometry errors: it is saved as a draft and cannot be published.")}</p>
-          <ul className="ms-4 list-disc">{blockers.map((line) => <li key={line}><bdi>{line}</bdi></li>)}</ul>
-        </div>
-      )}
       {notes.length > 0 && (
         <details className="rounded-lg border border-slate-200 bg-slate-50 p-2 text-xs text-slate-700">
           <summary className="cursor-pointer font-medium">{t("Model notes")}</summary>
           <p className="mt-1">{t("Some materials, dimensions and movements were estimated from the reference image. You can adjust them if needed.")}</p>
-          <ul className="ms-4 mt-1 list-disc">{notes.map((line) => <li key={line}><bdi>{line}</bdi></li>)}</ul>
+          <p className="mt-1 text-slate-600">{t("Estimated:")} {notes.map((kind) => t(NOTE_LABEL[kind])).join(t(", "))}</p>
           <p className="mt-1 text-slate-500">{t("These notes do not prevent saving or publishing.")}</p>
         </details>
       )}
       {failed.length > 0 && (
-        <ul className="space-y-1 rounded-lg border border-red-200 bg-red-50 p-2 text-xs text-red-800" role="alert">
+        // Optional: a decorative part not generated yet can be tried again; nothing waits on it.
+        <ul className="space-y-1 rounded-lg border border-slate-200 bg-slate-50 p-2 text-xs text-slate-700">
           {failed.map((p) => (
             <li key={p.id} className="flex flex-wrap items-center justify-between gap-2">
-              <span><bdi>{p.name}</bdi>: {t("could not be generated")} <span dir="ltr">({p.reason})</span></span>
+              <span><bdi>{p.name}</bdi>: {t("not generated yet (optional)")}</span>
               <Button type="button" size="sm" variant="outline" disabled={Boolean(busy)} onClick={() => void run(`regen:${p.id}`, () => regeneratePart(modelId, glbUrl, doc, p.id))}>
                 {busy === `regen:${p.id}` ? t("Generating…") : t("Regenerate this part")}
               </Button>

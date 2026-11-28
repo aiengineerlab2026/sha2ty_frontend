@@ -22,9 +22,13 @@ export type Swatch = { hex: string; share: number };
 /** `appearance`: the model's front view against the photo's colours (the main colours of each, largest share first). */
 export type ModelValidation = {
   ok: boolean; errors: string[]; warnings: string[]; parts: number; appearance?: { ok: boolean; issues: string[]; reference?: Swatch[]; model?: Swatch[] };
-  /** A rebuilt model's verdict (backend model_validation.verdict): only "valid" and "valid_with_warnings" publish. */
+  /** A rebuilt model's QUALITY (backend model_validation.verdict), recorded for admins. It never decides publishing:
+   * any model with its 3D file saves and publishes (verdict.publishBlockers). */
   status?: "valid" | "valid_with_warnings" | "needs_confirmation" | "needs_repair" | "failed";
   publishable?: boolean;
+  technical?: "passed" | "issues";
+  usable?: boolean;
+  repair?: { repaired: number; unresolved: number; automatic: boolean };
   /** What was estimated from the photo (a movement, a material, a size): informational, never blocks publishing. */
   notes?: { kind: string; text: string }[];
   /** Older saves: the same notes, from when they had to be confirmed. */

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { Box, Search } from "lucide-react";
 import { useLocale, useT } from "@/lib/i18n";
 
@@ -31,6 +31,17 @@ export function AdminModels({ call }: { call: (path: string, init?: RequestInit)
   const [error, setError] = useState<string | null>(null);
   const [kind, setKind] = useState<Kind | "all">("all");
   const [query, setQuery] = useState("");
+  // A model's technical record (admins only: validation found / repaired / left, photo comparison, corrections).
+  const [open, setOpen] = useState<string | null>(null);
+  const [diagnostics, setDiagnostics] = useState<Record<string, Record<string, unknown> | string>>({});
+  const toggle = (id: string) => {
+    setOpen((current) => (current === id ? null : id));
+    if (diagnostics[id]) return;
+    call(`/models/${id}/diagnostics`).then(
+      (body) => setDiagnostics((d) => ({ ...d, [id]: body ?? "–" })),
+      (caught: Error) => setDiagnostics((d) => ({ ...d, [id]: caught.message })),
+    );
+  };
 
   useEffect(() => {
     call("/models").then(
@@ -80,14 +91,17 @@ export function AdminModels({ call }: { call: (path: string, init?: RequestInit)
                 <th className="px-3 py-2 text-start font-medium">{t("Status")}</th>
                 <th className="px-3 py-2 text-start font-medium">{t("Size")}</th>
                 <th className="px-3 py-2 text-start font-medium">{t("Added")}</th>
+                <th className="px-3 py-2" />
               </tr>
             </thead>
             <tbody>
               {shown.map((r) => {
                 const image = r.thumbnail_url || r.source_image_url;
                 const href = r.kind === "customer" ? r.glb_url : `/catalog/models/${r.id}`;
+                const record = diagnostics[r.id];
                 return (
-                  <tr key={`${r.kind}:${r.id}`} className="border-t border-slate-100 align-middle">
+                  <Fragment key={`${r.kind}:${r.id}`}>
+                  <tr className="border-t border-slate-100 align-middle">
                     <td className="px-3 py-2">
                       <div className="flex items-center gap-2.5">
                         <span className="size-10 shrink-0 overflow-hidden rounded-md bg-slate-100">
@@ -112,7 +126,25 @@ export function AdminModels({ call }: { call: (path: string, init?: RequestInit)
                     <td className="px-3 py-2 text-xs text-slate-600">{r.status ? t(r.status.charAt(0).toUpperCase() + r.status.slice(1)) : "–"}</td>
                     <td className="px-3 py-2 text-xs tabular-nums text-slate-600"><bdi>{size(r)}</bdi></td>
                     <td className="px-3 py-2 text-xs text-slate-500">{r.created_at ? date.format(new Date(r.created_at)) : "–"}</td>
+                    <td className="px-3 py-2 text-end">
+                      {r.glb_url && (
+                        <button type="button" aria-expanded={open === r.id} onClick={() => toggle(r.id)} className="rounded-md px-2 py-1 text-xs text-slate-600 hover:bg-slate-100">
+                          {t("Diagnostics")}
+                        </button>
+                      )}
+                    </td>
                   </tr>
+                  {open === r.id && (
+                    <tr className="bg-slate-50">
+                      <td colSpan={7} className="px-3 py-2">
+                        {/* Raw, untranslated on purpose: the engine's own record, for admins and developers. */}
+                        <pre dir="ltr" className="max-h-72 overflow-auto whitespace-pre-wrap text-start text-[11px] leading-snug text-slate-700">
+                          {record === undefined ? t("Loading…") : typeof record === "string" ? record : JSON.stringify(record, null, 2)}
+                        </pre>
+                      </td>
+                    </tr>
+                  )}
+                  </Fragment>
                 );
               })}
             </tbody>

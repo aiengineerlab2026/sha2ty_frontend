@@ -31,7 +31,7 @@ import type { ModelStateName, ModelStates, PriceUnit } from "@/lib/vendor/types"
 import { StateToggle } from "./StateToggle";
 import { RichText } from "./RichText";
 import { ModelViewer } from "./ModelViewer";
-import { customizedModelFields, updateModel, type GeometryQuality, type ModelValidation, type PartDocument, type Swatch, type PartEditorApi } from "@/lib/vendor/parts";
+import { customizedModelFields, updateModel, type PartDocument, type PartEditorApi } from "@/lib/vendor/parts";
 
 /**
  * cacheComponents keeps this route alive but hidden (React Activity) after leaving it, so coming back would show the
@@ -350,12 +350,11 @@ function ModelFormBody() {
       // The state on screen is saved with its edits; the other was saved when the vendor switched away from it.
       const materials = editor.current && ownerId && shown === "closed" ? await customizedModelFields(ownerId, review.id, review.glbUrl, review.sourceGlbUrl, editor.current) : null;
       const states = shown === "open" ? (await persistShown(review)).states : review.states;
-      // Only real damage (geometry errors, a failed rebuild) keeps a rebuilt model an unlisted draft; estimated
-      // materials, sizes and movements are notes and keep the vendor's own status and listing choice.
-      const blockers = publishBlockers(review.components);
+      // A model with its 3D file is saved ready, whatever its technical checks found (they are repaired and recorded
+      // automatically, for admins). The listing choice is never changed here; private models stay private.
+      const blockers = publishBlockers(review);
       const fields = {
         status: blockers.length ? "draft" : "ready",
-        ...(blockers.length && !mine ? { listed: false } : {}),
         title: title.trim() || t("Untitled model"),
         description,
         width_m: numberOrNull(width),
@@ -367,7 +366,7 @@ function ModelFormBody() {
       const updated = await updateRow(review.id, fields);
       if (updated.error) throw new Error(updated.error.message);
       if (blockers.length) {
-        setError(t("Saved as a draft, not published: {reasons}", { reasons: blockers.join(" ") }));
+        setError(t("Saved as a draft: the 3D file is missing. Generate the model again."));
         return;
       }
       if (materials?.thumbnailError) {
@@ -417,8 +416,6 @@ function ModelFormBody() {
                 <p className="text-xs text-slate-500">{t("Each state keeps its own edits. Switching saves the one you leave.")}</p>
               </div>
             )}
-            <ValidationNotice validation={(shown === "open" ? review.states?.open?.components : review.components)?.validation} />
-            <QualityNotice quality={review.components?.quality} />
             {shown === "closed" && isRebuilt(review.components) && (
               <ComponentReview modelId={review.id} glbUrl={review.glbUrl} sourceImageUrl={review.sourceImageUrl ?? null} doc={review.components}
                 subject={{ category, kind: category === "furniture" ? kind.trim() : undefined }} size={{ width: numberOrNull(width), height: numberOrNull(height), depth: numberOrNull(depth) }}
@@ -696,75 +693,3 @@ function stepStatus(status: string): string {
   return "Waiting";
 }
 
-/** The generated model's check: problems are shown before saving, never hidden behind a success. */
-function ValidationNotice({ validation }: { validation?: ModelValidation }) {
-  const t = useT();
-  if (!validation || (validation.ok && !validation.warnings.length)) return null;
-  const bad = !validation.ok;
-  return (
-    <div role={bad ? "alert" : "status"} className={`rounded-xl border px-4 py-3 text-sm ${bad ? "border-red-200 bg-red-50 text-red-800" : "border-amber-200 bg-amber-50 text-amber-900"}`}>
-      <p className="font-semibold">{bad ? t("This model has problems. Check it closely, or generate it again from a clearer photo.") : t("Worth a check before saving:")}</p>
-      <ul className="mt-1 list-disc ps-5">
-        {[...validation.errors, ...validation.warnings].map((line) => (
-          <li key={line}>
-            <bdi>{line}</bdi>
-          </li>
-        ))}
-      </ul>
-      {validation.appearance && !validation.appearance.ok && (
-        <div className="mt-3 grid gap-1.5 text-xs">
-          <Swatches label={t("Photo colours")} swatches={validation.appearance.reference} />
-          <Swatches label={t("Model colours")} swatches={validation.appearance.model} />
-        </div>
-      )}
-    </div>
-  );
-}
-
-/** The geometry report: what was measured and repaired, what was left as generated, and the triangle counts.
- * Folded: it is for whoever wants the detail; nothing in it claims the model is ready to manufacture. */
-function QualityNotice({ quality }: { quality?: GeometryQuality }) {
-  const t = useT();
-  if (!quality?.triangles) return null;
-  const lines = [...(quality.unresolved ?? []), ...(quality.warnings ?? [])];
-  const k = (n: number) => (n >= 1000 ? `${Math.round(n / 1000).toLocaleString()}k` : String(n));
-  return (
-    <details className="group rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">
-      <summary className="flex cursor-pointer list-none items-center justify-between gap-2 font-semibold text-brand-navy [&::-webkit-details-marker]:hidden">
-        {t("Geometry report")}
-        <span className="text-xs font-normal text-slate-500">{t("{n} triangles", { n: k(quality.triangles.afterRepair) })}{lines.length ? ` · ${t("{n} notes", { n: lines.length })}` : ""}</span>
-      </summary>
-      <div className="mt-2 space-y-2 text-xs leading-relaxed">
-        {!!quality.repairs?.length && (
-          <div>
-            <p className="font-medium text-slate-600">{t("Repaired automatically")}</p>
-            <ul className="list-disc ps-5">{quality.repairs.map((r) => <li key={r}><bdi>{r}</bdi></li>)}</ul>
-          </div>
-        )}
-        {!!lines.length && (
-          <div>
-            <p className="font-medium text-slate-600">{t("Notes")}</p>
-            <ul className="list-disc ps-5">{lines.map((r) => <li key={r}><bdi>{r}</bdi></li>)}</ul>
-          </div>
-        )}
-        <p className="text-slate-500">{t("A lighter copy for mobile AR is made in the background; the full model stays the one you edit.")}</p>
-        {quality.manufacturing && <p className="text-slate-500"><bdi>{quality.manufacturing}</bdi></p>}
-      </div>
-    </details>
-  );
-}
-
-/** One colour scheme as a bar: each colour as wide as its share. */
-function Swatches({ label, swatches }: { label: string; swatches?: Swatch[] }) {
-  if (!swatches?.length) return null;
-  return (
-    <div className="flex items-center gap-2">
-      <span className="w-24 shrink-0">{label}</span>
-      <span className="flex h-4 flex-1 overflow-hidden rounded ring-1 ring-black/10" dir="ltr">
-        {swatches.map((s) => (
-          <span key={s.hex} title={`${s.hex} · ${Math.round(s.share * 100)}%`} style={{ background: s.hex, width: `${s.share * 100}%` }} />
-        ))}
-      </span>
-    </div>
-  );
-}
