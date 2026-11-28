@@ -1,6 +1,7 @@
 import { apiFetch } from "@/lib/api";
 import type { PartDocument } from "./parts";
 import { pollTask } from "./generate";
+export { modelNotes, publishBlockers } from "./verdict";
 
 /** A part of a model rebuilt from its photo (backend services/hybrid.py), as the editor reviews it. */
 export type HybridPart = {
@@ -57,30 +58,4 @@ export async function repairPart(modelId: string, glbUrl: string, doc: HybridDoc
 /** One complex part generated again (one generation try); the rest of the model is kept. */
 export async function regeneratePart(modelId: string, glbUrl: string, doc: HybridDocument, componentId: string): Promise<Result> {
   return settle(await post("/api/vendor/hybrid/components/regenerate", { model_id: modelId, glb_url: glbUrl, components: doc, component_id: componentId }));
-}
-
-/** The vendor confirms the movements the photo did not clearly show (sliding or hinged): they stop blocking
- * publication. Real geometry errors are never cleared this way. */
-export function withMovementsConfirmed(doc: HybridDocument): HybridDocument {
-  const validation = doc.validation;
-  const confirm = (validation?.confirm ?? []).filter((c) => !c.startsWith("How "));
-  const errors = validation?.errors ?? [];
-  const status = errors.length ? "needs_repair" : confirm.length ? "needs_confirmation" : (validation?.warnings ?? []).some((w) => !w.startsWith("Estimated, not seen")) ? "valid_with_warnings" : "valid";
-  return {
-    ...doc,
-    animation: doc.animation ? { ...doc.animation, uncertain: [], animations: doc.animation.animations.map((a) => ({ ...a, uncertain: undefined, confirmed: true })) } : doc.animation,
-    validation: validation ? { ...validation, confirm, status, publishable: status === "valid" || status === "valid_with_warnings" } : validation,
-  } as HybridDocument;
-}
-
-/** Why a rebuilt model cannot be published yet (empty when it can). */
-export function publishBlockers(doc: PartDocument | null | undefined): string[] {
-  const v = (doc as HybridDocument | null | undefined)?.validation;
-  if (!v || v.publishable !== false) return [];
-  return [...(v.errors ?? []), ...(v.confirm ?? [])];
-}
-
-/** The vendor confirms (or un-confirms) a part's material as read from the photo; it is saved with the model. */
-export function withMaterialConfirmed(doc: HybridDocument, componentId: string, confirmed: boolean): HybridDocument {
-  return { ...doc, components: (doc.components as HybridPart[]).map((c) => (c.id === componentId ? { ...c, material: { ...c.material, confirmed } } : c)) } as HybridDocument;
 }

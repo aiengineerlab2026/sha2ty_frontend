@@ -3,10 +3,10 @@
 import { useState } from "react";
 import { useT } from "@/lib/i18n";
 import { Button } from "@/components/ui/button";
-import { rebuildAtSizes, regeneratePart, repairPart, withMaterialConfirmed, withMovementsConfirmed, type HybridDocument, type HybridPart } from "@/lib/vendor/hybrid";
+import { modelNotes, publishBlockers, rebuildAtSizes, regeneratePart, repairPart, type HybridDocument, type HybridPart } from "@/lib/vendor/hybrid";
 
 /** The parts of a model rebuilt from its photo, for the vendor to review: what each one is, how it was made, whether
- * it is estimated, its material (confirm it, or change it in the editor's material panel), and per-part actions:
+ * it is estimated, its material (change it in the editor's material panel), the model's notes, and per-part actions:
  * repair one part, regenerate one complex part. Confirmed sizes rebuild the model without a new photo reading. */
 export function ComponentReview({ modelId, glbUrl, sourceImageUrl, doc, subject, size, onChange }: {
   modelId: string;
@@ -25,6 +25,8 @@ export function ComponentReview({ modelId, glbUrl, sourceImageUrl, doc, subject,
   const parts = doc.components as HybridPart[];
   const generated = doc.pendingComponents ?? [];
   const failed = generated.filter((p) => p.status === "failed");
+  const blockers = publishBlockers(doc);
+  const notes = modelNotes(doc);
 
   const run = async (key: string, action: () => Promise<{ glbUrl: string; components: HybridDocument; repairs?: string[] }>) => {
     setBusy(key);
@@ -59,22 +61,19 @@ export function ComponentReview({ modelId, glbUrl, sourceImageUrl, doc, subject,
           </Button>
         </div>
       )}
-      {doc.validation?.status && doc.validation.status !== "valid" && (
-        <div role={doc.validation.publishable ? "status" : "alert"} className={`space-y-1 rounded-lg border p-2 text-xs ${doc.validation.publishable ? "border-amber-200 bg-amber-50 text-amber-900" : "border-red-200 bg-red-50 text-red-800"}`}>
-          <p className="font-medium">
-            {doc.validation.status === "needs_repair" ? t("This model has geometry errors: it is saved as a draft and cannot be published.")
-              : doc.validation.status === "needs_confirmation" ? t("Confirm the points below before publishing.")
-              : doc.validation.status === "failed" ? t("The reconstruction failed.") : t("Worth a check before saving:")}
-          </p>
-          <ul className="ms-4 list-disc">
-            {[...(doc.validation.errors ?? []), ...(doc.validation.confirm ?? [])].map((line) => <li key={line}><bdi>{line}</bdi></li>)}
-          </ul>
-          {(doc.animation?.uncertain?.length ?? 0) > 0 && (
-            <Button type="button" size="sm" variant="outline" disabled={Boolean(busy)} onClick={() => void onChange({ glbUrl, components: withMovementsConfirmed(doc) })}>
-              {t("I checked how the doors and drawers move")}
-            </Button>
-          )}
+      {blockers.length > 0 && (
+        <div role="alert" className="space-y-1 rounded-lg border border-red-200 bg-red-50 p-2 text-xs text-red-800">
+          <p className="font-medium">{t("This model has geometry errors: it is saved as a draft and cannot be published.")}</p>
+          <ul className="ms-4 list-disc">{blockers.map((line) => <li key={line}><bdi>{line}</bdi></li>)}</ul>
         </div>
+      )}
+      {notes.length > 0 && (
+        <details className="rounded-lg border border-slate-200 bg-slate-50 p-2 text-xs text-slate-700">
+          <summary className="cursor-pointer font-medium">{t("Model notes")}</summary>
+          <p className="mt-1">{t("Some materials, dimensions and movements were estimated from the reference image. You can adjust them if needed.")}</p>
+          <ul className="ms-4 mt-1 list-disc">{notes.map((line) => <li key={line}><bdi>{line}</bdi></li>)}</ul>
+          <p className="mt-1 text-slate-500">{t("These notes do not prevent saving or publishing.")}</p>
+        </details>
       )}
       {failed.length > 0 && (
         <ul className="space-y-1 rounded-lg border border-red-200 bg-red-50 p-2 text-xs text-red-800" role="alert">
@@ -102,11 +101,6 @@ export function ComponentReview({ modelId, glbUrl, sourceImageUrl, doc, subject,
                   {part.material?.class ? ` · ${part.material.class.replace(/_/g, " ")}` : ""}
                 </span>
               </span>
-              <label className="flex items-center gap-1 text-xs text-slate-600">
-                <input type="checkbox" checked={Boolean(part.material?.confirmed)} disabled={Boolean(busy)}
-                  onChange={(e) => void onChange({ glbUrl, components: withMaterialConfirmed(doc, part.id, e.target.checked) })} />
-                {t("Material confirmed")}
-              </label>
               <Button type="button" size="sm" variant="ghost" disabled={Boolean(busy)} onClick={() => void run(`repair:${part.id}`, () => repairPart(modelId, glbUrl, doc, part.id))}>
                 {busy === `repair:${part.id}` ? t("Checking…") : t("Repair")}
               </Button>
@@ -119,7 +113,7 @@ export function ComponentReview({ modelId, glbUrl, sourceImageUrl, doc, subject,
           );
         })}
       </ul>
-      <p className="text-xs text-slate-500">{t("To change a material, select the part in the 3D view and pick a new finish; confirmed materials are saved with the model.")}</p>
+      <p className="text-xs text-slate-500">{t("To change a material, select the part in the 3D view and pick a new finish; it is saved with the model.")}</p>
       {note && <p className="text-xs text-emerald-800" role="status">{note}</p>}
       {error && <p className="text-xs text-red-700" role="alert">{error}</p>}
     </section>

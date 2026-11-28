@@ -28,7 +28,7 @@ import { ResizeGizmo } from "@/components/designs/ResizeGizmo";
 import { AnimationPanel } from "./AnimationPanel";
 import { AddComponentsPanel, PickerBridge, PlacementOverlay, ResizeHandles, useComponentEditor } from "./AddComponents";
 import { choosePart, offsetAxis, specBox, type Side, type Surroundings } from "@/lib/vendor/parts3d";
-import { authoritativeMovers, blocksPartIcon, checkMovers, movedBox, openCavities, paneBacks, rebuildPanel, type Added } from "@/lib/vendor/reconstruct";
+import { authoritativeMovers, blocksPartIcon, freeEdgeAnchor, checkMovers, movedBox, openCavities, paneBacks, rebuildPanel, type Added } from "@/lib/vendor/reconstruct";
 import { animationClips, animationOf, applyAnimations, attachmentsFrom, boxInModel, carried, enabledAnimations, fromClosed, handleOf, meshesOf, openPart, refine, shownOpen, step, targetFor, type AnimationConfig, type Openness } from "@/lib/vendor/animation";
 import { MIN_SIZE, resized, sizeCm } from "@/lib/designs/resize";
 import { restoreMaterial } from "@/lib/designs/materialRestore";
@@ -650,7 +650,8 @@ export function Animator({ slots, root, config, target, poses }: { slots: Slot[]
 
 /** One movable part's icon: the animation, the mesh it sits on (the handle, else the part itself) and what belongs to
  * the part (never counted as hiding its icon). */
-export type PartIcon = { id: string; on: Mesh; handle: boolean; own: Set<Mesh> };
+/** `anchor`: a point on `on` in its own coordinates where the icon sits (a handleless door: near its free edge). */
+export type PartIcon = { id: string; on: Mesh; handle: boolean; own: Set<Mesh>; anchor?: Vector3 };
 
 /** Every movable part's icon, with the explicit handle mesh → movable part association (handleOf: by geometry). */
 export function partIcons(slots: Slot[], config: AnimationConfig | null | undefined, skip: Set<string>): { icons: PartIcon[]; handles: Map<string, string> } {
@@ -663,7 +664,7 @@ export function partIcons(slots: Slot[], config: AnimationConfig | null | undefi
     const handle = handleOf(part, slots.filter((s) => a.follow.includes(s.id)).map((s) => ({ id: s.id, mesh: s.mesh, name: `${s.name} ${s.nameAr ?? ""}` })));
     if (handle) handles.set(handle.mesh.uuid, a.component);
     const own = new Set(slots.filter((s) => s.id === a.component || a.follow.includes(s.id)).map((s) => s.mesh));
-    icons.push({ id: a.id, on: handle?.mesh ?? part, handle: Boolean(handle), own });
+    icons.push({ id: a.id, on: handle?.mesh ?? part, handle: Boolean(handle), own, anchor: handle || a.type !== "rotation" ? undefined : freeEdgeAnchor(part, a.hinge) });
   }
   return { icons, handles };
 }
@@ -680,8 +681,7 @@ export function IconTracker({ icons, els }: { icons: PartIcon[]; els: { current:
   useFrame(({ camera, gl, scene }) => {
     const w = gl.domElement.clientWidth, h = gl.domElement.clientHeight;
     const at = icons.map((icon) => {
-      box.setFromObject(icon.on);
-      const world = box.getCenter(new Vector3());
+      const world = icon.anchor ? icon.anchor.clone().applyMatrix4(icon.on.matrixWorld) : box.setFromObject(icon.on).getCenter(new Vector3());
       const p = world.clone().project(camera);
       return { icon, world, x: ((p.x + 1) / 2) * w, y: ((1 - p.y) / 2) * h, behind: p.z > 1 };
     });
