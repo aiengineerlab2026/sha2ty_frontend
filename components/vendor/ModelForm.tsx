@@ -11,9 +11,11 @@ import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
 import { supabase, supabaseConfigured } from "@/lib/supabase/client";
 import { on } from "@/lib/events";
-import { decideCleaning, fetchGenerationQuota, generateFromPhoto, retrySplit, splitStates, type GenerateProgress, type GenerateStep, type PhotoReading } from "@/lib/vendor/generate";
+import { decideCleaning, fetchGenerationQuota, generateFromPhoto, GENERATION_MODES, retrySplit, splitStates, type GenerateProgress, type GenerateStep, type GenerationMode, type PhotoReading } from "@/lib/vendor/generate";
 import { AWAITING_APPROVAL, phaseStates, type TaskCleaningCheck } from "@/lib/vendor/meshyPhases";
 import { GenerationDiagnostics } from "./GenerationDiagnostics";
+import { ComponentReview } from "./ComponentReview";
+import { isRebuilt } from "@/lib/vendor/hybrid";
 import { glbSize } from "@/lib/vendor/glbSize";
 import { uploadPublicFile } from "@/lib/vendor/storage";
 import type { ModelProvider, ModelSource, VendorProfile } from "@/lib/vendor/types";
@@ -68,6 +70,8 @@ function ModelFormBody() {
   const [source, setSource] = useState<ModelSource>("photo");
   // The generator is the admin's choice (admin portal); the backend uses it whatever is sent. Known from the quota.
   const [provider, setProvider] = useState<ModelProvider>("meshy");
+  // How the model is made: rebuilt part by part from the photo (default) or by the 3D generator.
+  const [mode, setMode] = useState<GenerationMode>("hybrid");
   const [photo, setPhoto] = useState<File | null>(null);
   const [glb, setGlb] = useState<File | null>(null);
   // The size read from the chosen GLB (glTF is in metres), shown under the file input.
@@ -98,7 +102,7 @@ function ModelFormBody() {
   const [quota, setQuota] = useState<Record<ModelProvider, number> | null>(null);
   /** The generated model awaiting the vendor's check (saved as a draft): its id and 3D file. */
   // taskId: the backend conversion (Meshy), kept about an hour: "Retry Auto Split" works on it without regenerating.
-  const [review, setReview] = useState<{ id: string; glbUrl: string; sourceGlbUrl: string | null; components: PartDocument | null; states: ModelStates | null; taskId?: string } | null>(null);
+  const [review, setReview] = useState<{ id: string; glbUrl: string; sourceGlbUrl: string | null; components: PartDocument | null; states: ModelStates | null; taskId?: string; sourceImageUrl?: string | null } | null>(null);
   const editor = useRef<PartEditorApi | null>(null);
   // A wardrobe with an open and a closed state (supabase/model_states.sql): null until the vendor answers.
   const [twoStates, setTwoStates] = useState<boolean | null>(null);
@@ -287,7 +291,8 @@ function ModelFormBody() {
             setMeshyProgress(phase ? { phase, warnings, cleanImageUrl, reviewImageUrl, cleaningCheck, taskId: running } : null);
           },
           sourceImageUrl ?? undefined,
-          { category, title, kind: category === "furniture" ? kind.trim() : undefined, lang: locale === "ar" ? "ar" : "en" },
+          { category, title, kind: category === "furniture" ? kind.trim() : undefined, lang: locale === "ar" ? "ar" : "en", mode,
+            size: { width: numberOrNull(width), height: numberOrNull(height), depth: numberOrNull(depth) } },
           withStates ? openPhoto ?? undefined : undefined,
         ));
         if (withStates) {
@@ -323,7 +328,7 @@ function ModelFormBody() {
       if (!numberOrNull(height)) setHeight(m(estimated?.height_m));
       if (!numberOrNull(depth)) setDepth(m(estimated?.depth_m));
       setShown("closed");
-      setReview({ id, glbUrl: glbUrl!, sourceGlbUrl, components, states, taskId });
+      setReview({ id, glbUrl: glbUrl!, sourceGlbUrl, components, states, taskId, sourceImageUrl });
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : String(caught);
       if (createdId) {
@@ -406,6 +411,16 @@ function ModelFormBody() {
             )}
             <ValidationNotice validation={(shown === "open" ? review.states?.open?.components : review.components)?.validation} />
             <QualityNotice quality={review.components?.quality} />
+            {shown === "closed" && isRebuilt(review.components) && (
+              <ComponentReview modelId={review.id} glbUrl={review.glbUrl} sourceImageUrl={review.sourceImageUrl ?? null} doc={review.components}
+                subject={{ category, kind: category === "furniture" ? kind.trim() : undefined }} size={{ width: numberOrNull(width), height: numberOrNull(height), depth: numberOrNull(depth) }}
+                onChange={async (next) => {
+                  // The draft gets the new file and part document at once: leaving the page loses nothing.
+                  const draft = await supabase().from(table).update({ glb_url: next.glbUrl, components: next.components }).eq("id", review.id);
+                  if (draft.error) throw new Error(draft.error.message);
+                  setReview({ ...review, glbUrl: next.glbUrl, components: next.components });
+                }} />
+            )}
             {shown === "closed" && (
               <GenerationDiagnostics doc={review.components} glbUrl={review.glbUrl} sourceGlbUrl={review.sourceGlbUrl} originalUrl={photoPreview}
                 onRetrySplit={review.taskId ? () => void retryAutoSplit() : undefined} retrying={retrying} />
@@ -487,6 +502,18 @@ function ModelFormBody() {
           {source === "photo" && (
             <>
               {quota && <p className="text-xs text-slate-500">{t("3D generations left")} <TriesLeft n={quota[provider]} /></p>}
+              <fieldset className="space-y-2 rounded-xl border border-slate-200 p-3">
+                <legend className="px-1 text-sm font-medium">{t("How to make the 3D model")}</legend>
+                {GENERATION_MODES.map((m) => (
+                  <label key={m.id} className="flex items-start gap-2 text-sm">
+                    <input type="radio" name="generation-mode" className="mt-1" checked={mode === m.id} onChange={() => setMode(m.id)} />
+                    <span>
+                      {t(m.label)}
+                      <span className="block text-xs text-slate-500">{t(m.hint)}</span>
+                    </span>
+                  </label>
+                ))}
+              </fieldset>
               {/* Upload, drag and drop, or paste a copied image (button or Ctrl/⌘+V). */}
               {category === "wardrobe" && (
                 <fieldset className="space-y-2 rounded-xl border border-slate-200 p-3">
