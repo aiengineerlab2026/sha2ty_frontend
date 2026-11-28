@@ -97,6 +97,15 @@ function sheetBasis(mesh: Mesh, modelRoot: Object3D, tri: Triangles): Matrix4 {
 }
 
 /** A mesh in front of a part icon. Glass and the part's own assembly do not hide the control. */
+/** A door with no handle: its control near the free edge (opposite the hinge), at mid-height, on its front face. */
+export function freeEdgeAnchor(mesh: Mesh, hinge: string | undefined): Vector3 | undefined {
+  if (hinge !== "left" && hinge !== "right") return undefined;
+  if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
+  const b = mesh.geometry.boundingBox!;
+  const x = hinge === "left" ? b.min.x + 0.85 * (b.max.x - b.min.x) : b.min.x + 0.15 * (b.max.x - b.min.x);
+  return new Vector3(x, (b.min.y + b.max.y) / 2, b.max.z + 0.002);
+}
+
 export function blocksPartIcon(mesh: Mesh, own: Set<Mesh>): boolean {
   if (!mesh.isMesh || !mesh.visible || own.has(mesh)) return false;
   const list = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
@@ -217,7 +226,9 @@ export function intoBody(anim: PartAnimation, box: Box3): boolean {
  * movements are the backend's, validated on the real file. Nothing is guessed from names and nothing is added (no
  * mirror backing, no hollowed interior, no second carcass); every movement is still checked for collisions. */
 export function authoritativeMovers(config: AnimationConfig, slots: SlotLike[], modelRoot: Object3D): AnimationConfig | null {
-  return checkMovers({ ...config, animations: config.animations.map((a) => ({ ...a, follow: [...a.follow], issues: [...(a.issues ?? [])] })) }, slots, modelRoot);
+  // What the reading was unsure of (older saves kept it as `issues`) is a note, never a reason to disable a part:
+  // only this file's own geometry checks (collisions) can disable one.
+  return checkMovers({ ...config, animations: config.animations.map((a) => ({ ...a, follow: [...a.follow], notes: [...(a.notes ?? []), ...(a.source === "manual" ? [] : a.issues ?? [])], issues: a.source === "manual" ? [...(a.issues ?? [])] : [], enabled: a.source === "manual" ? a.enabled : true })) }, slots, modelRoot);
 }
 
 /** Geometry checks before a part may move (see the file comment). The vendor's own settings ("manual") are kept. */

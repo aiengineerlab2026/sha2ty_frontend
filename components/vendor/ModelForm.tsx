@@ -350,8 +350,8 @@ function ModelFormBody() {
       // The state on screen is saved with its edits; the other was saved when the vendor switched away from it.
       const materials = editor.current && ownerId && shown === "closed" ? await customizedModelFields(ownerId, review.id, review.glbUrl, review.sourceGlbUrl, editor.current) : null;
       const states = shown === "open" ? (await persistShown(review)).states : review.states;
-      // A rebuilt model that is not publishable yet (geometry errors, or something only the vendor can confirm) is kept
-      // as an unlisted draft, never presented as a finished reconstruction.
+      // Only real damage (geometry errors, a failed rebuild) keeps a rebuilt model an unlisted draft; estimated
+      // materials, sizes and movements are notes and keep the vendor's own status and listing choice.
       const blockers = publishBlockers(review.components);
       const fields = {
         status: blockers.length ? "draft" : "ready",

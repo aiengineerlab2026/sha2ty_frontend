@@ -25,7 +25,9 @@ export type ModelValidation = {
   /** A rebuilt model's verdict (backend model_validation.verdict): only "valid" and "valid_with_warnings" publish. */
   status?: "valid" | "valid_with_warnings" | "needs_confirmation" | "needs_repair" | "failed";
   publishable?: boolean;
-  /** What only the vendor can settle (a movement the photo does not show, a material that fell back). */
+  /** What was estimated from the photo (a movement, a material, a size): informational, never blocks publishing. */
+  notes?: { kind: string; text: string }[];
+  /** Older saves: the same notes, from when they had to be confirmed. */
   confirm?: string[];
   repairs?: string[];
 };

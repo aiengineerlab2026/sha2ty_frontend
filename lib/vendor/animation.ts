@@ -27,6 +27,8 @@ export type PartAnimation = {
   confidence?: number;
   source: "vision" | "names" | "manual";
   issues: string[];
+  /** What was estimated (a hinge side the photo does not show): informational, never disables the part. */
+  notes?: string[];
   reason?: string;
   revealsInterior?: boolean;
   /** Where the part faces out, in the model's own coordinates (default "front"); a lid faces "up". With `up` and
