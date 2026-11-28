@@ -213,6 +213,13 @@ export function intoBody(anim: PartAnimation, box: Box3): boolean {
   return end.min.z < rest.min.z - 0.2 * Math.max(Math.min(size(rest).x, size(rest).y), 0.02);
 }
 
+/** A model rebuilt part by part (backend services/hybrid.py, `authoritative`): its parts, their relations and its
+ * movements are the backend's, validated on the real file. Nothing is guessed from names and nothing is added (no
+ * mirror backing, no hollowed interior, no second carcass); every movement is still checked for collisions. */
+export function authoritativeMovers(config: AnimationConfig, slots: SlotLike[], modelRoot: Object3D): AnimationConfig | null {
+  return checkMovers({ ...config, animations: config.animations.map((a) => ({ ...a, follow: [...a.follow], issues: [...(a.issues ?? [])] })) }, slots, modelRoot);
+}
+
 /** Geometry checks before a part may move (see the file comment). The vendor's own settings ("manual") are kept. */
 export function checkMovers(config: AnimationConfig | null, slots: SlotLike[], modelRoot: Object3D): AnimationConfig | null {
   if (!config) return config;

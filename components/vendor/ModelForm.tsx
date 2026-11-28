@@ -15,7 +15,7 @@ import { decideCleaning, fetchGenerationQuota, generateFromPhoto, GENERATION_MOD
 import { AWAITING_APPROVAL, phaseStates, type TaskCleaningCheck } from "@/lib/vendor/meshyPhases";
 import { GenerationDiagnostics } from "./GenerationDiagnostics";
 import { ComponentReview } from "./ComponentReview";
-import { isRebuilt } from "@/lib/vendor/hybrid";
+import { isRebuilt, publishBlockers } from "@/lib/vendor/hybrid";
 import { glbSize } from "@/lib/vendor/glbSize";
 import { uploadPublicFile } from "@/lib/vendor/storage";
 import type { ModelProvider, ModelSource, VendorProfile } from "@/lib/vendor/types";
@@ -350,8 +350,12 @@ function ModelFormBody() {
       // The state on screen is saved with its edits; the other was saved when the vendor switched away from it.
       const materials = editor.current && ownerId && shown === "closed" ? await customizedModelFields(ownerId, review.id, review.glbUrl, review.sourceGlbUrl, editor.current) : null;
       const states = shown === "open" ? (await persistShown(review)).states : review.states;
+      // A rebuilt model that is not publishable yet (geometry errors, or something only the vendor can confirm) is kept
+      // as an unlisted draft, never presented as a finished reconstruction.
+      const blockers = publishBlockers(review.components);
       const fields = {
-        status: "ready",
+        status: blockers.length ? "draft" : "ready",
+        ...(blockers.length && !mine ? { listed: false } : {}),
         title: title.trim() || t("Untitled model"),
         description,
         width_m: numberOrNull(width),
@@ -362,6 +366,10 @@ function ModelFormBody() {
       };
       const updated = await updateRow(review.id, fields);
       if (updated.error) throw new Error(updated.error.message);
+      if (blockers.length) {
+        setError(t("Saved as a draft, not published: {reasons}", { reasons: blockers.join(" ") }));
+        return;
+      }
       if (materials?.thumbnailError) {
         setError(t("Saved, but the model image could not be updated ({error}). The previous image is kept; save again to retry.", { error: materials.thumbnailError }));
         return;

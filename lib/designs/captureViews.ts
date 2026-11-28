@@ -58,7 +58,8 @@ export async function captureViews({ glbUrl, item, lang }: { glbUrl: string; ite
   const scaleKnown = Boolean(original);
   const mpu = new Vector3().setFromMatrixScale(model.matrixWorld);
   const whole = new Box3().setFromObject(sized);
-  const config = refine(doc?.animation, slots, model, attachmentsFrom(doc));
+  // A rebuilt model's movements are authoritative (backend services/hybrid.py): used as written, never re-guessed.
+  const config = doc?.animation?.authoritative ? doc.animation : refine(doc?.animation, slots, model, attachmentsFrom(doc));
   const accessories = new Set(enabledAnimations(config).flatMap((a) => a.follow));
   const names = new Map(slots.map((s) => [s.id, s.name]));
   const namesAr = new Map(slots.map((s) => [s.id, s.nameAr]));

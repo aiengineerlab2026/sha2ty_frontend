@@ -54,7 +54,12 @@ export type AnimationConfig = {
   movable: boolean;
   animations: PartAnimation[];
   flagged: AnimationFlag[];
-  source?: "vision" | "names" | "none" | "manual";
+  source?: "vision" | "names" | "none" | "manual" | "assembly";
+  /** Written by the backend's assembly (services/hybrid.py) and validated on the file: the editor adds nothing and
+   * guesses nothing (authoritativeMovers); it still checks every movement for collisions. */
+  authoritative?: boolean;
+  /** Movements the photo did not clearly show (labels): the vendor confirms them before the model is published. */
+  uncertain?: string[];
   interior?: { added: string[]; note: string };
   /** How far each part stands open (animation id → 0..1), as left by the user: restored on reopening. */
   state?: Openness;

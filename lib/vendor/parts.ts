@@ -20,7 +20,15 @@ export type GeometryQuality = { triangles?: { original: number; afterRepair: num
 /** The backend's check before saving (services/model_check.py): errors are visible damage, warnings worth a look. */
 export type Swatch = { hex: string; share: number };
 /** `appearance`: the model's front view against the photo's colours (the main colours of each, largest share first). */
-export type ModelValidation = { ok: boolean; errors: string[]; warnings: string[]; parts: number; appearance?: { ok: boolean; issues: string[]; reference?: Swatch[]; model?: Swatch[] } };
+export type ModelValidation = {
+  ok: boolean; errors: string[]; warnings: string[]; parts: number; appearance?: { ok: boolean; issues: string[]; reference?: Swatch[]; model?: Swatch[] };
+  /** A rebuilt model's verdict (backend model_validation.verdict): only "valid" and "valid_with_warnings" publish. */
+  status?: "valid" | "valid_with_warnings" | "needs_confirmation" | "needs_repair" | "failed";
+  publishable?: boolean;
+  /** What only the vendor can settle (a movement the photo does not show, a material that fell back). */
+  confirm?: string[];
+  repairs?: string[];
+};
 /** The backend's vision analysis of the photo (services/mesh_analysis.py), kept with the model for later editing and
  * regeneration; `modularity`: how many of its components the generated meshes turned out to be. */
 export type MeshAnalysis = { objectType: string; summary?: string; components: Record<string, unknown>[] };
