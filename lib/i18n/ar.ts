@@ -509,6 +509,7 @@ export const AR: Record<string, string> = {
   "The reconstruction failed.": "فشلت إعادة البناء.",
   "Saved as a draft, not published: {reasons}": "حُفظ كمسودة ولم يُنشر: {reasons}",
   "Worth a check before saving:": "يستحق المراجعة قبل الحفظ:",
+  "Straight front": "الواجهة مستقيمة",
   "Model notes": "ملاحظات حول النموذج",
   "Some materials, dimensions and movements were estimated from the reference image. You can adjust them if needed.": "تم تقدير بعض الخامات والمقاسات وطريقة الحركة بناءً على الصورة. يمكنك تعديلها عند الحاجة.",
   "These notes do not prevent saving or publishing.": "هذه الملاحظات لا تمنع حفظ النموذج أو نشره.",
