@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useT } from "@/lib/i18n";
 import { Button } from "@/components/ui/button";
-import { rebuildAtSizes, regeneratePart, repairPart, withMaterialConfirmed, type HybridDocument, type HybridPart } from "@/lib/vendor/hybrid";
+import { rebuildAtSizes, regeneratePart, repairPart, withMaterialConfirmed, withMovementsConfirmed, type HybridDocument, type HybridPart } from "@/lib/vendor/hybrid";
 
 /** The parts of a model rebuilt from its photo, for the vendor to review: what each one is, how it was made, whether
  * it is estimated, its material (confirm it, or change it in the editor's material panel), and per-part actions:
@@ -57,6 +57,23 @@ export function ComponentReview({ modelId, glbUrl, sourceImageUrl, doc, subject,
             onClick={() => void run("rebuild", () => rebuildAtSizes(modelId, sourceImageUrl!, doc, subject, { width: size.width!, height: size.height!, depth: size.depth }))}>
             {busy === "rebuild" ? t("Rebuilding…") : t("Rebuild at these sizes")}
           </Button>
+        </div>
+      )}
+      {doc.validation?.status && doc.validation.status !== "valid" && (
+        <div role={doc.validation.publishable ? "status" : "alert"} className={`space-y-1 rounded-lg border p-2 text-xs ${doc.validation.publishable ? "border-amber-200 bg-amber-50 text-amber-900" : "border-red-200 bg-red-50 text-red-800"}`}>
+          <p className="font-medium">
+            {doc.validation.status === "needs_repair" ? t("This model has geometry errors: it is saved as a draft and cannot be published.")
+              : doc.validation.status === "needs_confirmation" ? t("Confirm the points below before publishing.")
+              : doc.validation.status === "failed" ? t("The reconstruction failed.") : t("Worth a check before saving:")}
+          </p>
+          <ul className="ms-4 list-disc">
+            {[...(doc.validation.errors ?? []), ...(doc.validation.confirm ?? [])].map((line) => <li key={line}><bdi>{line}</bdi></li>)}
+          </ul>
+          {(doc.animation?.uncertain?.length ?? 0) > 0 && (
+            <Button type="button" size="sm" variant="outline" disabled={Boolean(busy)} onClick={() => void onChange({ glbUrl, components: withMovementsConfirmed(doc) })}>
+              {t("I checked how the doors and drawers move")}
+            </Button>
+          )}
         </div>
       )}
       {failed.length > 0 && (

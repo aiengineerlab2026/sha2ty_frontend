@@ -28,7 +28,7 @@ import { ResizeGizmo } from "@/components/designs/ResizeGizmo";
 import { AnimationPanel } from "./AnimationPanel";
 import { AddComponentsPanel, PickerBridge, PlacementOverlay, ResizeHandles, useComponentEditor } from "./AddComponents";
 import { choosePart, offsetAxis, specBox, type Side, type Surroundings } from "@/lib/vendor/parts3d";
-import { blocksPartIcon, checkMovers, movedBox, openCavities, paneBacks, rebuildPanel, type Added } from "@/lib/vendor/reconstruct";
+import { authoritativeMovers, blocksPartIcon, checkMovers, movedBox, openCavities, paneBacks, rebuildPanel, type Added } from "@/lib/vendor/reconstruct";
 import { animationClips, animationOf, applyAnimations, attachmentsFrom, boxInModel, carried, enabledAnimations, fromClosed, handleOf, meshesOf, openPart, refine, shownOpen, step, targetFor, type AnimationConfig, type Openness } from "@/lib/vendor/animation";
 import { MIN_SIZE, resized, sizeCm } from "@/lib/designs/resize";
 import { restoreMaterial } from "@/lib/designs/materialRestore";
@@ -564,6 +564,8 @@ function adopt(slots: Slot[], part: Added) {
  * the new parts join `slots`). Used by the viewer, the editor and the planner alike. */
 export function movableParts(saved: AnimationConfig | null | undefined, slots: Slot[], root: Object3D, doc?: PartDocument | null): AnimationConfig | null {
   const model = authored(root);
+  // A rebuilt model's own parts and movements are authoritative: checked, never re-guessed or added to.
+  if (saved?.authoritative) return authoritativeMovers(saved, slots, model);
   const checked = checkMovers(refine(saved, slots, model, attachmentsFrom(doc)), slots, model);
   if (!checked) return null;
   // A file that shows a door open is fitted to its catalogue size with the door shut (it measured too deep open).
