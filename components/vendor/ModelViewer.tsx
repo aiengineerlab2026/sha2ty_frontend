@@ -782,6 +782,18 @@ export function reseat(wrapper: Object3D): Dimensions {
 const SIZER = "design-size";
 
 /** Frames the model again each time `signal` changes (the page's "reset view"). */
+/** A straight front view (the camera level with the model's centre, square to its front): to judge proportions
+ * against the photo's straightened front. The model is never changed. */
+function FrontOnSignal({ signal }: { signal?: number }) {
+  const bounds = useBounds();
+  useEffect(() => {
+    if (!signal) return;
+    const { center, distance } = bounds.refresh().clip().getSize();
+    bounds.to({ position: [center.x, center.y, center.z + distance], target: [center.x, center.y, center.z] });
+  }, [signal, bounds]);
+  return null;
+}
+
 function FitOnSignal({ signal }: { signal?: number }) {
   const bounds = useBounds();
   useEffect(() => {
@@ -1134,6 +1146,7 @@ export function ModelViewer({
   details,
   overlay,
   resetView,
+  frontView,
   autoRotate = false,
   stacked = false,
   partsFooter,
@@ -1199,6 +1212,8 @@ export function ModelViewer({
   overlay?: ReactNode;
   /** Changing it frames the model again (reset view). */
   resetView?: number;
+  /** Changes to show the model straight from the front (an orthogonal look at its proportions). */
+  frontView?: number;
   autoRotate?: boolean;
   /** Canvas on top and a parts | materials drawer under it (for a narrow column beside a form). Use with `fill`. */
   stacked?: boolean;
@@ -1863,9 +1878,12 @@ export function ModelViewer({
     onApi({
       exportGlb,
       document: () => ({
+        // Everything the server keeps with a rebuilt model (its reading's details, sizes, verdict, per-part kind, box,
+        // material, hardware) stays: a later repair rebuilds from it without a new photo reading.
+        ...(server ?? {}),
         modelType: server?.modelType,
         separated: slots.filter((item) => !removedRef.current.has(item.id)).length > 1,
-        components: slots.filter((item) => !removedRef.current.has(item.id)).map((item) => ({ id: item.id, name: item.name, editable: true, ...(item.naming ? { naming: item.naming } : {}), ...(item.nameAr ? { nameAr: item.nameAr } : {}), ...(item.analysisId ? { analysisId: item.analysisId } : {}), ...(item.variants?.length ? { variants: item.variants } : {}) })),
+        components: slots.filter((item) => !removedRef.current.has(item.id)).map((item) => ({ ...(server?.components.find((c) => c.id === item.id) ?? {}), id: item.id, name: item.name, editable: true, ...(item.naming ? { naming: item.naming } : {}), ...(item.nameAr ? { nameAr: item.nameAr } : {}), ...(item.analysisId ? { analysisId: item.analysisId } : {}), ...(item.variants?.length ? { variants: item.variants } : {}) })),
         limits: slots.length > 1 ? null : WHOLE,
         ...(anim ? { animation: { ...anim, state: Object.fromEntries(Object.entries(openTarget).filter(([, v]) => v > 0)) } } : {}),
         ...(partsEditor.added.length ? { added: partsEditor.added } : {}),
@@ -1973,6 +1991,7 @@ export function ModelViewer({
               }} track={track} />
             </group>
             <FitOnSignal signal={(resetView ?? 0) + fitKey} />
+            <FrontOnSignal signal={frontView} />
           </Bounds>
           <Animator slots={slots} root={modelRoot} config={anim} target={openTarget} />
           {hands && <IconTracker icons={icons} els={iconEls} />}

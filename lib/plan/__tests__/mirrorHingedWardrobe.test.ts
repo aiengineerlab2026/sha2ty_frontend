@@ -86,3 +86,19 @@ test("only real damage blocks publishing", () => {
   assert.deepEqual(publishBlockers(v({ status: "needs_repair", errors: ["Door 1: inside out."] })), ["Door 1: inside out."]);
   assert.equal(publishBlockers(v({ status: "failed", errors: [] })).length, 1);
 });
+
+test("grey mirror wardrobe (3cef1e2a) rebuilt without its invented crown: full-height doors that all open, mirrors riding along", async () => {
+  const { scene, slots, doc } = await loaded("greyMirrorWardrobe");
+  assert.ok(!doc.components.some((c) => c.kind === "crown_trim"), "no crown the photo does not show");
+  const height = new Box3().setFromObject(scene).getSize(new Vector3()).y;
+  const config = authoritativeMovers(doc.animation, slots, scene)!;
+  const doors = config.animations.filter((a) => a.type === "rotation");
+  assert.deepEqual(doors.map((a) => a.component).sort(), ["door_left", "frame_center", "frame_right"]);
+  for (const a of doors) {
+    assert.ok(a.enabled && !a.issues.length, `${a.component}: ${a.issues.join("; ")}`);
+    const top = new Box3().setFromObject(slots.find((s) => s.id === a.component)!.mesh).max.y;
+    assert.ok(height - top < 0.025, `${a.component} reaches the top edge (${(height - top).toFixed(3)} m below it)`);
+  }
+  assert.deepEqual(doors.find((a) => a.component === "frame_center")!.follow, ["mirror_center"]);
+  assert.deepEqual(publishBlockers(doc as unknown as HybridDocument), []);
+});

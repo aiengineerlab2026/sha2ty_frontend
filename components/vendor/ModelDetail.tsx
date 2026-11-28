@@ -3,7 +3,7 @@
 import { authSession } from "@/lib/auth/client";
 import { useT } from "@/lib/i18n";
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { ArrowLeft, Box, ChevronDown, Download, FileBox, FileText, Focus, Loader2, RotateCw, Ruler, Save, Shapes, Tag, Trees, TriangleAlert } from "lucide-react";
+import { ArrowLeft, Box, ChevronDown, Download, FileBox, FileText, Focus, Loader2, RotateCw, Ruler, Save, Shapes, Square, Tag, Trees, TriangleAlert } from "lucide-react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { Header } from "@/components/shatably/Header";
@@ -48,6 +48,7 @@ export function ModelDetail({ id }: { id: string }) {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [resetView, setResetView] = useState(0);
+  const [frontView, setFrontView] = useState(0);
   const [spin, setSpin] = useState(false);
   const [width, setWidth] = useState("");
   const [price, setPrice] = useState("");
@@ -385,6 +386,7 @@ export function ModelDetail({ id }: { id: string }) {
           removal={reviewing ? undefined : "everyone"}
           onUploadVariant={vendor ? (file) => uploadPublicFile(vendor.id, file, `${model.id}/part-variants`) : undefined}
           resetView={resetView}
+          frontView={frontView}
           autoRotate={spin}
           dimensions={
             catalogDimensions({ width_m: numberOrNull(width), height_m: numberOrNull(height), depth_m: numberOrNull(depth), shape, length2_m: numberOrNull(length2) }) ??
@@ -471,6 +473,9 @@ export function ModelDetail({ id }: { id: string }) {
                   <span className="mx-0.5 h-5 w-px bg-slate-200" aria-hidden />
                   <button type="button" onClick={() => setResetView((n) => n + 1)} className={tool} title={t("Reset view")} aria-label={t("Reset view")}>
                     <Focus className="size-4 sm:size-3.5" aria-hidden /> <span className={label}>{t("Reset view")}</span>
+                  </button>
+                  <button type="button" onClick={() => setFrontView((n) => n + 1)} className={tool} title={t("Straight front")} aria-label={t("Straight front")}>
+                    <Square className="size-4 sm:size-3.5" aria-hidden /> <span className={label}>{t("Straight front")}</span>
                   </button>
                   <button type="button" aria-pressed={spin} onClick={() => setSpin((on) => !on)} className={`${tool} ${spin ? "bg-brand-amber-soft text-brand-navy" : ""}`} title={t("Auto-rotate")} aria-label={t("Auto-rotate")}>
                     <RotateCw className="size-4 sm:size-3.5" aria-hidden /> <span className={label}>{t("Auto-rotate")}</span>
