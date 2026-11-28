@@ -8,6 +8,16 @@ import { progressFrom, type GenerateProgress } from "./meshyPhases";
 
 export { AWAITING_APPROVAL, MESHY_PHASES, type GenerateProgress, type GenerateStep } from "./meshyPhases";
 
+/** How the model is made (backend services/hybrid.py): rebuilt part by part from the photo ("hybrid", the default;
+ * "deterministic" the same engine), or by the 3D generator ("meshy": the admin's Meshy / GPT Astra / Sol). */
+export type GenerationMode = "hybrid" | "deterministic" | "meshy";
+export const GENERATION_MODES: { id: GenerationMode; label: string; hint: string }[] = [
+  { id: "hybrid", label: "Rebuilt part by part (recommended)", hint: "Straight panels, separate doors and handles, the photo's own colours. Mostly upholstered or carved pieces go to the 3D generator." },
+  { id: "meshy", label: "3D generator", hint: "A sculpted mesh from the photo: better for sofas, carvings and organic shapes; parts may be fused." },
+];
+/** The steps of a part-by-part rebuild, shown while it runs (it answers in one request: the step is estimated). */
+export const HYBRID_STAGES = ["Image analysis", "Component detection", "Structural reconstruction", "Decorative reconstruction", "Material processing", "Model assembly", "Validation", "Export"];
+
 /** A finished conversion. taskId: the backend task (Meshy), for "Retry Auto Split" while it is kept (about an hour). */
 type Generated = { glbUrl: string; reading: PhotoReading | null; components: PartDocument | null; sourceGlbUrl: string | null; states: ModelStates | null; taskId?: string };
 
@@ -29,7 +39,7 @@ export async function generateFromPhoto(
   onProgress?: (progress: GenerateProgress) => void,
   imageUrl?: string,
   /** What to extract (catalogue category, product title, furniture type); the backend builds the Meshy / Astra prompt. */
-  subject?: { category: string; title: string; kind?: string; lang?: "ar" | "en" },
+  subject?: { category: string; title: string; kind?: string; lang?: "ar" | "en"; mode?: GenerationMode; size?: { width?: number | null; height?: number | null; depth?: number | null } },
   /** A wardrobe with open and closed states: the photo of it open (`file` is the closed one). */
   openFile?: File,
 ): Promise<Generated> {
@@ -46,10 +56,16 @@ export async function generateFromPhoto(
     if (subject.kind) body.append("kind", subject.kind);
     // The generated name and description come back in the interface language.
     if (subject.lang) body.append("lang", subject.lang);
+    if (subject.mode) body.append("mode", subject.mode);
+    // The vendor's own measurements (metres) win over the photo's estimate.
+    for (const [key, value] of [["width_m", subject.size?.width], ["height_m", subject.size?.height], ["depth_m", subject.size?.depth]] as const) {
+      if (value && value > 0) body.append(key, String(value));
+    }
   }
 
-  onProgress?.(provider === "meshy" ? { percent: 4, status: "Preparing furniture image…", phase: "preparing" } : { percent: 4, status: "Uploading photo…" });
-  const stopPulse = provider !== "meshy" ? pulseProgress(onProgress) : null;
+  const rebuilt = subject?.mode !== undefined && subject.mode !== "meshy";
+  onProgress?.(rebuilt ? { percent: 4, status: `${HYBRID_STAGES[0]}…` } : provider === "meshy" ? { percent: 4, status: "Preparing furniture image…", phase: "preparing" } : { percent: 4, status: "Uploading photo…" });
+  const stopPulse = rebuilt ? stagePulse(onProgress) : provider !== "meshy" ? pulseProgress(onProgress) : null;
 
   const created = await apiFetch(`/api/vendor/generate`, {
     method: "POST",
@@ -79,7 +95,7 @@ export async function generateFromPhoto(
 }
 
 /** Poll a conversion task until it finishes (or fails). */
-async function pollTask(taskId: string, last: number, onProgress?: (progress: GenerateProgress) => void): Promise<Omit<Generated, "reading">> {
+export async function pollTask(taskId: string, last: number, onProgress?: (progress: GenerateProgress) => void): Promise<Omit<Generated, "reading">> {
   for (let i = 0; i < 360; i++) {
     const polled = await apiFetch(`/api/vendor/tasks/${taskId}`);
     const task = await polled.json().catch(() => ({}));
@@ -139,6 +155,16 @@ export async function fetchGenerationQuota(): Promise<{ remaining: Record<ModelP
   if (!res?.ok) return null;
   const body = await res.json().catch(() => null);
   return body?.remaining ? { remaining: body.remaining, provider: body.provider ?? "meshy" } : null;
+}
+
+/** A part-by-part rebuild answers in one request: its stages are shown by elapsed time, about 3 s each. */
+function stagePulse(onProgress?: (progress: GenerateProgress) => void) {
+  let i = 0;
+  const timer = setInterval(() => {
+    i = Math.min(HYBRID_STAGES.length - 1, i + 1);
+    onProgress?.({ percent: Math.round(8 + (i / HYBRID_STAGES.length) * 84), status: `${HYBRID_STAGES[i]}…` });
+  }, 3000);
+  return () => clearInterval(timer);
 }
 
 function pulseProgress(onProgress?: (progress: GenerateProgress) => void) {
