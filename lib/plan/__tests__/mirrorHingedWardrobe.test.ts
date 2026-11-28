@@ -46,7 +46,7 @@ for (const name of ["mirrorHingedWardrobe", "mirrorHingedWardrobe.legacy"]) {
   });
 
   test(`${name}: estimated movements never block publishing`, () => {
-    assert.deepEqual(publishBlockers(fixture(name).doc as unknown as HybridDocument), []);
+    assert.deepEqual(publishBlockers({ glbUrl: `${name}.glb` }), []);
   });
 }
 
@@ -79,14 +79,6 @@ test("a handleless door's control sits near its free edge, at mid-height", async
   assert.equal(freeEdgeAnchor(frame, "top"), undefined);
 });
 
-test("only real damage blocks publishing", () => {
-  const v = (validation: object) => ({ components: [], validation }) as unknown as HybridDocument;
-  assert.deepEqual(publishBlockers(v({ status: "needs_confirmation", errors: [], confirm: ["How the door opens was estimated."] })), []);
-  assert.deepEqual(publishBlockers(v({ status: "valid_with_warnings", publishable: true, notes: [{ kind: "material", text: "x" }] })), []);
-  assert.deepEqual(publishBlockers(v({ status: "needs_repair", errors: ["Door 1: inside out."] })), ["Door 1: inside out."]);
-  assert.equal(publishBlockers(v({ status: "failed", errors: [] })).length, 1);
-});
-
 test("grey mirror wardrobe (3cef1e2a) rebuilt without its invented crown: full-height doors that all open, mirrors riding along", async () => {
   const { scene, slots, doc } = await loaded("greyMirrorWardrobe");
   assert.ok(!doc.components.some((c) => c.kind === "crown_trim"), "no crown the photo does not show");
@@ -100,5 +92,5 @@ test("grey mirror wardrobe (3cef1e2a) rebuilt without its invented crown: full-h
     assert.ok(height - top < 0.025, `${a.component} reaches the top edge (${(height - top).toFixed(3)} m below it)`);
   }
   assert.deepEqual(doors.find((a) => a.component === "frame_center")!.follow, ["mirror_center"]);
-  assert.deepEqual(publishBlockers(doc as unknown as HybridDocument), []);
+  assert.deepEqual(publishBlockers({ glbUrl: "greyMirrorWardrobe.glb" }), []);
 });

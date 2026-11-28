@@ -3,7 +3,7 @@
 import { authSession } from "@/lib/auth/client";
 import { useT } from "@/lib/i18n";
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { ArrowLeft, Box, ChevronDown, Download, FileBox, FileText, Focus, Loader2, RotateCw, Ruler, Save, Shapes, Square, Tag, Trees, TriangleAlert } from "lucide-react";
+import { ArrowLeft, Box, ChevronDown, Download, FileBox, FileText, Focus, Loader2, RotateCw, Ruler, Save, Shapes, Square, Tag, Trees } from "lucide-react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { Header } from "@/components/shatably/Header";
@@ -26,15 +26,13 @@ import { customizedModelFields, updateModel, type PartEditorApi } from "@/lib/ve
 import { uploadPublicFile } from "@/lib/vendor/storage";
 import { ReplaceGlb } from "./ReplaceGlb";
 import { GenerationDiagnostics } from "./GenerationDiagnostics";
-import { fidelityProblem, linkedVisual, structuralEdits, structuralParts, visualModularity } from "@/lib/designs/structural";
+import { linkedVisual, structuralEdits, structuralParts, visualModularity } from "@/lib/designs/structural";
 
 const ModelViewer = dynamic(() => import("./ModelViewer").then((mod) => mod.ModelViewer), {
   ssr: false,
   loading: () => <LoadingViewer />,
 });
 
-/** The pipeline step a fidelity check failed at, in words (backend services/fidelity.py stage ids). */
-const STAGES: Record<string, string> = { cleaning: "photo cleaning", provider: "3D generation", processing: "model processing", materials: "materials", split: "Auto Split" };
 
 function LoadingViewer() {
   const t = useT();
@@ -80,7 +78,6 @@ export function ModelDetail({ id }: { id: string }) {
   const reviewing = Boolean(review && carpenter?.url);
   // Both representations come from one photo reading: a structural part names the visual parts of the same component.
   const links = carpenter ? linkedVisual(carpenter, model?.components) : {};
-  const problem = fidelityProblem(model?.components);
   const structuralStatus = model?.components?.structural;
   const modularity = visualModularity(model?.components);
   const cleaningRefused = model?.components?.cleaning?.rejected ? model.components.cleaning.check?.issues?.[0] ?? "" : null;
@@ -203,6 +200,9 @@ export function ModelDetail({ id }: { id: string }) {
           // Only when changed: saving keeps working before models_listing.sql adds the columns.
           ...(kind !== (furnitureType(model) ?? "other") ? { furniture_type: kind } : {}),
           ...(listed !== (model.listed !== false) ? { listed } : {}),
+          // A draft with its 3D file is published on save (older models were held as drafts by their technical
+          // checks; quality never holds a model back now). The shop listing stays the vendor's own choice.
+          ...(model.status === "draft" && (model.glb_url || newFile.glb_url) ? { status: "ready" } : {}),
           // Only when changed: saving keeps working before custom_requests.sql adds the column.
           ...((Number(days) || null) !== (model.production_days ?? null) ? { production_days: Math.min(365, Math.max(1, Math.round(Number(days)))) || null } : {}),
           shape,
@@ -221,7 +221,7 @@ export function ModelDetail({ id }: { id: string }) {
         return;
       }
       if (structural) structuralEditor.current?.markClean?.();
-      setModel({ ...model, furniture_type: kind, listed, production_days: Number(days) || null, ...newFile, ...(materials?.fields ?? {}), ...(structural ?? {}), ...(states ? { states } : {}), woods: vendor?.platform ? null : woods, title: title.trim() || model.title } as CatalogModel);
+      setModel({ ...model, ...(model.status === "draft" && (model.glb_url || replaced) ? { status: "ready" } : {}), furniture_type: kind, listed, production_days: Number(days) || null, ...newFile, ...(materials?.fields ?? {}), ...(structural ?? {}), ...(states ? { states } : {}), woods: vendor?.platform ? null : woods, title: title.trim() || model.title } as CatalogModel);
       setReplaced(null);
       if (materials?.thumbnailError) {
         setError(t("Saved, but the model image could not be updated ({error}). The previous image is kept; save again to retry.", { error: materials.thumbnailError }));
@@ -329,13 +329,6 @@ export function ModelDetail({ id }: { id: string }) {
       </div>
       {(error ?? (supabaseConfigured() ? null : t("Supabase is not configured."))) && <p className="shrink-0 border-b border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700">{error ?? t("Supabase is not configured.")}</p>}
       {replaced && <p role="status" className="shrink-0 border-b border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-900">{t("New 3D file loaded. Save changes to put it on the listing.")}</p>}
-      {problem && !replaced && (
-        // Flagged, not hidden: the generated model lost fidelity at this step (backend services/fidelity.py).
-        <div role="status" className="shrink-0 border-b border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-900">
-          <p className="flex items-center gap-1.5 font-medium"><TriangleAlert className="size-4 shrink-0" aria-hidden /> {t("Low-quality model: it differs from the photo at the {stage} step. Check it before publishing.", { stage: t(STAGES[problem.stage] ?? problem.stage) })}</p>
-          {problem.issues.length > 0 && <ul className="ms-6 mt-1 list-disc text-xs text-amber-800">{problem.issues.slice(0, 4).map((issue) => <li key={issue} dir="ltr" className="text-start">{issue}</li>)}</ul>}
-        </div>
-      )}
       {cleaningRefused !== null && !replaced && (
         <p role="status" className="shrink-0 border-b border-slate-200 bg-slate-50 px-4 py-2 text-xs text-slate-600">
           {t("The cleaned photo changed the furniture, so the original photo was used.")} {cleaningRefused && <span dir="ltr">({cleaningRefused})</span>}

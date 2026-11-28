@@ -32,7 +32,7 @@ export function GenerationDiagnostics({ doc, glbUrl, sourceGlbUrl, originalUrl, 
   const modularity = visualModularity(doc);
   const used = cleaning?.used ?? (cleaning?.cleaned ? "cleaned" : cleaning ? "original" : null);
   return (
-    <details className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm" open={!modularity.modular || check?.status !== "passed"}>
+    <details className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm">
       <summary className="cursor-pointer font-medium text-slate-800">
         {t("How this model was made")}
         <span className={`ms-2 rounded-full border px-2 py-0.5 text-xs ${modularity.modular ? STATUS_STYLE.passed : STATUS_STYLE.inconclusive}`}>
